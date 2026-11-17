@@ -8,6 +8,7 @@ export class Effects {
     this.track = track;
     this.rain = opts.rain;
     this.quality = opts.quality;
+    this._tc = new THREE.Color();
     this.buildSkids();
     this.buildParticles();
     if (this.rain) this.buildRain();
@@ -134,6 +135,16 @@ export class Effects {
     const lx = Math.cos(st.psi), lz = -Math.sin(st.psi);
     const wheels = [[0.82, 1.3], [-0.82, 1.3], [0.82, -1.36], [-0.82, -1.36]];
     const slip = st.slipAmount || 0;
+    // スモークの色（ガレージのカスタム。null なら標準の白）
+    let sr, sg, sb;
+    if (st.smoke != null) {
+      if (st.smoke === 'rainbow') this._tc.setHSL((performance.now() / 1500) % 1, 0.9, 0.62);
+      else this._tc.set(st.smoke);
+      // Color は線形値なので、そのまま出力される粒子用に sRGB へ戻す
+      sr = this._tc.r ** (1 / 2.2); sg = this._tc.g ** (1 / 2.2); sb = this._tc.b ** (1 / 2.2);
+    } else {
+      sr = sg = sb = this.rain ? 0.75 : 0.82;
+    }
     for (let w = 0; w < 4; w++) {
       const [ox, oz] = wheels[w];
       const x = st.x + lx * ox + fx * oz, z = st.z + lz * ox + fz * oz;
@@ -147,8 +158,7 @@ export class Effects {
       }
       this.addSkid(key + w, x, st.y, z, lx, lz, Math.min(1, a * 1.4));
       if (a > 0.15 && sp > 3 && Math.random() < dt * 40 * a) {
-        const c = this.rain ? 0.75 : 0.82;
-        this.emit(x, st.y + 0.25, z, -st.vx * 0.15 + (Math.random() - 0.5), 0.6 + Math.random(), -st.vz * 0.15 + (Math.random() - 0.5), 0.9, 2.8, 1.6 + Math.random(), c, c, c, this.rain ? 0.25 : 0.4);
+        this.emit(x, st.y + 0.25, z, -st.vx * 0.15 + (Math.random() - 0.5), 0.6 + Math.random(), -st.vz * 0.15 + (Math.random() - 0.5), 0.9, 2.8, 1.6 + Math.random(), sr, sg, sb, this.rain ? 0.25 : 0.4);
       }
       if (surf >= 2 && sp > 4 && Math.random() < dt * 30) {
         const sand = surf === 3;

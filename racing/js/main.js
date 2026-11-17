@@ -8,6 +8,9 @@ import { buildCar } from './render/carmodel.js';
 import { Effects } from './render/effects.js';
 import { Input } from './ui/input.js';
 import { Audio } from './audio.js';
+import { store } from './store.js';
+import { garage, raceReward, TA_LAP_COINS, TA_BEST_COINS, TA_MAX_PAID_LAPS } from './garage.js';
+import { GarageView } from './ui/garageview.js';
 
 const $ = (s) => document.querySelector(s);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -15,15 +18,8 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 window.addEventListener('error', (e) => { $('#err').textContent = 'Error: ' + e.message; });
 window.addEventListener('unhandledrejection', (e) => { $('#err').textContent = 'Error: ' + (e.reason && e.reason.message || e.reason); });
 
-// ---------- 保存 ----------
-const store = {
-  get(k, d) { try { const v = localStorage.getItem('apexline.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('apexline.' + k, JSON.stringify(v)); } catch { /* 容量不足など */ } },
-};
-
-const COLORS = [0xd0101c, 0x1450c8, 0xf0f0f0, 0x101012, 0xffb300, 0x13a05a, 0xff5f1f, 0x8e44ff];
 const settings = Object.assign({
-  mode: 'race', track: 0, difficulty: 'normal', laps: 3, color: 0,
+  mode: 'race', track: 0, difficulty: 'normal', laps: 3,
   steer: 'slide', sens: 1, assist: true, quality: isTouch ? 1 : 2, volume: 0.8,
 }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
@@ -104,6 +100,10 @@ function drawTrackMap(cv, track, opts = {}) {
   return P;
 }
 
+function updateMenuCoins() {
+  $('#menuCoins').textContent = String(garage.coins);
+}
+
 const trackCache = {};
 function getTrack(i) {
   if (!trackCache[i]) trackCache[i] = new Track(TRACKS[i]);
@@ -139,19 +139,7 @@ function buildMenu() {
     };
     list.appendChild(card);
   });
-  const sw = $('#colorSw');
-  sw.innerHTML = '';
-  COLORS.forEach((c, i) => {
-    const b = document.createElement('button');
-    b.style.background = '#' + c.toString(16).padStart(6, '0');
-    b.className = i === settings.color ? 'on' : '';
-    b.onclick = () => {
-      settings.color = i;
-      saveSettings();
-      sw.querySelectorAll('button').forEach((x, k) => x.classList.toggle('on', k === i));
-    };
-    sw.appendChild(b);
-  });
+  updateMenuCoins();
   syncSegs();
 }
 
@@ -205,6 +193,20 @@ $('#volRange').oninput = (e) => { settings.volume = parseFloat(e.target.value); 
 $('#settingsBtn').onclick = () => $('#settings').classList.add('show');
 $('#settingsClose').onclick = () => $('#settings').classList.remove('show');
 $('#startBtn').onclick = () => startGame();
+
+// ---------- ガレージ ----------
+let garageView = null;
+function openGarage() {
+  $('#menu').classList.remove('show');
+  if (!garageView || garageView.quality !== settings.quality) garageView = new GarageView(renderer, { onBack: closeGarage, quality: settings.quality });
+  garageView.open();
+}
+function closeGarage() {
+  if (garageView) garageView.close();
+  buildMenu();
+  $('#menu').classList.add('show');
+}
+$('#garageBtn').onclick = openGarage;
 
 // ---------- ゲーム ----------
 const TIPS = [
@@ -265,13 +267,20 @@ class Game {
       mode: opts.mode,
       difficulty: opts.difficulty,
       laps: opts.laps,
-      playerColor: COLORS[opts.color],
+      playerColor: garage.look().color,
       assist: opts.assist,
     });
-    // 車のモデル
+    // 車のモデル（プレイヤーはガレージで選んだ見た目）
+    this.look = garage.look();
     this.models = new Map();
+    this.incidents = 0;
+    this.lastIncident = -9;
+    this.taPaid = 0;
+    this.reward = null;
     for (const e of this.race.entries) {
-      const m = buildCar({ color: e.color, num: e.num, quality: opts.quality, rimDark: e.kind === 'ai' && e.num % 2 === 0 });
+      const m = e.kind === 'player'
+        ? buildCar({ quality: opts.quality, look: this.look })
+        : buildCar({ color: e.color, num: e.num, quality: opts.quality, rimDark: e.num % 2 === 0 });
       this.scene.add(m.root);
       this.models.set(e, m);
     }
@@ -403,6 +412,11 @@ class Game {
         this.showMsg('GO!', 1.0, '#3ddc84');
         audio.beep(880, 0.5, 0.3);
       } else if (ev.type === 'wall' || ev.type === 'hit') {
+        // 強い接触は 1.2 秒以上あけて 1 回と数える（クリーンレース判定用）
+        if (ev.power > (ev.type === 'wall' ? 3 : 1.5)) {
+          if (r.time - this.lastIncident > 1.2) this.incidents++;
+          this.lastIncident = r.time;
+        }
         audio.impact(ev.power);
         this.shake = Math.min(1, this.shake + ev.power * 0.06);
         if (ev.power > 6) {
@@ -418,6 +432,20 @@ class Game {
         this.subMsg('FINISH', 4);
         const key = 'rank.' + this.track.def.id + '.' + this.opts.difficulty;
         const prev = store.get(key, null);
+        // コイン報酬
+        const me = r.player;
+        const bestAll = Math.min(...r.entries.map((x) => x.best));
+        this.reward = raceReward({
+          position: p,
+          difficulty: this.opts.difficulty,
+          laps: this.opts.laps,
+          fastestLap: isFinite(me.best) && me.best <= bestAll + 1e-6,
+          clean: this.incidents <= 2,
+          firstPodium: p <= 3 && (prev == null || prev > 3),
+          firstWin: p === 1 && prev !== 1,
+        });
+        garage.addCoins(this.reward.total);
+        this.toastCoins(this.reward.total);
         if (!prev || p < prev) store.set(key, p);
         setTimeout(() => { if (game === this) this.showResults(); }, 3500);
       }
@@ -448,10 +476,25 @@ class Game {
       const d = ev.time - prevBest;
       this.subMsg(`${fmt(ev.time)}  (+${d.toFixed(3)})`, 3);
     }
+    if (isTA && this.taPaid < TA_MAX_PAID_LAPS) {
+      const newBest = !saved || ev.time < saved.time;
+      const coins = TA_LAP_COINS + (newBest ? TA_BEST_COINS : 0);
+      this.taPaid++;
+      garage.addCoins(coins);
+      this.toastCoins(coins);
+    }
     if (!isTA) {
       const lapNow = r.player.lap;
       if (lapNow === r.laps) this.showMsg('FINAL LAP', 2, '#ffb000');
     }
+  }
+
+  toastCoins(n) {
+    const t = $('#coinToast');
+    t.querySelector('b').textContent = '+' + n;
+    t.classList.remove('show');
+    void t.offsetWidth;
+    t.classList.add('show');
   }
 
   updateCamera(dt, snap = false) {
@@ -517,7 +560,7 @@ class Game {
       if (dt > 0) {
         if (e.kind === 'player') {
           const slipAmount = Math.max(pc.slipR * 3.2 - 0.1, pc.slipF * 2.2 - 0.25, 0);
-          this.fx.carFx('p', { ...pc, slipAmount, lock: pc.lock, wheelspin: pc.wheelspin }, dt);
+          this.fx.carFx('p', { ...pc, slipAmount, lock: pc.lock, wheelspin: pc.wheelspin, smoke: this.look.smoke }, dt);
         } else if (dist < 120) {
           this.fx.carFx('a' + e.num, { x: st.x, y: st.y, z: st.z, psi: st.psi, vx: st.vx, vz: st.vz, slipAmount: Math.abs(st.slip) * 6 - 0.15, wheelSurf: null }, dt);
         }
@@ -657,11 +700,16 @@ class Game {
     const laps = r.player.laps;
     const bestIdx = laps.indexOf(Math.min(...laps));
     const rows = res.map((x) => `<tr class="${x.kind === 'player' ? 'me' : ''}"><td class="p">${x.pos}</td><td><span class="sw" style="background:#${x.color.toString(16).padStart(6, '0')}"></span>${x.kind === 'player' ? 'YOU' : x.name}</td><td class="t">${x.pos === 1 ? fmt(x.time) : '+' + (x.time - res[0].time).toFixed(3)}${x.est ? '*' : ''}</td><td class="t">${fmt(x.best)}</td></tr>`).join('');
+    const rw = this.reward;
+    const coinHtml = rw
+      ? `<div class="coin-rows">${rw.rows.map((x) => `<div class="r"><span>${x.label}</span><span><i class="coin"></i>+${x.coins}</span></div>`).join('')}<div class="r total"><span>獲得コイン</span><span><i class="coin"></i>+${rw.total}</span></div></div><div class="res-sub">所持コイン ${garage.coins}。ガレージでパーツを買えます</div>`
+      : '';
     $('#resTitle').textContent = this.track.def.name;
     $('#resBody').innerHTML = `
       <div class="res-big" style="color:${me.pos === 1 ? '#ffd000' : '#fff'}">${me.pos === 1 ? 'WINNER' : me.pos + '位'}</div>
       <div class="res-sub">${DIFFICULTY[this.opts.difficulty].label} · ${r.laps}周 · 合計 ${fmt(me.time)}</div>
       <div class="laps-list">${laps.map((l, i) => `<span class="${i === bestIdx ? 'best' : ''}">L${i + 1} ${fmt(l)}</span>`).join('')}</div>
+      ${coinHtml}
       <table class="res-table"><tr><td></td><td style="color:var(--sub);font-size:11px">DRIVER</td><td class="t" style="color:var(--sub);font-size:11px">TIME</td><td class="t" style="color:var(--sub);font-size:11px">BEST LAP</td></tr>${rows}</table>
       <div class="res-sub">* はゴール時点からの推定タイム</div>`;
     $('#results').classList.add('show');
@@ -700,6 +748,7 @@ function toMenu() {
 }
 $('#quitBtn').onclick = toMenu;
 $('#menuBtn').onclick = toMenu;
+$('#resGarageBtn').onclick = () => { toMenu(); openGarage(); };
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && game && !game.paused && !$('#results').classList.contains('show')) game.setPaused(true);
 });
@@ -707,4 +756,4 @@ document.addEventListener('visibilitychange', () => {
 applyQuality();
 buildMenu();
 // デバッグ用フック
-window.__apex = { get game() { return game; }, settings, startGame, toMenu, camera, renderer };
+window.__apex = { get game() { return game; }, settings, startGame, toMenu, camera, renderer, garage, openGarage, get garageView() { return garageView; } };

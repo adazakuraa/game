@@ -18,6 +18,18 @@ function lerpKeys(keys, z) {
   return keys[keys.length - 1][1];
 }
 
+// 真上からの平面投影 UV（ストライプ用）。u: 車幅 -1.1..1.1 m、v: 車長 -2.4..2.4 m
+function planarUV(g) {
+  const p = g.attributes.position;
+  const uv = new Float32Array(p.count * 2);
+  for (let i = 0; i < p.count; i++) {
+    uv[i * 2] = (p.getX(i) + 1.1) / 2.2;
+    uv[i * 2 + 1] = (p.getZ(i) + 2.4) / 4.8;
+  }
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return g;
+}
+
 // 断面ロフト: stations = [{z, hw, yb, yt, n, nb}]
 function loft(stations, seg = 28, capFront = true, capRear = true) {
   const pos = [], idx = [], uv = [];
@@ -80,7 +92,7 @@ function bodyGeometry() {
     const yt = lerpKeys(topY, z);
     st.push({ z, hw: lerpKeys(halfW, z), yb, yt, ym: yb + (yt - yb) * 0.42, n: 3.2, nb: 6 });
   }
-  return loft(st, 32);
+  return planarUV(loft(st, 32));
 }
 
 function cabinGeometry() {
@@ -99,7 +111,9 @@ function cabinGeometry() {
     st.push({ z, hw, yb: base - 0.25, yt, ym: base, n: 2.6, nb: 8 });
   }
   const g = loft(st, 28).toNonIndexed();
-  g.computeVertexNormals();
+  const smoothN = g.attributes.normal.array.slice(); // 描画用のなめらかな法線は保持
+  g.computeVertexNormals(); // 窓の判定には面の法線を使う
+  planarUV(g);
   // 窓の部分だけガラス、それ以外（ピラー・ルーフ）は塗装
   const p = g.attributes.position, nrm = g.attributes.normal;
   const paintIdx = [], glassIdx = [];
@@ -120,6 +134,7 @@ function cabinGeometry() {
     const side = Math.abs(nx) > 0.55 && cy > base + 0.07 && cy < 1.13 && cz > -1.0 && cz < 0.55 && !(cz > -0.42 && cz < -0.3);
     (wind || rear || side ? glassIdx : paintIdx).push(t * 3, t * 3 + 1, t * 3 + 2);
   }
+  g.setAttribute('normal', new THREE.BufferAttribute(smoothN, 3));
   g.setIndex([...paintIdx, ...glassIdx]);
   g.clearGroups();
   g.addGroup(0, paintIdx.length, 0);
@@ -144,31 +159,67 @@ function wheelGeometries() {
   prof.push(new THREE.Vector2(rIn, w));
   const tire = new THREE.LatheGeometry(prof, 36);
   tire.rotateZ(Math.PI / 2);
-  // ホイール（ディスク + スポーク）
-  const rim = new THREE.CylinderGeometry(0.235, 0.235, 0.2, 32, 1, true);
-  rim.rotateZ(Math.PI / 2);
-  const face = new THREE.RingGeometry(0.2, 0.236, 32);
-  face.rotateY(Math.PI / 2);
-  face.translate(0.1, 0, 0);
-  const spoke = new THREE.BoxGeometry(0.03, 0.2, 0.045);
-  const spokes = [];
-  for (let i = 0; i < 10; i++) {
-    const g = spoke.clone();
-    g.translate(0, 0.11, (i % 2 ? 1 : -1) * 0.018);
-    g.rotateX((Math.floor(i / 2) / 5) * Math.PI * 2);
-    g.translate(0.085, 0, 0);
-    spokes.push(g);
-  }
-  const hub = new THREE.CylinderGeometry(0.045, 0.05, 0.05, 12);
-  hub.rotateZ(Math.PI / 2);
-  hub.translate(0.09, 0, 0);
-  const rimAll = mergeGeos([rim, face, hub, ...spokes]);
   const disc = new THREE.CylinderGeometry(0.19, 0.19, 0.03, 28);
   disc.rotateZ(Math.PI / 2);
   disc.translate(-0.02, 0, 0);
   const caliper = new THREE.BoxGeometry(0.06, 0.12, 0.09);
   caliper.translate(0.0, 0.13, 0.08);
-  return { tire, rim: rimAll, disc, caliper };
+  return { tire, disc, caliper };
+}
+
+// ホイールのデザイン別ジオメトリ（車軸は x、外側が +x）
+const rimCache = {};
+function rimGeometry(style) {
+  if (rimCache[style]) return rimCache[style];
+  const rim = new THREE.CylinderGeometry(0.235, 0.235, 0.2, 32, 1, true);
+  rim.rotateZ(Math.PI / 2);
+  const face = new THREE.RingGeometry(0.2, 0.236, 32);
+  face.rotateY(Math.PI / 2);
+  face.translate(0.1, 0, 0);
+  const hub = new THREE.CylinderGeometry(0.045, 0.05, 0.05, 12);
+  hub.rotateZ(Math.PI / 2);
+  hub.translate(0.09, 0, 0);
+  const parts = [rim, face, hub];
+  const spoke = (box, ang, y = 0.11, z = 0, x = 0.085, twist = 0) => {
+    const g = box.clone();
+    if (twist) g.rotateY(twist);
+    g.translate(0, y, z);
+    g.rotateX(ang);
+    g.translate(x, 0, 0);
+    return g;
+  };
+  if (style === 'five') {
+    const b = new THREE.BoxGeometry(0.05, 0.2, 0.09);
+    for (let i = 0; i < 5; i++) parts.push(spoke(b, (i / 5) * Math.PI * 2));
+    const h2 = new THREE.CylinderGeometry(0.07, 0.07, 0.04, 16);
+    h2.rotateZ(Math.PI / 2); h2.translate(0.1, 0, 0);
+    parts.push(h2);
+  } else if (style === 'mesh') {
+    const b = new THREE.BoxGeometry(0.012, 0.2, 0.017);
+    for (let i = 0; i < 24; i++) parts.push(spoke(b, (i / 24) * Math.PI * 2, 0.11, 0, 0.085 + (i % 2) * 0.012));
+    const ring = new THREE.CylinderGeometry(0.125, 0.125, 0.02, 32, 1, true);
+    ring.rotateZ(Math.PI / 2); ring.translate(0.092, 0, 0);
+    parts.push(ring);
+  } else if (style === 'disc') {
+    const d = new THREE.CylinderGeometry(0.228, 0.228, 0.02, 32);
+    d.rotateZ(Math.PI / 2); d.translate(0.087, 0, 0);
+    parts.push(d);
+    for (let i = 0; i < 6; i++) {
+      const bolt = new THREE.CylinderGeometry(0.012, 0.012, 0.02, 8);
+      bolt.rotateZ(Math.PI / 2);
+      bolt.translate(0.1, 0.07, 0);
+      bolt.rotateX((i / 6) * Math.PI * 2);
+      parts.push(bolt);
+    }
+  } else if (style === 'fan') {
+    const b = new THREE.BoxGeometry(0.012, 0.17, 0.075);
+    for (let i = 0; i < 12; i++) parts.push(spoke(b, (i / 12) * Math.PI * 2, 0.12, 0, 0.085, 0.75));
+  } else {
+    // twin
+    const b = new THREE.BoxGeometry(0.03, 0.2, 0.045);
+    for (let i = 0; i < 10; i++) parts.push(spoke(b, (Math.floor(i / 2) / 5) * Math.PI * 2, 0.11, (i % 2 ? 1 : -1) * 0.018));
+  }
+  return (rimCache[style] = mergeGeos(parts));
 }
 
 export function mergeGeos(geos) {
@@ -226,24 +277,7 @@ function trimGeometry() {
     fin.translate(i * 0.22, 0.2, -2.2);
     parts.push(fin);
   }
-  // リアウイング
-  const wingShape = new THREE.Shape();
-  wingShape.moveTo(0, 0);
-  wingShape.bezierCurveTo(0.08, 0.06, 0.25, 0.05, 0.36, -0.01);
-  wingShape.lineTo(0.36, -0.03);
-  wingShape.bezierCurveTo(0.22, 0.0, 0.08, 0.0, 0, -0.02);
-  const wing = new THREE.ExtrudeGeometry(wingShape, { depth: 1.86, bevelEnabled: false, steps: 1 });
-  wing.translate(0, 0, -0.93);
-  wing.rotateY(Math.PI / 2);
-  wing.translate(0, 1.2, -1.82);
-  parts.push(wing);
   for (const s of [1, -1]) {
-    const ep = new THREE.BoxGeometry(0.02, 0.24, 0.46);
-    ep.translate(s * 0.94, 1.17, -2.0);
-    parts.push(ep);
-    const st = new THREE.BoxGeometry(0.03, 0.3, 0.1);
-    st.translate(s * 0.45, 1.02, -2.02);
-    parts.push(st);
     // ミラー
     const mr = new THREE.BoxGeometry(0.16, 0.08, 0.1);
     mr.translate(s * 0.83, 0.9, 0.55);
@@ -255,6 +289,63 @@ function trimGeometry() {
   gr.translate(0, 0.3, 2.31);
   parts.push(gr);
   return mergeGeos(parts);
+}
+
+// リアウイング（形状別）。null は「なし」
+const wingCache = {};
+function wingPlane(span, k, y, z) {
+  const sh = new THREE.Shape();
+  sh.moveTo(0, 0);
+  sh.bezierCurveTo(0.08 * k, 0.06 * k, 0.25 * k, 0.05 * k, 0.36 * k, -0.01 * k);
+  sh.lineTo(0.36 * k, -0.03 * k);
+  sh.bezierCurveTo(0.22 * k, 0.0, 0.08 * k, 0.0, 0, -0.02 * k);
+  const g = new THREE.ExtrudeGeometry(sh, { depth: span, bevelEnabled: false, steps: 1 });
+  g.translate(0, 0, -span / 2);
+  g.rotateY(Math.PI / 2);
+  g.translate(0, y, z);
+  return g;
+}
+function wingGeometry(style) {
+  if (style === 'none') return null;
+  if (wingCache[style]) return wingCache[style];
+  const parts = [];
+  const box = (w, h, d, x, y, z) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); parts.push(g); };
+  if (style === 'duck') {
+    const sh = new THREE.Shape();
+    sh.moveTo(0, 0); sh.lineTo(0.38, 0.07); sh.lineTo(0.38, 0.11); sh.lineTo(0, 0.04);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 1.6, bevelEnabled: false });
+    g.translate(0, 0, -0.8);
+    g.rotateY(Math.PI / 2);
+    g.translate(0, 0.9, -1.78);
+    parts.push(g);
+  } else if (style === 'high') {
+    parts.push(wingPlane(1.9, 1.15, 1.3, -1.75));
+    parts.push(wingPlane(1.9, 0.6, 1.46, -1.86));
+    for (const s of [1, -1]) {
+      box(0.02, 0.5, 0.58, s * 0.96, 1.33, -2.0);
+      box(0.03, 0.44, 0.1, s * 0.5, 1.07, -2.0);
+    }
+  } else if (style === 'swan') {
+    parts.push(wingPlane(1.8, 1.0, 1.27, -1.95));
+    for (const s of [1, -1]) {
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(s * 0.5, 0.9, -1.62),
+        new THREE.Vector3(s * 0.5, 1.16, -1.7),
+        new THREE.Vector3(s * 0.5, 1.34, -1.95),
+        new THREE.Vector3(s * 0.5, 1.33, -2.1),
+      ]);
+      parts.push(new THREE.TubeGeometry(curve, 14, 0.022, 6));
+      box(0.02, 0.2, 0.42, s * 0.9, 1.27, -2.05);
+    }
+  } else {
+    // gt（標準）
+    parts.push(wingPlane(1.86, 1, 1.2, -1.82));
+    for (const s of [1, -1]) {
+      box(0.02, 0.24, 0.46, s * 0.94, 1.17, -2.0);
+      box(0.03, 0.3, 0.1, s * 0.45, 1.02, -2.02);
+    }
+  }
+  return (wingCache[style] = mergeGeos(parts));
 }
 
 function wellGeometry() {
@@ -338,15 +429,90 @@ function getShared(quality) {
   return shared;
 }
 
-// 車1台を構築
-export function buildCar({ color = 0xd01020, num = 1, quality = 2, rimDark = false }) {
+// 塗装の質感
+export const FINISH = {
+  metallic: { m: 0.55, r: 0.3, cc: 1, ccr: 0.03, env: 1.2 },
+  gloss: { m: 0.1, r: 0.18, cc: 1, ccr: 0.02, env: 1.1 },
+  satin: { m: 0.4, r: 0.5, cc: 0.35, ccr: 0.3, env: 1.0 },
+  matte: { m: 0.1, r: 0.88, cc: 0, ccr: 0.5, env: 0.8 },
+  pearl: { m: 0.5, r: 0.22, cc: 1, ccr: 0.03, env: 1.4, irid: true },
+  chrome: { m: 1, r: 0.04, cc: 0, ccr: 0, env: 1.7 },
+};
+
+export const DEFAULT_LOOK = {
+  color: 0xd01020, finish: 'metallic', stripe: 'none', stripeColor: 0xf4f4f4, wheel: 'twin', wheelColor: 0x9aa0a6,
+  caliper: 0xc8a000, wing: 'gt', glow: null, smoke: null, num: 1,
+};
+
+const css = (n) => '#' + n.toString(16).padStart(6, '0');
+
+// ボディ全体に貼る塗装テクスチャ（ストライプ入り）。真上から見た平面投影
+function liveryTexture(paint, style, stripe) {
+  const W = 512, H = 1024;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = css(paint);
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = css(stripe);
+  const X = (x) => ((x + 1.1) / 2.2) * W;
+  const band = (x0, x1) => g.fillRect(X(x0), 0, X(x1) - X(x0), H);
+  if (style === 'center2') { band(-0.21, -0.09); band(0.09, 0.21); }
+  else if (style === 'wide') band(-0.24, 0.24);
+  else if (style === 'triple') { band(-0.3, -0.25); band(-0.12, 0.12); band(0.25, 0.3); }
+  else if (style === 'checker') {
+    const n = 4, cell = (X(0.24) - X(-0.24)) / n;
+    for (let j = 0; j < H / cell; j++) for (let i = 0; i < n; i++) if ((i + j) % 2 === 0) g.fillRect(X(-0.24) + i * cell, j * cell, cell, cell);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+let glowTex = null;
+function glowTexture() {
+  if (glowTex) return glowTex;
+  const cv = document.createElement('canvas');
+  cv.width = 128; cv.height = 256;
+  const g = cv.getContext('2d');
+  g.shadowColor = '#fff';
+  g.shadowBlur = 38;
+  g.fillStyle = '#fff';
+  const r = 10;
+  const x = 40, y = 70, w = 48, h = 116;
+  g.beginPath();
+  g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r);
+  g.fill(); g.fill();
+  glowTex = new THREE.CanvasTexture(cv);
+  return glowTex;
+}
+
+// 車1台を構築。look に見た目の指定（なければ標準）
+export function buildCar({ color, num, quality = 2, rimDark = false, look }) {
   const S = getShared(quality);
+  const L = { ...DEFAULT_LOOK, ...(look || {}) };
+  if (!look) {
+    if (color != null) L.color = color;
+    if (num != null) L.num = num;
+  }
+  if (rimDark) L.wheelColor = 0x2a2c30;
+  const own = []; // この車だけが持つ（dispose 対象）
   const root = new THREE.Group();
   const body = new THREE.Group(); // ロール・ピッチ用
   root.add(body);
+
+  // ボディ塗装
+  const F = FINISH[L.finish] || FINISH.metallic;
+  const striped = L.stripe !== 'none';
+  const map = striped ? liveryTexture(L.color, L.stripe, L.stripeColor) : null;
+  if (map) own.push(map);
+  const common = { color: striped ? 0xffffff : L.color, map, metalness: F.m, roughness: F.r, envMapIntensity: F.env };
   const paint = quality >= 2
-    ? new THREE.MeshPhysicalMaterial({ color, metalness: 0.55, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.2 })
-    : new THREE.MeshStandardMaterial({ color, metalness: 0.5, roughness: 0.3, envMapIntensity: 1.2 });
+    ? new THREE.MeshPhysicalMaterial({ ...common, clearcoat: F.cc, clearcoatRoughness: F.ccr, ...(F.irid ? { iridescence: 1, iridescenceIOR: 1.6, iridescenceThicknessRange: [180, 520] } : {}) })
+    : new THREE.MeshStandardMaterial(common);
+  own.push(paint);
   const bodyMesh = new THREE.Mesh(S.body, paint);
   bodyMesh.castShadow = true;
   body.add(bodyMesh);
@@ -357,17 +523,35 @@ export function buildCar({ color = 0xd01020, num = 1, quality = 2, rimDark = fal
   const trim = new THREE.Mesh(S.trim, S.mats.carbon);
   trim.castShadow = true;
   body.add(trim);
-  // ゼッケン・ストライプ・ライト
-  const numMat = new THREE.MeshStandardMaterial({ map: numberTexture(num), roughness: 0.4, transparent: true, polygonOffset: true, polygonOffsetFactor: -2 });
+  // リアウイング
+  let wingMesh = null;
+  const wg = wingGeometry(L.wing);
+  if (wg) {
+    wingMesh = new THREE.Mesh(wg, S.mats.carbon);
+    wingMesh.castShadow = true;
+    body.add(wingMesh);
+  }
+  // ゼッケン・サイドライン・ライト
+  const numMat = new THREE.MeshStandardMaterial({ map: numberTexture(L.num), roughness: 0.4, transparent: true, polygonOffset: true, polygonOffsetFactor: -2 });
+  own.push(numMat, numMat.map);
   body.add(new THREE.Mesh(S.nums, numMat));
-  body.add(new THREE.Mesh(S.stripes, S.mats.stripe));
+  let sideMat = S.mats.stripe;
+  if (striped) {
+    sideMat = new THREE.MeshStandardMaterial({ color: L.stripeColor, roughness: 0.35, metalness: 0.2, polygonOffset: true, polygonOffsetFactor: -2 });
+    own.push(sideMat);
+  }
+  body.add(new THREE.Mesh(S.stripes, sideMat));
   const tailMat = new THREE.MeshStandardMaterial({ color: 0x400000, emissive: 0xff1010, emissiveIntensity: 0.6, roughness: 0.2 });
+  own.push(tailMat);
   body.add(new THREE.Mesh(S.heads, S.mats.head));
   body.add(new THREE.Mesh(S.tails, tailMat));
   body.add(new THREE.Mesh(S.exhausts, S.mats.exhaust));
   // ホイール
   const wheels = [];
-  const rimMat = rimDark ? S.mats.rimDark : S.mats.rim;
+  const rimMat = new THREE.MeshStandardMaterial({ color: L.wheelColor, metalness: 0.9, roughness: L.wheelColor < 0x202020 ? 0.2 : 0.3 });
+  const calMat = new THREE.MeshStandardMaterial({ color: L.caliper, metalness: 0.3, roughness: 0.4 });
+  own.push(rimMat, calMat);
+  const rimGeo = rimGeometry(L.wheel);
   for (const [x, z, front] of [[0.82, FA, 1], [-0.82, FA, 1], [0.82, RA, 0], [-0.82, RA, 0]]) {
     const pivot = new THREE.Group();
     pivot.position.set(x, WR, z);
@@ -375,12 +559,12 @@ export function buildCar({ color = 0xd01020, num = 1, quality = 2, rimDark = fal
     const side = x > 0 ? 1 : -1;
     const tire = new THREE.Mesh(S.tire, S.mats.tire);
     tire.castShadow = true;
-    const rim = new THREE.Mesh(S.rim, rimMat);
+    const rim = new THREE.Mesh(rimGeo, rimMat);
     rim.scale.x = side;
     const disc = new THREE.Mesh(S.disc, S.mats.disc);
     disc.scale.x = side;
     spin.add(tire, rim, disc);
-    const cal = new THREE.Mesh(S.caliper, S.mats.caliper);
+    const cal = new THREE.Mesh(S.caliper, calMat);
     cal.scale.x = side;
     pivot.add(spin, cal);
     root.add(pivot);
@@ -391,6 +575,18 @@ export function buildCar({ color = 0xd01020, num = 1, quality = 2, rimDark = fal
   sh.position.y = 0.03;
   sh.renderOrder = 1;
   root.add(sh);
+  // アンダーグロー
+  let glowMat = null;
+  const rainbow = L.glow === 'rainbow';
+  if (L.glow != null) {
+    glowMat = new THREE.MeshBasicMaterial({ map: glowTexture(), color: rainbow ? 0xff0000 : L.glow, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, opacity: 1 });
+    own.push(glowMat);
+    const gm = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 7.2).rotateX(-Math.PI / 2), glowMat);
+    gm.position.y = 0.06;
+    gm.renderOrder = 2;
+    own.push(gm.geometry);
+    root.add(gm);
+  }
 
   return {
     root,
@@ -399,10 +595,12 @@ export function buildCar({ color = 0xd01020, num = 1, quality = 2, rimDark = fal
     paint,
     tailMat,
     shadow: sh,
+    look: L,
     setShadows(on) {
       bodyMesh.castShadow = on;
       cabin.castShadow = on;
       trim.castShadow = on;
+      if (wingMesh) wingMesh.castShadow = on;
       for (const w of wheels) w.spin.children[0].castShadow = on;
     },
     // 姿勢更新
@@ -418,6 +616,10 @@ export function buildCar({ color = 0xd01020, num = 1, quality = 2, rimDark = fal
       }
       const br = state.braking || 0;
       tailMat.emissiveIntensity = 0.6 + br * 3.5;
+      if (rainbow) glowMat.color.setHSL((performance.now() / 4000) % 1, 1, 0.5);
+    },
+    dispose() {
+      for (const o of own) o.dispose && o.dispose();
     },
   };
 }
