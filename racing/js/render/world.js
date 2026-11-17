@@ -42,6 +42,8 @@ const ENV = {
   morning: { sun: 0xffd8a8, sunI: 2.0, hemiSky: 0xc8d4e4, hemiGround: 0x4a5040, hemiI: 0.7, envI: 0.8, fogColor: 0xc9cdd2, turbidity: 6, rayleigh: 2.0, mie: 0.01, mieG: 0.85 },
   dusk: { sun: 0xff9a52, sunI: 2.6, hemiSky: 0x9fb2d8, hemiGround: 0x6a4a30, hemiI: 0.55, envI: 0.75, fogColor: 0xe6a87a, turbidity: 8, rayleigh: 2.6, mie: 0.006, mieG: 0.9 },
   night: { sun: 0x8fa8ff, sunI: 0.35, hemiSky: 0x29324a, hemiGround: 0x15120f, hemiI: 0.5, envI: 0.25, fogColor: 0x10141d, turbidity: 1, rayleigh: 0.2, mie: 0.002, mieG: 0.7 },
+  snow: { sun: 0xeaf0ff, sunI: 2.4, hemiSky: 0xcdd8ea, hemiGround: 0x9aa8bc, hemiI: 1.15, envI: 0.95, fogColor: 0xcfd7e2, turbidity: 9, rayleigh: 1.1, mie: 0.02, mieG: 0.7 },
+  hot: { sun: 0xffe2b4, sunI: 3.5, hemiSky: 0xe6d3b0, hemiGround: 0x8a5a36, hemiI: 0.6, envI: 0.9, fogColor: 0xe6d0a8, turbidity: 8, rayleigh: 1.4, mie: 0.012, mieG: 0.82 },
   rain: { sun: 0xdfe6ee, sunI: 1.1, hemiSky: 0xa7b0ba, hemiGround: 0x2f3a2c, hemiI: 0.95, envI: 0.8, fogColor: 0x8d969e, turbidity: 18, rayleigh: 0.4, mie: 0.02, mieG: 0.6 },
 };
 
@@ -55,6 +57,7 @@ export class World {
     this.rand = rng(track.def.id.length * 1013);
     this.night = this.def.env.time === 'night';
     this.rain = this.def.env.time === 'rain';
+    this.snow = this.def.env.time === 'snow';
     this.updatables = [];
     this.buildSky();
     this.buildLights();
@@ -66,6 +69,9 @@ export class World {
     this.buildScenery();
     if (this.night) this.buildStreetLights();
   }
+
+  // 道を作る範囲（周回コースは全周。ラリーはゴールまで）
+  get lastIndex() { return this.track.N; }
 
   // ---------- 空・光 ----------
   buildSky() {
@@ -408,12 +414,13 @@ export class World {
   buildTerrain() {
     const tr = this.track;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, avgY = 0;
-    for (let i = 0; i < tr.N; i++) {
+    const lastI = this.lastIndex;
+    for (let i = 0; i < lastI; i++) {
       minX = Math.min(minX, tr.x[i]); maxX = Math.max(maxX, tr.x[i]);
       minZ = Math.min(minZ, tr.z[i]); maxZ = Math.max(maxZ, tr.z[i]);
       avgY += tr.y[i];
     }
-    avgY /= tr.N;
+    avgY /= lastI;
     const margin = 520;
     this.bounds = { minX: minX - margin, maxX: maxX + margin, minZ: minZ - margin, maxZ: maxZ + margin };
     this.center = new THREE.Vector3((minX + maxX) / 2, avgY, (minZ + maxZ) / 2);
@@ -422,14 +429,14 @@ export class World {
     const res = this.quality >= 2 ? 6 : 9;
     const nx = Math.ceil(W / res), nz = Math.ceil(H / res);
     const sc = this.def.scenery;
-    const amp = { country: 18, mountain: 70, city: 0, desert: 14, forest: 22 }[sc];
+    const amp = { country: 18, mountain: 70, city: 0, desert: 14, forest: 22, alpine: 60 }[sc];
     // 各頂点から最寄りのコース点（半径 RAD 内）をスタンプ方式で求める
     const RAD = 140;
     const nv = (nx + 1) * (nz + 1);
     const bestD = new Float32Array(nv).fill(Infinity);
     const bestI = new Int32Array(nv).fill(-1);
     const r = Math.ceil(RAD / res);
-    for (let k = 0; k < tr.N; k += 1) {
+    for (let k = 0; k < lastI; k += 1) {
       const ci = Math.round((tr.x[k] - this.bounds.minX) / res), cj = Math.round((tr.z[k] - this.bounds.minZ) / res);
       for (let j = Math.max(0, cj - r); j <= Math.min(nz, cj + r); j++) {
         const z = this.bounds.minZ + j * res;
@@ -484,7 +491,7 @@ export class World {
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     g.setIndex(idx);
     g.computeVertexNormals();
-    const kind = { country: 'grass', mountain: 'mountain', city: 'city', desert: 'sand', forest: 'forest' }[sc];
+    const kind = { country: 'grass', mountain: 'mountain', city: 'city', desert: 'sand', forest: 'forest', alpine: 'snow' }[sc];
     const gt = T.groundTextures(kind);
     const mat = new THREE.MeshStandardMaterial({ map: gt.map, normalMap: gt.normal, vertexColors: true, roughness: kind === 'city' ? 0.8 : 0.95, envMapIntensity: this.rain ? 0.9 : 0.4 });
     const terrain = new THREE.Mesh(g, mat);
@@ -500,12 +507,12 @@ export class World {
         const x = rp.getX(k), y = rp.getY(k), z = rp.getZ(k);
         const a = Math.atan2(z, x);
         const t = y + 0.5;
-        const hh = sc === 'desert' ? 90 + fbm2(Math.cos(a) * 3 + 9, Math.sin(a) * 3, 4) * 260 : 120 + fbm2(Math.cos(a) * 2.5, Math.sin(a) * 2.5, 5) * (sc === 'mountain' ? 700 : 380);
+        const hh = sc === 'desert' ? 90 + fbm2(Math.cos(a) * 3 + 9, Math.sin(a) * 3, 4) * 260 : 120 + fbm2(Math.cos(a) * 2.5, Math.sin(a) * 2.5, 5) * (sc === 'mountain' || sc === 'alpine' ? 700 : 380);
         const r = R * (1 + (1 - t) * 0.08);
         rp.setXYZ(k, Math.cos(a) * r, avgY - 30 + t * hh, Math.sin(a) * r);
       }
       ring.computeVertexNormals();
-      const mcol = { country: 0x56704a, mountain: 0x4a5a48, desert: 0xa5643e, forest: 0x2e4430 }[sc];
+      const mcol = { country: 0x56704a, mountain: 0x4a5a48, desert: 0xa5643e, forest: 0x2e4430, alpine: 0xdde4ee }[sc];
       const mm = new THREE.MeshStandardMaterial({ color: mcol, roughness: 1, side: THREE.BackSide });
       const mtn = new THREE.Mesh(ring, mm);
       mtn.position.set(this.center.x, 0, this.center.z);
@@ -728,9 +735,9 @@ export class World {
     const scl = new THREE.Vector3();
     const pv = new THREE.Vector3();
     const col = new THREE.Color();
-    if (sc === 'country' || sc === 'forest' || sc === 'mountain') {
+    if (sc === 'country' || sc === 'forest' || sc === 'mountain' || sc === 'alpine') {
       const pine = sc !== 'country';
-      const count = { country: 700, forest: 2600, mountain: 1800 }[sc] * (q >= 2 ? 1 : 0.55);
+      const count = { country: 700, forest: 2600, mountain: 1800, alpine: 1500 }[sc] * (q >= 2 ? 1 : 0.55);
       // 木: 幹 + 葉（円錐 or 球の集合）
       const trunkGeo = new THREE.CylinderGeometry(0.18, 0.3, 4, 6);
       trunkGeo.translate(0, 2, 0);
@@ -772,6 +779,7 @@ export class World {
         leaves.setMatrixAt(n, m4);
         const v = 0.75 + this.rand() * 0.5;
         col.setRGB(v * (0.9 + this.rand() * 0.2), v, v * (0.85 + this.rand() * 0.2));
+        if (sc === 'alpine') col.lerp(new THREE.Color(1.5, 1.6, 1.8), 0.35 + this.rand() * 0.3); // 雪をかぶった木
         if (sc === 'country' && this.rand() < 0.15) col.setRGB(1.2, 1.0, 0.6);
         leaves.setColorAt(n, col);
         n++;
@@ -781,7 +789,7 @@ export class World {
       leaves.receiveShadow = true;
       this.scene.add(trunks, leaves);
       // 岩
-      this.buildRocks(sc === 'mountain' ? 260 : 80, 0x8a8a84);
+      this.buildRocks(sc === 'mountain' || sc === 'alpine' ? 260 : 80, sc === 'alpine' ? 0xc8ced6 : 0x8a8a84);
     }
     if (sc === 'desert') {
       this.buildRocks(420, 0xb07850, true);

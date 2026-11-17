@@ -203,8 +203,9 @@ export function groundTextures(kind) {
     grass: [[0.16, 0.27, 0.08], [0.3, 0.38, 0.14]],
     forest: [[0.1, 0.19, 0.07], [0.2, 0.26, 0.1]],
     mountain: [[0.18, 0.25, 0.1], [0.32, 0.33, 0.18]],
-    sand: [[0.72, 0.52, 0.32], [0.86, 0.66, 0.44]],
+    sand: [[0.62, 0.4, 0.24], [0.78, 0.52, 0.3]],
     city: [[0.33, 0.33, 0.34], [0.42, 0.42, 0.43]],
+    snow: [[0.8, 0.85, 0.93], [0.96, 0.98, 1.0]],
   }[kind];
   for (let i = 0; i < S * S; i++) {
     const t = Math.min(1, Math.max(0, n[i] * 1.3 - 0.15 + (fine[i] - 0.5) * 0.5));
@@ -212,7 +213,7 @@ export function groundTextures(kind) {
     let r = pal[0][0] + (pal[1][0] - pal[0][0]) * t;
     let gg = pal[0][1] + (pal[1][1] - pal[0][1]) * t;
     let b = pal[0][2] + (pal[1][2] - pal[0][2]) * t;
-    const blade = (g - 0.5) * (kind === 'sand' ? 0.06 : 0.16);
+    const blade = (g - 0.5) * (kind === 'sand' ? 0.06 : kind === 'snow' ? 0.04 : 0.16);
     r += blade; gg += blade * 1.3; b += blade * 0.5;
     if (kind === 'sand') {
       const y = Math.floor(i / S), x = i % S;
@@ -524,4 +525,82 @@ export function rockTexture() {
   }
   ctx.putImageData(img, 0, 0);
   return (cache.rock = { map: tex(c), normal: tex(normalFromHeight(n, S, S, 6), { srgb: false }) });
+}
+
+// ラリー用の路面（砂利・土・雪・氷・砂）。幅方向 u、長さ方向 1 タイル = 30m
+const SURF_SPEC = {
+  gravel: { base: [0.68, 0.59, 0.46], grain: 0.16, rut: 0.22, rough: 0.95, ridge: 0.08, normal: 3.2 },
+  dirt: { base: [0.43, 0.3, 0.2], grain: 0.12, rut: 0.2, rough: 0.97, ridge: 0.06, normal: 2.4 },
+  sand: { base: [0.95, 0.84, 0.64], grain: 0.07, rut: 0.13, rough: 0.98, ridge: 0.05, normal: 1.6 },
+  snow: { base: [0.7, 0.74, 0.82], grain: 0.05, rut: 0.22, rough: 0.75, ridge: 0.05, normal: 1.4, cool: true },
+  ice: { base: [0.2, 0.24, 0.3], grain: 0.05, rut: 0.05, rough: 0.12, ridge: 0.0, normal: 0.6, cool: true, cracks: true },
+};
+export function surfaceTextures(kind) {
+  const key = 'surf' + kind;
+  if (cache[key]) return cache[key];
+  const sp = SURF_SPEC[kind];
+  const W = 512, H = 1024;
+  const n1 = fbm(256, 8, 5, 41 + kind.length);
+  const n2 = fbm(256, 32, 3, 77);
+  const c = canvas(W, H);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  const height = new Float32Array(W * H);
+  const rough = canvas(W, H);
+  const rctx = rough.getContext('2d');
+  const rimg = rctx.createImageData(W, H);
+  seed = 9001 + kind.length * 17;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const u = x / W;
+      const macro = n1[((y >> 2) % 256) * 256 + ((x >> 1) % 256)];
+      const fine = n2[((y >> 2) % 256) * 256 + ((x >> 1) % 256)];
+      const g = rnd();
+      // 轍（わだち）は左右 2 本、中央は盛り上がって明るい
+      const rutL = Math.exp(-((u - 0.3) ** 2) / 0.0025), rutR = Math.exp(-((u - 0.7) ** 2) / 0.0025);
+      const rut = Math.max(rutL, rutR);
+      const ridge = Math.exp(-((u - 0.5) ** 2) / 0.006);
+      let k = 1 + (macro - 0.5) * 0.35 + (fine - 0.5) * sp.grain * 2 + (g - 0.5) * sp.grain - rut * sp.rut + ridge * sp.ridge;
+      if (kind === 'snow') k += rut * 0.0 - (rut > 0.5 ? 0.0 : 0);
+      let r = sp.base[0] * k, gg = sp.base[1] * k, b = sp.base[2] * k;
+      let ro = sp.rough - rut * (kind === 'snow' || kind === 'ice' ? 0.25 : 0.05);
+      if (sp.cracks) {
+        const cr = Math.abs(Math.sin((x + macro * 140) * 0.05) * Math.sin((y + fine * 90) * 0.04));
+        if (cr < 0.03) { r += 0.35; gg += 0.38; b += 0.45; ro = 0.3; }
+      }
+      img.data[i * 4] = Math.max(0, Math.min(255, r * 255));
+      img.data[i * 4 + 1] = Math.max(0, Math.min(255, gg * 255));
+      img.data[i * 4 + 2] = Math.max(0, Math.min(255, b * 255));
+      img.data[i * 4 + 3] = 255;
+      rimg.data[i * 4 + 1] = Math.max(0, Math.min(255, ro * 255));
+      rimg.data[i * 4 + 3] = 255;
+      height[i] = g * 0.5 + macro * 0.3 + fine * 0.3 - rut * 0.5 + ridge * 0.2;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  rctx.putImageData(rimg, 0, 0);
+  return (cache[key] = { map: tex(c, { aniso: 16 }), normal: tex(normalFromHeight(height, W, H, sp.normal), { srgb: false, aniso: 16 }), rough: tex(rough, { srgb: false, aniso: 16 }) });
+}
+
+export function bannerTextureText(text, bg = '#d01818', fg = '#ffffff') {
+  const key = 'bt' + text + bg + fg;
+  if (cache[key]) return cache[key];
+  const c = canvas(1024, 160);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, 1024, 160);
+  // 縁取りのチェッカー
+  for (let x = 0; x < 1024; x += 32) {
+    ctx.fillStyle = (x / 32) % 2 ? '#111' : '#fff';
+    ctx.fillRect(x, 0, 32, 14);
+    ctx.fillStyle = (x / 32) % 2 ? '#fff' : '#111';
+    ctx.fillRect(x, 146, 32, 14);
+  }
+  ctx.fillStyle = fg;
+  ctx.font = 'italic 900 96px Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 512, 84);
+  return (cache[key] = tex(c));
 }

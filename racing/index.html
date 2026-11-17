@@ -24,9 +24,17 @@
   </header>
   <div class="menu-body">
     <div class="row mode-row">
-      <div class="seg" id="modeSeg">
-        <button data-v="race" class="on">レース</button>
-        <button data-v="ta">タイムアタック</button>
+      <div class="row switches">
+        <div class="seg" id="genreSeg">
+          <button data-v="gt" class="on">GT</button>
+          <button data-v="rally">ラリー</button>
+          <button data-v="bike">バイク</button>
+          <button data-v="boat">ボート</button>
+        </div>
+        <div class="seg" id="modeSeg">
+          <button data-v="race" class="on">レース</button>
+          <button data-v="ta">タイムアタック</button>
+        </div>
       </div>
       <div class="row tools">
         <div class="coin-pill" title="所持コイン"><i class="coin"></i><b id="menuCoins">0</b></div>
@@ -132,12 +140,12 @@
 <section id="hud" class="screen" data-steer="slide">
   <div class="hud-tl">
     <div class="pos"><span id="hPos">8</span><small>/<span id="hTot">8</span></small></div>
-    <div class="lap">LAP <span id="hLap">1</span>/<span id="hLaps">3</span></div>
+    <div class="lap" id="hLapBox">LAP <span id="hLap">1</span>/<span id="hLaps">3</span></div>
   </div>
   <div class="hud-tr">
     <div class="t-main" id="hTime">0:00.000</div>
-    <div class="t-sub"><span>LAST</span><b id="hLast">--:--.---</b></div>
-    <div class="t-sub"><span>BEST</span><b id="hBest">--:--.---</b></div>
+    <div class="t-sub"><span id="hLastL">LAST</span><b id="hLast">--:--.---</b></div>
+    <div class="t-sub"><span id="hBestL">BEST</span><b id="hBest">--:--.---</b></div>
     <div class="t-delta" id="hDelta"></div>
     <canvas id="minimap" width="200" height="200"></canvas>
   </div>
@@ -155,6 +163,7 @@
   <div class="msg" id="hMsg"></div>
   <div class="sub-msg" id="hSubMsg"></div>
   <div class="standings" id="hStand"></div>
+  <div class="notes" id="hNotes"></div>
 
   <!-- タッチ操作 -->
   <div class="touch">

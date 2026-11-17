@@ -490,7 +490,7 @@ function glowTexture() {
 }
 
 // 車1台を構築。look に見た目の指定（なければ標準）
-export function buildCar({ color, num, quality = 2, rimDark = false, look }) {
+export function buildCar({ color, num, quality = 2, rimDark = false, look, kit }) {
   const S = getShared(quality);
   const L = { ...DEFAULT_LOOK, ...(look || {}) };
   if (!look) {
@@ -570,6 +570,35 @@ export function buildCar({ color, num, quality = 2, rimDark = false, look }) {
     root.add(pivot);
     wheels.push({ pivot, spin, front });
   }
+  // ラリーカー: ルーフスクープ・フォグランプ・マッドフラップ。車高も少し上げる
+  const lift = kit === 'rally' ? 0.12 : 0;
+  if (kit === 'rally') {
+    const parts = [];
+    const add = (geo, x, y, z) => { geo.translate(x, y, z); parts.push(geo); };
+    add(new THREE.BoxGeometry(0.46, 0.1, 0.5), 0, 1.25, -0.2);
+    add(new THREE.BoxGeometry(0.34, 0.06, 0.16), 0, 1.3, -0.05);
+    add(new THREE.BoxGeometry(1.3, 0.05, 0.1), 0, 0.66, 2.02);
+    for (const x of [-0.5, -0.17, 0.17, 0.5]) {
+      const l = new THREE.CylinderGeometry(0.1, 0.1, 0.1, 14);
+      l.rotateX(Math.PI / 2);
+      add(l, x, 0.74, 2.1);
+    }
+    for (const sx of [1, -1]) {
+      add(new THREE.BoxGeometry(0.02, 0.3, 0.34), sx * 0.96, 0.22, RA - 0.5);
+      add(new THREE.BoxGeometry(0.02, 0.26, 0.3), sx * 0.96, 0.2, FA - 0.5);
+    }
+    const rm = new THREE.Mesh(mergeGeos(parts), S.mats.carbon);
+    rm.castShadow = true;
+    body.add(rm);
+    const lampGeo = new THREE.CircleGeometry(0.085, 14);
+    const lampMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2cc, emissiveIntensity: 1.4 });
+    own.push(lampMat);
+    for (const x of [-0.5, -0.17, 0.17, 0.5]) {
+      const lm = new THREE.Mesh(lampGeo, lampMat);
+      lm.position.set(x, 0.74, 2.153);
+      body.add(lm);
+    }
+  }
   // 接地影
   const sh = new THREE.Mesh(S.shadowGeo, S.mats.shadow);
   sh.position.y = 0.03;
@@ -609,7 +638,7 @@ export function buildCar({ color, num, quality = 2, rimDark = false, look }) {
       root.rotation.set(-(state.slopePitch || 0), state.psi, 0, 'YXZ');
       body.rotation.x = -((state.pitch || 0) - (state.slopePitch || 0)) * 0.6;
       body.rotation.z = state.roll || 0;
-      body.position.y = 0.02;
+      body.position.y = 0.02 + lift;
       for (const w of wheels) {
         w.spin.rotation.x = state.wheelRot || 0;
         if (w.front) w.pivot.rotation.y = steerAngle || 0;

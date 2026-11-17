@@ -230,3 +230,13 @@ export function raceReward(info) {
 export const TA_LAP_COINS = 20;
 export const TA_BEST_COINS = 80;
 export const TA_MAX_PAID_LAPS = 10;
+
+// ラリー: ステージの順位に応じた報酬。長いステージなので周回レースより少し多め
+export function stageReward(info) {
+  const base = Math.round((POS_COINS[Math.min(7, info.position - 1)] * (DIFF_MULT[info.difficulty] ?? 1) * 1.2) / 10) * 10;
+  const rows = [{ label: `${info.position}位の賞金`, coins: base }];
+  if (info.clean) rows.push({ label: 'ノーミス走行（強い接触なし）', coins: 120 });
+  if (info.firstPodium) rows.push({ label: 'このステージ・難易度で初の表彰台', coins: 150 });
+  if (info.firstWin) rows.push({ label: 'このステージ・難易度で初優勝', coins: 300 });
+  return { rows, total: rows.reduce((a, r) => a + r.coins, 0) };
+}

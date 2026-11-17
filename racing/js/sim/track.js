@@ -27,10 +27,11 @@ export class Track {
   constructor(def) {
     this.def = def;
     this.halfW = def.width / 2;
-    this.grip = def.grip;
+    this.grip = def.grip ?? 1;
     this.build(def);
+    this.buildSurfaces(def);
     this.buildRacingLine();
-    this.buildSpeedProfile();
+    this.buildSpeedProfile(def.spec || CAR_SPEC);
     this.buildHash();
   }
 
@@ -128,12 +129,41 @@ export class Track {
     // 縁石（曲率がある区間）
     this.curb = new Uint8Array(N);
     const kTh = 1 / 230;
-    for (let i = 0; i < N; i++) {
+    for (let i = 0; i < N && def.curbs !== false; i++) {
       if (Math.abs(this.kappa[i]) > kTh) {
         for (let o = -10; o <= 10; o++) this.curb[(i + o + N) % N] = 1;
       }
     }
   }
+
+  // 路面の種類ごとのグリップ（ラリー）。def.surfaces = [[開始割合, 終了割合, 種類], ...]（ステージ長に対する割合）
+  buildSurfaces(def) {
+    const N = this.N;
+    this.surfArr = new Uint8Array(N);
+    this.gripArr = new Float32Array(N).fill(this.grip);
+    this.stageEnd = def.stage ? def.stage * this.length : null; // 一本道のゴール位置 (m)
+    this.stageN = this.stageEnd ? Math.min(N - 1, Math.round(this.stageEnd / this.ds)) : N;
+    if (!def.surfaces) return;
+    const len = this.stageEnd || this.length;
+    for (const [a, b, kind] of def.surfaces) {
+      const k = SURFACE_KINDS.indexOf(kind);
+      if (k < 0) continue;
+      const i0 = Math.floor(((a * len) / this.length) * N), i1 = Math.ceil(((b * len) / this.length) * N);
+      for (let i = i0; i < i1 && i < N; i++) {
+        this.surfArr[i] = k;
+        this.gripArr[i] = SURFACE_GRIP[kind] * (def.grip ?? 1);
+      }
+    }
+    // 境目をなめらかに（路面が変わる瞬間にグリップが急変しないように）
+    const g = Float32Array.from(this.gripArr);
+    for (let i = 0; i < N; i++) {
+      let acc = 0;
+      for (let o = -6; o <= 6; o++) acc += g[(i + o + N) % N];
+      this.gripArr[i] = acc / 13;
+    }
+  }
+
+  gripAt(i) { return this.gripArr[i]; }
 
   // レーシングライン: 最小曲率に近いラインを反復スムージングで求める
   buildRacingLine() {
@@ -197,30 +227,31 @@ export class Track {
   }
 
   // 理想速度プロファイル（摩擦円・ダウンフォース・パワーを考慮）
-  buildSpeedProfile(muScale = 0.92) {
+  buildSpeedProfile(spec = CAR_SPEC, muScale = 0.92) {
     const N = this.N;
-    const c = CAR_SPEC;
-    const mu = c.mu * this.grip * muScale;
+    const c = spec;
+    const muOf = (i) => c.mu * this.gripArr[i] * muScale;
     const dfk = (0.5 * 1.2 * c.ClA) / c.mass; // a_down = dfk * v^2
     const dragk = (0.5 * 1.2 * c.CdA) / c.mass;
     const vmax = c.topSpeed;
     const v = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       const k = Math.abs(this.lineK[i]);
+      const mu = muOf(i);
       const den = k - mu * dfk;
       let vi = den <= 1e-6 ? vmax : Math.sqrt((mu * G) / den);
       v[i] = Math.min(vi, vmax);
     }
     const latUse = (vi, i) => vi * vi * Math.abs(this.lineK[i]);
-    const avail = (vi) => mu * (G + dfk * vi * vi);
+    const avail = (vi, i) => muOf(i) * (G + dfk * vi * vi);
     // 前進（加速制限）
     for (let pass = 0; pass < 2; pass++) {
       for (let k = 0; k < N; k++) {
         const i = k, b = (k + 1) % N;
         const vi = v[i];
         const lat = latUse(vi, i);
-        const tot = avail(vi);
-        const longAvail = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * 0.55; // 後輪駆動なのでトラクション控えめ
+        const tot = avail(vi, i);
+        const longAvail = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * (c.tractionK ?? 0.55); // 後輪駆動なのでトラクション控えめ
         const pw = c.power / (c.mass * Math.max(vi, 5));
         const acc = Math.min(longAvail, pw) - dragk * vi * vi;
         const vn = Math.sqrt(Math.max(0, vi * vi + 2 * Math.max(acc, 0) * this.lineDs[i]));
@@ -233,8 +264,8 @@ export class Track {
         const i = k, a = (k - 1 + N) % N;
         const vi = v[i];
         const lat = latUse(vi, i);
-        const tot = avail(vi);
-        const dec = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * 0.92 + dragk * vi * vi;
+        const tot = avail(vi, i);
+        const dec = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * (c.brakeK ?? 0.92) + dragk * vi * vi;
         const vp = Math.sqrt(vi * vi + 2 * dec * this.lineDs[a]);
         if (vp < v[a]) v[a] = vp;
       }
@@ -273,7 +304,8 @@ export class Track {
   buildHash() {
     this.cell = 24;
     this.hash = new Map();
-    for (let i = 0; i < this.N; i++) {
+    const lim = this.stageEnd ? Math.min(this.N, this.stageN + Math.ceil(160 / this.ds)) : this.N;
+    for (let i = 0; i < lim; i++) {
       const k = this.key(Math.floor(this.x[i] / this.cell), Math.floor(this.z[i] / this.cell));
       if (!this.hash.has(k)) this.hash.set(k, []);
       this.hash.get(k).push(i);
@@ -377,11 +409,17 @@ export class Track {
     if (curbHere && a <= this.halfW + 1.3) return SURF.curb;
     if (this.def.scenery === 'city') return SURF.asphalt;
     if (this.def.scenery === 'desert') return SURF.sand;
+    if (this.def.scenery === 'alpine') return SURF.snow;
     return SURF.grass;
   }
 }
 
+// 路面の種類（ラリー）とグリップ
+export const SURFACE_KINDS = ['tarmac', 'gravel', 'dirt', 'snow', 'ice', 'sand'];
+export const SURFACE_GRIP = { tarmac: 1, gravel: 0.74, dirt: 0.8, snow: 0.5, ice: 0.3, sand: 0.64 };
+
 export const SURF = {
+  snow: { grip: 0.5, drag: 260, type: 3 },
   asphalt: { grip: 1, drag: 0, type: 0 },
   curb: { grip: 0.93, drag: 30, type: 1 },
   grass: { grip: 0.58, drag: 230, type: 2 },

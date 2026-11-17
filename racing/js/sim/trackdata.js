@@ -3,7 +3,7 @@
 
 // 多角形の頂点 [x, z, コーナー半径, 標高] を円弧でつないだコース。
 // 半径が大きすぎる場合は辺の長さに合わせて自動で縮める。始点は最初の辺の中間。
-function poly(verts, step = 5) {
+export function poly(verts, step = 5) {
   const n = verts.length;
   const V = verts.map((v) => ({ x: v[0], z: v[1], R: v[2] ?? 30, y: v[3] ?? 0 }));
   const fil = V.map((v, i) => {

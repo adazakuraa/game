@@ -124,7 +124,8 @@ export class Car {
     const sRR = tr.surfaceAt(projR.d - hw * latDot, projR.curb);
     this.wheelSurf[0] = sFL.type; this.wheelSurf[1] = sFR.type;
     this.wheelSurf[2] = sRL.type; this.wheelSurf[3] = sRR.type;
-    const baseMu = c.mu * tr.grip;
+    const baseMu = c.mu * tr.gripArr[proj.i];
+    this.roadSurf = tr.surfArr[proj.i]; // 路面の種類（砂煙・雪煙の演出用）
     const muF = (baseMu * (sFL.grip + sFR.grip)) / 2;
     const muR = (baseMu * (sRL.grip + sRR.grip)) / 2;
     const surfDrag = (sFL.drag + sFR.drag + sRL.drag + sRR.drag) / 4;

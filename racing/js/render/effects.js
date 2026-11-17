@@ -7,11 +7,12 @@ export class Effects {
     this.scene = scene;
     this.track = track;
     this.rain = opts.rain;
+    this.snow = !!opts.snow;
     this.quality = opts.quality;
     this._tc = new THREE.Color();
     this.buildSkids();
     this.buildParticles();
-    if (this.rain) this.buildRain();
+    if (this.rain || this.snow) this.buildRain();
   }
 
   // ---- スキッドマーク（リングバッファ） ----
@@ -156,7 +157,12 @@ export class Effects {
         if (st.lock && !rear) a = Math.max(a, st.lock * 0.8);
         if (st.wheelspin && rear) a = Math.max(a, st.wheelspin * 0.8);
       }
-      this.addSkid(key + w, x, st.y, z, lx, lz, Math.min(1, a * 1.4));
+      const rs = st.roadSurf || 0; // 0 舗装 1 砂利 2 土 3 雪 4 氷 5 砂
+      this.addSkid(key + w, x, st.y, z, lx, lz, rs === 0 ? Math.min(1, a * 1.4) : 0);
+      if (rs !== 0 && rs !== 4 && surf <= 1 && sp > 5 && (rear || sp > 20) && Math.random() < dt * (rear ? 46 : 20) * Math.min(1.4, sp / 28)) {
+        const col = [[0.66, 0.6, 0.52], [0.52, 0.4, 0.3], [0.97, 0.98, 1.0], null, [0.82, 0.68, 0.46]][rs === 5 ? 4 : rs - 1];
+        if (col) this.emit(x, st.y + 0.2, z, -st.vx * 0.12 + (Math.random() - 0.5) * 1.6, 0.7 + Math.random() * 1.4, -st.vz * 0.12 + (Math.random() - 0.5) * 1.6, 1.1, 4.2, 1.7 + Math.random() * 1.2, col[0], col[1], col[2], rs === 3 ? 0.5 : 0.42);
+      }
       if (a > 0.15 && sp > 3 && Math.random() < dt * 40 * a) {
         this.emit(x, st.y + 0.25, z, -st.vx * 0.15 + (Math.random() - 0.5), 0.6 + Math.random(), -st.vz * 0.15 + (Math.random() - 0.5), 0.9, 2.8, 1.6 + Math.random(), sr, sg, sb, this.rain ? 0.25 : 0.4);
       }
@@ -185,7 +191,7 @@ export class Effects {
     g.setAttribute('position', new THREE.BufferAttribute(p, 3));
     this.rainPos = p;
     this.rainN = N;
-    const mat = new THREE.LineBasicMaterial({ color: 0xaab4c0, transparent: true, opacity: 0.35, depthWrite: false });
+    const mat = new THREE.LineBasicMaterial({ color: this.snow ? 0xffffff : 0xaab4c0, transparent: true, opacity: this.snow ? 0.8 : 0.35, depthWrite: false });
     this.rainLines = new THREE.LineSegments(g, mat);
     this.rainLines.frustumCulled = false;
     this.scene.add(this.rainLines);
@@ -220,9 +226,10 @@ export class Effects {
       this.skidDirty = false;
     }
     // 雨: カメラの周りの箱で循環
-    if (this.rain) {
+    if (this.rain || this.snow) {
       this.rainT += dt;
-      const fall = 22;
+      const fall = this.snow ? 2.6 : 22;
+      const seg = this.snow ? 0.16 : 0.7;
       const sx = (camVel ? camVel.x : 0) * 0.03, sz = (camVel ? camVel.z : 0) * 0.03;
       for (let i = 0; i < this.rainN; i++) {
         const bx = this.rainBase[i * 3], bz = this.rainBase[i * 3 + 2];
@@ -232,8 +239,9 @@ export class Effects {
         const z = cam.z + ((((bz - cam.z) % 70) + 105) % 70) - 35;
         const yy = cam.y - 10 + y;
         const o = i * 6;
-        this.rainPos[o] = x; this.rainPos[o + 1] = yy; this.rainPos[o + 2] = z;
-        this.rainPos[o + 3] = x - sx; this.rainPos[o + 4] = yy - 0.7; this.rainPos[o + 5] = z - sz;
+        const sway = this.snow ? Math.sin(this.rainT * 0.9 + i) * 0.6 : 0;
+        this.rainPos[o] = x + sway; this.rainPos[o + 1] = yy; this.rainPos[o + 2] = z;
+        this.rainPos[o + 3] = x + sway - sx * (this.snow ? 0.15 : 1); this.rainPos[o + 4] = yy - seg; this.rainPos[o + 5] = z - sz * (this.snow ? 0.15 : 1);
       }
       this.rainLines.geometry.attributes.position.needsUpdate = true;
     }
