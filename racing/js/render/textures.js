@@ -533,6 +533,7 @@ const SURF_SPEC = {
   dirt: { base: [0.43, 0.3, 0.2], grain: 0.12, rut: 0.2, rough: 0.97, ridge: 0.06, normal: 2.4 },
   sand: { base: [0.95, 0.84, 0.64], grain: 0.07, rut: 0.13, rough: 0.98, ridge: 0.05, normal: 1.6 },
   snow: { base: [0.7, 0.74, 0.82], grain: 0.05, rut: 0.22, rough: 0.75, ridge: 0.05, normal: 1.4, cool: true },
+  cobble: { base: [0.5, 0.47, 0.43], grain: 0.08, rut: 0.0, rough: 0.8, ridge: 0.0, normal: 4, stones: true },
   ice: { base: [0.2, 0.24, 0.3], grain: 0.05, rut: 0.05, rough: 0.12, ridge: 0.0, normal: 0.6, cool: true, cracks: true },
 };
 export function surfaceTextures(kind) {
@@ -565,6 +566,17 @@ export function surfaceTextures(kind) {
       if (kind === 'snow') k += rut * 0.0 - (rut > 0.5 ? 0.0 : 0);
       let r = sp.base[0] * k, gg = sp.base[1] * k, b = sp.base[2] * k;
       let ro = sp.rough - rut * (kind === 'snow' || kind === 'ice' ? 0.25 : 0.05);
+      if (sp.stones) {
+        // 石畳: ずらして並べた石。目地は暗く低い
+        const sz = 22, row = Math.floor(y / sz), cx = (x + (row % 2) * (sz / 2)) % sz, cy = y % sz;
+        const id = row * 97 + Math.floor((x + (row % 2) * (sz / 2)) / sz);
+        const tone = 0.82 + ((Math.sin(id * 12.9898) * 43758.5453) % 1 + 1) % 1 * 0.36;
+        const edge = Math.min(cx, sz - cx, cy, sz - cy);
+        const gap = edge < 2.2;
+        r *= gap ? 0.45 : tone; gg *= gap ? 0.45 : tone; b *= gap ? 0.45 : tone;
+        height[i] = gap ? 0 : Math.min(1, edge / 6) + g * 0.1;
+        ro = gap ? 0.95 : 0.7;
+      }
       if (sp.cracks) {
         const cr = Math.abs(Math.sin((x + macro * 140) * 0.05) * Math.sin((y + fine * 90) * 0.04));
         if (cr < 0.03) { r += 0.35; gg += 0.38; b += 0.45; ro = 0.3; }
@@ -575,7 +587,7 @@ export function surfaceTextures(kind) {
       img.data[i * 4 + 3] = 255;
       rimg.data[i * 4 + 1] = Math.max(0, Math.min(255, ro * 255));
       rimg.data[i * 4 + 3] = 255;
-      height[i] = g * 0.5 + macro * 0.3 + fine * 0.3 - rut * 0.5 + ridge * 0.2;
+      if (!sp.stones) height[i] = g * 0.5 + macro * 0.3 + fine * 0.3 - rut * 0.5 + ridge * 0.2;
     }
   }
   ctx.putImageData(img, 0, 0);

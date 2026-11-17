@@ -136,15 +136,16 @@ export class Audio {
     const t = this.ctx.currentTime;
     const k = 0.05;
     const on = p.active ? 1 : 0;
+    const eng = p.engine ?? 1; // 0 にするとエンジン音なし（自転車）
     const f = (p.rpm / 60) * 3;
     this.oscs[0].frequency.setTargetAtTime(f, t, 0.02);
     this.oscs[1].frequency.setTargetAtTime(f * 0.5, t, 0.02);
     this.oscs[2].frequency.setTargetAtTime(f * 2.01, t, 0.02);
     this.oscs[3].frequency.setTargetAtTime(f * 0.25, t, 0.02);
     this.engLP.frequency.setTargetAtTime(380 + p.throttle * 2600 + p.rpm * 0.25, t, k);
-    this.engGain.gain.setTargetAtTime(on * (0.1 + p.throttle * 0.16), t, k);
+    this.engGain.gain.setTargetAtTime(on * eng * (0.1 + p.throttle * 0.16), t, k);
     this.intakeBP.frequency.setTargetAtTime(f * 4, t, k);
-    this.intakeGain.gain.setTargetAtTime(on * p.throttle * (p.rpm / 8000) * 0.12, t, k);
+    this.intakeGain.gain.setTargetAtTime(on * eng * p.throttle * (p.rpm / 8000) * 0.12, t, k);
     this.squealGain.gain.setTargetAtTime(on * Math.min(0.5, p.squeal * 0.5), t, 0.04);
     this.squealBP.frequency.setTargetAtTime(950 + p.squeal * 300, t, 0.1);
     const sp = Math.min(1, p.speed / 75);

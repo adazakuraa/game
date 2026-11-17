@@ -93,6 +93,9 @@ export class GameBase {
     $('#fTcs').textContent = 'TCS';
     $('#fAbs').textContent = 'ABS';
     $('#hGear').style.color = '';
+    $('#btnGas span').textContent = 'ACCEL';
+    $('#hRpm').style.background = '';
+    $('#btnBrake span').textContent = 'BRAKE';
     $('#hNotes').innerHTML = '';
     $('#hud .pos').style.display = '';
     $('#hStand').style.display = '';

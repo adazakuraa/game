@@ -415,8 +415,8 @@ export class Track {
 }
 
 // 路面の種類（ラリー）とグリップ
-export const SURFACE_KINDS = ['tarmac', 'gravel', 'dirt', 'snow', 'ice', 'sand'];
-export const SURFACE_GRIP = { tarmac: 1, gravel: 0.74, dirt: 0.8, snow: 0.5, ice: 0.3, sand: 0.64 };
+export const SURFACE_KINDS = ['tarmac', 'gravel', 'dirt', 'snow', 'ice', 'sand', 'cobble'];
+export const SURFACE_GRIP = { tarmac: 1, gravel: 0.74, dirt: 0.8, snow: 0.5, ice: 0.3, sand: 0.64, cobble: 0.86 };
 
 export const SURF = {
   snow: { grip: 0.5, drag: 260, type: 3 },
