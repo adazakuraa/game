@@ -109,7 +109,14 @@ export class Input {
     if (!this.enabled) return;
     if (e.pointerType === 'mouse') {
       if (document.pointerLockElement !== this.canvas) {
-        this.canvas.requestPointerLock?.();
+        try {
+          const r = this.canvas.requestPointerLock?.() as unknown;
+          if (r && typeof (r as Promise<void>).catch === 'function') (r as Promise<void>).catch(() => undefined);
+        } catch { /* pointer lock unavailable: drag-to-look below */ }
+        // Drag-to-look fallback while unlocked.
+        this.lookId = e.pointerId;
+        this.lookLast = { x: e.clientX, y: e.clientY };
+        try { this.surface.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       }
       return;
     }

@@ -168,7 +168,7 @@ export class Game {
       this.audio.setMuted(!(document.getElementById('opt-sound') as HTMLInputElement).checked);
       this.spares = Number((document.getElementById('opt-bottles') as HTMLSelectElement).value);
       this.startRun();
-      if (!this.mobile) this.canvas.requestPointerLock?.();
+      if (!this.mobile) this.tryPointerLock();
     });
     document.getElementById('resume-btn')!.addEventListener('click', () => this.setPaused(false));
     document.getElementById('restart-btn')!.addEventListener('click', () => this.startRun());
@@ -181,6 +181,13 @@ export class Game {
     document.addEventListener('pointerlockchange', () => {
       if (!document.pointerLockElement && this.state === 'play' && !this.mobile) this.setPaused(true);
     });
+  }
+
+  private tryPointerLock(): void {
+    try {
+      const r = this.canvas.requestPointerLock?.() as unknown;
+      if (r && typeof (r as Promise<void>).catch === 'function') (r as Promise<void>).catch(() => undefined);
+    } catch { /* not available in this frame; drag-to-look still works */ }
   }
 
   private withLoading(fn: () => void): void {
@@ -216,7 +223,7 @@ export class Game {
       this.state = 'play';
       this.input.enabled = true;
       this.showScreen(null);
-      if (!this.mobile) this.canvas.requestPointerLock?.();
+      if (!this.mobile) this.tryPointerLock();
     }
   }
 
@@ -298,7 +305,7 @@ export class Game {
     this.showScreen(null);
     this.hud.show(true);
     this.hud.banner('下山開始', '登頂は折り返し地点にすぎない。C4へ生きて帰れ', '', 4000);
-    if (!this.mobile) this.canvas.requestPointerLock?.();
+    if (!this.mobile) this.tryPointerLock();
   }
 
   // ---------------------------------------------------------------- loop
