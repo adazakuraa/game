@@ -228,7 +228,9 @@ export class Player {
       if (moved > 0 && slope > 31) {
         const base = Math.pow((slope - 31) / 19, 2) * 0.05;
         const mult = 1 + ctx.hypoxia * 2 + (ctx.stamina < 25 ? 1.5 : 0) + down * 2.5 + ctx.gust * 1.5 + ctx.drift * 2;
-        if (ctx.rng() < base * mult * moved) this.slip(!!this.clip);
+        // Kicked steps in the boot track are far more secure than fresh slope.
+        const onTrack = this.routeDist < 1.3 ? 0.35 : 1;
+        if (ctx.rng() < base * mult * moved * onTrack) this.slip(!!this.clip);
       }
     } else {
       this.speed *= 0.8;
