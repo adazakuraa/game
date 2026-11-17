@@ -294,3 +294,5 @@ body.force-touch .touch { display: block; }
 .clock.hot b { color: #ffd000; }
 .clock.go b { color: #3ddc84; }
 .clock.bad b { color: #ff3b2f; }
+
+#speedfx { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; pointer-events: none; z-index: 5; }

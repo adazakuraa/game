@@ -552,6 +552,9 @@ export function buildCar({ color, num, quality = 2, rimDark = false, look, kit }
   const calMat = new THREE.MeshStandardMaterial({ color: L.caliper, metalness: 0.3, roughness: 0.4 });
   own.push(rimMat, calMat);
   const rimGeo = rimGeometry(L.wheel);
+  // ブレーキディスク（強く踏み続けると赤熱する）
+  const discMat = new THREE.MeshStandardMaterial({ color: 0x55585c, metalness: 0.9, roughness: 0.5, emissive: 0xff3a08, emissiveIntensity: 0 });
+  own.push(discMat);
   for (const [x, z, front] of [[0.82, FA, 1], [-0.82, FA, 1], [0.82, RA, 0], [-0.82, RA, 0]]) {
     const pivot = new THREE.Group();
     pivot.position.set(x, WR, z);
@@ -561,7 +564,7 @@ export function buildCar({ color, num, quality = 2, rimDark = false, look, kit }
     tire.castShadow = true;
     const rim = new THREE.Mesh(rimGeo, rimMat);
     rim.scale.x = side;
-    const disc = new THREE.Mesh(S.disc, S.mats.disc);
+    const disc = new THREE.Mesh(S.disc, discMat);
     disc.scale.x = side;
     spin.add(tire, rim, disc);
     const cal = new THREE.Mesh(S.caliper, calMat);
@@ -645,6 +648,7 @@ export function buildCar({ color, num, quality = 2, rimDark = false, look, kit }
       }
       const br = state.braking || 0;
       tailMat.emissiveIntensity = 0.6 + br * 3.5;
+      discMat.emissiveIntensity = Math.max(0, (state.discHeat || 0) - 0.25) * 2.2;
       if (rainbow) glowMat.color.setHSL((performance.now() / 4000) % 1, 1, 0.5);
     },
     dispose() {

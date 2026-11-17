@@ -16,6 +16,12 @@ export class GameBase {
     this.camPos = new THREE.Vector3();
     this.camVel = new THREE.Vector3();
     this.reward = null;
+    this.latS = 0;
+    this.lonS = 0;
+    this.feel = { gear: 1, thr: 0, heat: 0, curbT: 0, flameCd: 0 };
+    this.speedCv = $('#speedfx');
+    this.speedCtx = this.speedCv ? this.speedCv.getContext('2d') : null;
+    this.streaks = Array.from({ length: 34 }, () => ({ a: Math.random() * Math.PI * 2, r: Math.random(), w: 0.5 + Math.random() }));
   }
 
   begin() {
@@ -87,6 +93,9 @@ export class GameBase {
   resetHud() {
     $('#hLapBox').innerHTML = 'LAP <span id="hLap">1</span>/<span id="hLaps">3</span>';
     $('#hLastL').textContent = 'LAST';
+    $('#hLast').textContent = '--:--.---';
+    $('#hBest').textContent = '--:--.---';
+    $('#hDelta').className = 't-delta';
     $('#hBestL').textContent = 'BEST';
     $('#hNotes').classList.remove('show');
     $('#hClock').className = 'clock';
@@ -121,7 +130,14 @@ export class GameBase {
     this.camYaw = snap ? p.psi : this.camYaw + d * Math.min(1, dt * (cfg.follow ?? 5.5));
     const fx = Math.sin(this.camYaw), fz = Math.cos(this.camYaw);
     const sp = p.speed || 0;
-    const pos = new THREE.Vector3(p.x - fx * cfg.dist, p.y + cfg.hgt, p.z - fz * cfg.dist);
+    // 加速で少し引き、ブレーキで寄る。コーナーでは外側へ振られる
+    const k3 = snap ? 1 : Math.min(1, dt * 3);
+    this.latS += (Math.max(-16, Math.min(16, p.latG || 0)) - this.latS) * k3;
+    this.lonS += (Math.max(-16, Math.min(10, p.longG || 0)) - this.lonS) * k3;
+    const dist = cfg.dist * (1 + this.lonS * 0.014);
+    const side = -this.latS * 0.045;
+    const lx = Math.cos(this.camYaw), lz = -Math.sin(this.camYaw);
+    const pos = new THREE.Vector3(p.x - fx * dist + lx * side, p.y + cfg.hgt - this.lonS * 0.012, p.z - fz * dist + lz * side);
     const look = new THREE.Vector3(p.x + fx * (cfg.lookAhead ?? 4), p.y + (cfg.lookY ?? 0.95), p.z + fz * (cfg.lookAhead ?? 4));
     let fov = (cfg.fov ?? 58) + sp * (cfg.fovSpeed ?? 0.16);
     if (camera.userData.portrait) fov += 22;
@@ -140,8 +156,70 @@ export class GameBase {
     if (p.rough) this.camPos.y += (Math.random() - 0.5) * 0.04 * Math.min(1, sp / 20) * p.rough;
     camera.position.copy(this.camPos);
     camera.lookAt(look);
+    camera.rotateZ(-this.latS * 0.0028); // 横Gで少し傾く
     camera.fov += (fov - camera.fov) * (snap ? 1 : Math.min(1, dt * 3));
     camera.updateProjectionMatrix();
+  }
+
+  // 速度感: 画面の外周に流れる線と周辺の減光（約 110km/h から）
+  speedFx(dt, speed, boost = 0) {
+    const cv = this.speedCv, g = this.speedCtx;
+    if (!g) return;
+    const W = Math.round(innerWidth / 2), H = Math.round(innerHeight / 2);
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    g.clearRect(0, 0, W, H);
+    const k = Math.max(0, Math.min(1, (speed - 30) / 38)) + boost;
+    if (k <= 0.01 || this.paused) return;
+    const cx = W / 2, cy = H * 0.46, R = Math.hypot(W, H) / 2;
+    const vg = g.createRadialGradient(cx, cy, R * 0.45, cx, cy, R);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, `rgba(0,0,0,${0.42 * k})`);
+    g.fillStyle = vg;
+    g.fillRect(0, 0, W, H);
+    g.strokeStyle = `rgba(255,255,255,${0.26 * k})`;
+    for (const s of this.streaks) {
+      s.r += dt * (1.6 + speed * 0.04) * s.w;
+      if (s.r > 1) { s.r = 0; s.a = Math.random() * Math.PI * 2; s.w = 0.5 + Math.random(); }
+      const r0 = R * (0.55 + s.r * 0.5), r1 = r0 + R * 0.12 * k * s.w;
+      g.lineWidth = 1 + s.w;
+      g.beginPath();
+      g.moveTo(cx + Math.cos(s.a) * r0, cy + Math.sin(s.a) * r0);
+      g.lineTo(cx + Math.cos(s.a) * r1, cy + Math.sin(s.a) * r1);
+      g.stroke();
+    }
+  }
+
+  clearSpeedFx() {
+    if (this.speedCtx) this.speedCtx.clearRect(0, 0, this.speedCv.width, this.speedCv.height);
+  }
+
+  // 車の走りの演出: ブレーキの熱、シフトアップとアクセルオフの炎・音、縁石や接触の振動
+  carFeel(dt, c) {
+    const f = this.feel;
+    if (dt <= 0) return;
+    f.heat = Math.max(0, f.heat + (c.braking * Math.min(1, (c.speed || 0) / 30) * 0.9 - 0.22) * dt);
+    f.heat = Math.min(1.4, f.heat);
+    c.discHeat = f.heat;
+    f.flameCd -= dt;
+    const upshift = c.gear > f.gear && c.gear >= 3;
+    const lift = f.thr > 0.8 && c.throttle < 0.15 && c.rpm > 5600;
+    if ((upshift || lift) && f.flameCd <= 0) {
+      this.fx.flame(c);
+      C.audio.pop(upshift ? 0.3 : 0.4);
+      f.flameCd = 0.25;
+      if (upshift) this.shake = Math.max(this.shake, 0.12);
+    }
+    f.gear = c.gear;
+    f.thr = c.throttle;
+    // 振動（対応端末のみ）
+    f.curbT -= dt;
+    if ((c.onCurb || c.offTrack) && (c.speed || 0) > 8 && f.curbT <= 0) { this.vibrate(c.offTrack ? 18 : 10); f.curbT = 0.12; }
+    if (c.impact > 3) this.vibrate(Math.min(80, c.impact * 8));
+    this.speedFx(dt, c.speed || 0);
+  }
+
+  vibrate(ms) {
+    try { if (navigator.vibrate) navigator.vibrate(ms); } catch { /* 非対応 */ }
   }
 
   // 車用カメラ（0: 追従 / 1: 引き / 2: ボンネット）
@@ -171,7 +249,7 @@ export class GameBase {
       camera.updateProjectionMatrix();
       return;
     }
-    this.followCamera(dt, snap, { ...c, rough: c.onCurb || c.offTrack ? 1 : 0 }, { dist: mode === 1 ? 9.5 : 6.4, hgt: mode === 1 ? 3.3 : 2.05, lookAhead: 4, lookY: 0.95, fov: 58, fovSpeed: 0.16 });
+    this.followCamera(dt, snap, { ...c, latG: c.u * c.r, longG: c.ax, rough: c.onCurb || c.offTrack ? 1 : 0 }, { dist: mode === 1 ? 9.5 : 6.4, hgt: mode === 1 ? 3.3 : 2.05, lookAhead: 4, lookY: 0.95, fov: 58, fovSpeed: 0.16 });
   }
 
   setPaused(p) {
@@ -181,6 +259,7 @@ export class GameBase {
   }
 
   dispose() {
+    this.clearSpeedFx();
     if (this.world && this.world.scene) {
       this.world.scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
     }

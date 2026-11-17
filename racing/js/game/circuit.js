@@ -214,53 +214,7 @@ export class CircuitGame extends GameBase {
 
 
   updateCamera(dt, snap = false) {
-    const c = this.race.player.car;
-    const mode = this.camMode;
-    let d = 0;
-    if (!snap) {
-      d = c.psi - this.camYaw;
-      while (d > Math.PI) d -= 2 * Math.PI;
-      while (d < -Math.PI) d += 2 * Math.PI;
-    }
-    this.camYaw = snap ? c.psi : this.camYaw + d * Math.min(1, dt * (mode === 2 ? 30 : 5.5));
-    const fx = Math.sin(this.camYaw), fz = Math.cos(this.camYaw);
-    const sp = c.speed || 0;
-    const portrait = C.camera.userData.portrait;
-    let pos = new THREE.Vector3(), look = new THREE.Vector3();
-    let fov;
-    if (mode === 2) {
-      // ボンネット視点
-      const hx = Math.sin(c.psi), hz = Math.cos(c.psi);
-      pos.set(c.x + hx * 0.2, c.y + 1.12, c.z + hz * 0.2);
-      look.set(c.x + hx * 20, c.y + 0.9 + Math.sin(c.slopePitch || 0) * 20, c.z + hz * 20);
-      fov = 68 + sp * 0.08;
-    } else {
-      const dist = mode === 1 ? 9.5 : 6.4;
-      const hgt = mode === 1 ? 3.3 : 2.05;
-      pos.set(c.x - fx * dist, c.y + hgt, c.z - fz * dist);
-      look.set(c.x + fx * 4, c.y + 0.95, c.z + fz * 4);
-      fov = 58 + sp * 0.16;
-    }
-    if (portrait) fov += 22;
-    // 地面にめり込まない
-    if (!snap) {
-      const k = Math.min(1, dt * (mode === 2 ? 60 : 14));
-      this.camVel.copy(pos).sub(this.camPos).divideScalar(Math.max(dt, 1e-3));
-      this.camPos.lerp(pos, k);
-    } else {
-      this.camPos.copy(pos);
-    }
-    if (this.shake > 0) {
-      this.camPos.x += (Math.random() - 0.5) * this.shake * 0.3;
-      this.camPos.y += (Math.random() - 0.5) * this.shake * 0.3;
-      this.shake = Math.max(0, this.shake - dt * 2.5);
-    }
-    // 縁石・芝の振動
-    if (c.onCurb || c.offTrack) this.camPos.y += (Math.random() - 0.5) * 0.04 * Math.min(1, sp / 20);
-    C.camera.position.copy(this.camPos);
-    C.camera.lookAt(look);
-    C.camera.fov += (fov - C.camera.fov) * (snap ? 1 : Math.min(1, dt * 3));
-    C.camera.updateProjectionMatrix();
+    this.carCamera(dt, snap, this.race.player.car);
   }
 
   render(dt) {
@@ -299,6 +253,7 @@ export class CircuitGame extends GameBase {
         this.ghost.update({ x: f[o] + (f[o2] - f[o]) * a, y: f[o + 1] + (f[o2 + 1] - f[o + 1]) * a, z: f[o + 2] + (f[o2 + 2] - f[o + 2]) * a, psi: f[o + 3] + dp * a, wheelRot: t * 60 }, 0);
       } else this.ghost.root.visible = false;
     }
+    if (this.race.state !== 'countdown') this.carFeel(dt, pc);
     this.updateCamera(dt);
     this.world.followLight(pc.x, pc.y, pc.z);
     if (dt > 0) this.fx.update(dt, C.camera.position, this.camVel);

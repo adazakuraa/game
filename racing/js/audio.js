@@ -157,6 +157,27 @@ export class Audio {
     this.aiGain.gain.setTargetAtTime(on * Math.min(0.1, p.aiNear * 0.1), t, 0.05);
   }
 
+  // アフターファイヤ（シフトアップやアクセルオフのパンッという音）
+  pop(vol = 0.35) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    for (let k = 0; k < 2; k++) {
+      const src = this.noise();
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 220 + Math.random() * 260;
+      bp.Q.value = 1.2;
+      const g = ctx.createGain();
+      const t0 = t + k * (0.05 + Math.random() * 0.05);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.09);
+      src.connect(bp).connect(g).connect(this.master);
+      src.stop(t0 + 0.12);
+    }
+  }
+
   impact(power) {
     if (!this.ctx) return;
     const ctx = this.ctx;

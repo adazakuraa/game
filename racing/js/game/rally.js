@@ -131,6 +131,7 @@ export class RallyGame extends GameBase {
       const slipAmount = Math.max(c.slipR * 3.2 - 0.1, c.slipF * 2.2 - 0.25, 0);
       this.fx.carFx('p', { ...c, slipAmount, lock: c.lock, wheelspin: c.wheelspin, smoke: this.look.smoke, roadSurf: c.roadSurf }, dt);
     }
+    if (r.state !== 'countdown') this.carFeel(dt, c);
     this.carCamera(dt, false, c);
     this.world.followLight(c.x, c.y, c.z);
     if (dt > 0) this.fx.update(dt, C.camera.position, this.camVel);

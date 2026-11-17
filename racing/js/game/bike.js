@@ -128,6 +128,7 @@ export class BikeGame extends GameBase {
     this.cam(dt, false);
     this.world.followLight(pr.x, pr.y, pr.z);
     if (dt > 0) this.fx.update(dt, C.camera.position, this.camVel);
+    this.speedFx(dt, pr.v * 3.2);
     C.renderer.render(this.scene, C.camera);
     this.updateHUD(dt, st);
     this.updateAudio();

@@ -178,6 +178,19 @@ export class Effects {
   }
 
   // ---- 雨 ----
+  // マフラーの炎（後ろ向きに短く噴く）
+  flame(st) {
+    const fx = Math.sin(st.psi), fz = Math.cos(st.psi);
+    const lx = Math.cos(st.psi), lz = -Math.sin(st.psi);
+    for (const side of [1, -1]) {
+      const x = st.x - fx * 2.45 + lx * side * 0.3, z = st.z - fz * 2.45 + lz * side * 0.3;
+      for (let k = 0; k < 4; k++) {
+        const sp = 3 + Math.random() * 4;
+        this.emit(x, (st.y || 0) + 0.24, z, (st.vx || 0) - fx * sp, 0.3 + Math.random() * 0.4, (st.vz || 0) - fz * sp, 0.18 + Math.random() * 0.1, 1.6, 0.12 + Math.random() * 0.08, 1.0, 0.55 + Math.random() * 0.25, 0.15, 0.95);
+      }
+    }
+  }
+
   // ボート: 艇首の水しぶき・スターンの噴き上げ・白い航跡
   boatFx(st, dt, rate = 1) {
     const sp = Math.hypot(st.vx || 0, st.vz || 0);

@@ -65,7 +65,7 @@ export class BoatGame extends GameBase {
   cam(dt, snap) {
     const c = this.race.player.car;
     const far = this.camMode === 1;
-    this.followCamera(dt, snap, c, { dist: far ? 11 : 7.2, hgt: far ? 4.2 : 2.6, lookAhead: 6, lookY: 0.6, fov: 60, fovSpeed: 0.3, follow: 4.5 });
+    this.followCamera(dt, snap, { ...c, latG: c.u * c.r * 0.6, longG: c.ax }, { dist: far ? 11 : 7.2, hgt: far ? 4.2 : 2.6, lookAhead: 6, lookY: 0.6, fov: 60, fovSpeed: 0.3, follow: 4.5 });
   }
 
   handleEvents() {
@@ -142,6 +142,7 @@ export class BoatGame extends GameBase {
     this.world.setClock(r.clock);
     this.world.tick(dt);
     if (dt > 0) this.fx.update(dt, C.camera.position, this.camVel);
+    this.speedFx(dt, (pc.speed || 0) * 2.6);
     C.renderer.render(this.scene, C.camera);
     this.updateHUD(dt);
     this.updateAudio();
