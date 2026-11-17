@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#07090c" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet" />
+    <title>DEATH ZONE 8000</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="game-canvas" aria-label="登山ゲーム画面"></canvas>
+      <div id="touch-surface"></div>
+
+      <section id="hud" class="hidden" aria-live="polite">
+        <div id="hud-alt" class="cluster">
+          <div class="alt-row"><strong id="alt-value">7,950</strong><span class="unit">m</span></div>
+          <div class="alt-sub">
+            <span id="clock-value">03:00</span>
+            <span class="sep"></span>
+            <span id="turn-value">折返 14:00</span>
+          </div>
+          <div id="next-mark"><span class="arrow">▲</span> <span id="next-name">バルコニー</span> <b id="next-dist">320m</b></div>
+          <div id="progress"><div id="progress-fill"></div><div id="progress-marks"></div></div>
+        </div>
+
+        <div id="hud-vitals" class="cluster">
+          <div class="vital" id="v-spo2">
+            <svg viewBox="0 0 24 24" class="ico"><path d="M12 21s-7-4.6-9.2-9.1C1.4 8.8 3.4 5 7 5c2 0 3.4 1.1 5 3 1.6-1.9 3-3 5-3 3.6 0 5.6 3.8 4.2 6.9C19 16.4 12 21 12 21z"/></svg>
+            <div class="v-main"><b id="spo2-value">82</b><small>% SpO₂</small></div>
+            <small id="hr-value" class="v-side">96</small>
+          </div>
+          <div class="vital" id="v-stam">
+            <svg viewBox="0 0 24 24" class="ico"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+            <div class="meter"><i id="stam-fill"></i></div>
+          </div>
+          <div class="vital" id="v-temp">
+            <svg viewBox="0 0 24 24" class="ico"><path d="M14 14.8V4a2 2 0 0 0-4 0v10.8a4 4 0 1 0 4 0z"/></svg>
+            <div class="v-main"><b id="temp-value">36.9</b><small>°C</small></div>
+            <small id="frost-value" class="v-side"></small>
+          </div>
+          <div class="vital" id="v-o2">
+            <svg viewBox="0 0 24 24" class="ico"><rect x="8" y="5" width="8" height="16" rx="3"/><rect x="10.5" y="2" width="3" height="3"/></svg>
+            <div class="meter o2"><i id="o2-fill"></i></div>
+            <small id="spare-value" class="v-side">+1</small>
+          </div>
+          <div class="flow-row">
+            <button id="o2-down" class="mini" type="button" aria-label="酸素流量を下げる">−</button>
+            <span id="flow-value">2.0<small>L/分</small></span>
+            <button id="o2-up" class="mini" type="button" aria-label="酸素流量を上げる">＋</button>
+          </div>
+          <div class="vital" id="v-wind">
+            <svg viewBox="0 0 24 24" class="ico"><path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/></svg>
+            <div class="v-main"><b id="wind-value">28</b><small>km/h</small></div>
+            <small id="temp-amb" class="v-side">-32°</small>
+          </div>
+        </div>
+
+        <button id="pause-btn" class="icon-btn" type="button" aria-label="一時停止">
+          <svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
+        </button>
+
+        <div id="banner"></div>
+        <div id="prompt"></div>
+        <div id="clip-status"><span class="dot"></span><span id="clip-text">未確保</span></div>
+
+        <div id="actions">
+          <button id="interact-btn" class="act small hidden" type="button">拾う</button>
+          <button id="clip-btn" class="act" type="button">
+            <svg viewBox="0 0 24 24"><path d="M9 3a5 5 0 0 0-5 5v6a6 6 0 0 0 12 0V9"/><path d="M16 9V6a3 3 0 0 0-6 0"/></svg>
+            <span id="clip-label">クリップ</span>
+          </button>
+          <button id="rest-btn" class="act big" type="button">
+            <span id="rest-label">休む</span>
+          </button>
+        </div>
+      </section>
+
+      <div id="touch-stick"><div id="touch-knob"></div></div>
+
+      <section id="title" class="screen">
+        <div class="title-bg"></div>
+        <div class="title-wrap">
+          <header>
+            <p class="kicker">SOLO · NO SHERPA · DEATH ZONE</p>
+            <h1>DEATH ZONE <span>8000</span></h1>
+            <p class="lede">標高8000mを超えた「死の地帯」。薄い酸素、マイナス30度の風、切れ落ちた稜線。<br />一歩ずつ、頂へ。そして生きて帰れ。</p>
+          </header>
+          <div id="mountain-cards"></div>
+          <div class="options">
+            <label>予備ボンベ
+              <select id="opt-bottles">
+                <option value="0">0本</option>
+                <option value="1" selected>1本</option>
+                <option value="2">2本</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="opt-sound" checked /> サウンド</label>
+          </div>
+          <button id="start-btn" class="primary" type="button">サミットプッシュ開始</button>
+          <details class="controls">
+            <summary>操作方法</summary>
+            <div class="ctl-grid">
+              <div><b>スマホ</b><br />左側をドラッグ：移動<br />右側をドラッグ：視点<br />休む（長押し）：呼吸を整える／滑落時はピッケル<br />クリップ：フィックスロープに確保／アンカーで付け替え</div>
+              <div><b>PC</b><br />WASD：移動 ／ マウス：視点<br />Space（長押し）：休む／ピッケル<br />E：クリップ・付け替え ／ F：拾う・ボンベ交換<br />Z / X：酸素流量 −／＋ ／ Esc：一時停止</div>
+            </div>
+          </details>
+          <p class="hint-rotate">横向き推奨・ヘッドホン推奨</p>
+        </div>
+      </section>
+
+      <section id="pause" class="screen hidden">
+        <div class="panel">
+          <h2>一時停止</h2>
+          <button id="resume-btn" class="primary" type="button">再開</button>
+          <button id="restart-btn" type="button">C4からやり直す</button>
+          <button id="quit-btn" type="button">山を選び直す</button>
+        </div>
+      </section>
+
+      <section id="result" class="screen hidden">
+        <div class="panel result-panel">
+          <p id="result-kicker" class="kicker"></p>
+          <h2 id="result-title"></h2>
+          <p id="result-desc"></p>
+          <dl id="result-stats"></dl>
+          <button id="result-primary" class="primary" type="button">再挑戦</button>
+          <button id="result-secondary" type="button">山を選び直す</button>
+        </div>
+      </section>
+
+      <div id="loading" class="hidden"><div class="spinner"></div><p>山を生成中…</p></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
