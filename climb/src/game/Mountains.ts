@@ -138,7 +138,7 @@ export const MOUNTAINS: Record<'everest' | 'k2', MountainDef> = {
       { name: '頂上雪田', routeIndex: 7, note: '深い雪のラッセル' },
       { name: '山頂', routeIndex: 9, note: '8,611m' },
     ],
-    ropeSections: [[3, 7]],
+    ropeSections: [[3, 7], [8, 9]],
     seracZone: [4, 6],
     ridges: [
       [
