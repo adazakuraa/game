@@ -6,6 +6,9 @@ import { CircuitGame } from './game/circuit.js';
 import { RALLY_STAGES } from './sim/rallydata.js';
 import { calibrateStage, paceNotes } from './sim/rally.js';
 import { RallyGame } from './game/rally.js';
+import { BOAT_COURSES } from './sim/boatdata.js';
+import { calibrateBoat } from './sim/boatrace.js';
+import { BoatGame } from './game/boat.js';
 import { store } from './store.js';
 import { fmt } from './game/common.js';
 
@@ -74,6 +77,34 @@ export const GENRES = [
     ],
     prepare: (tr) => { calibrateStage(tr); paceNotes(tr); },
     create: (tr, opts) => new RallyGame(tr, opts),
+  },
+  {
+    id: 'boat',
+    name: 'ボートレース',
+    short: 'ボート',
+    events: BOAT_COURSES,
+    hasMode: false,
+    laps: [2, 3],
+    defaultLaps: 3,
+    makeTrack: track,
+    mapOpts: () => ({}),
+    meta: (def, tr, s) => {
+      const rank = store.get('rank.' + def.id + '.' + s.difficulty, null);
+      return {
+        sub: `${def.en} · 1周 ${Math.round(tr.length)} m`,
+        rec: `最高 ${rank ? rank + '着' : '—'}（${DIFFICULTY[s.difficulty].label}）`,
+      };
+    },
+    hint: (s) => `6艇で左回りに周回。${{ easy: '1号艇（インコース）', normal: '3号艇', hard: '5号艇（アウト寄り）' }[s.difficulty]}からのスタート。大時計が 0 になる瞬間にラインを越えるのが理想。`,
+    tips: [
+      '大時計が 0 になる前にスタートラインを越えるとフライング。6 秒のペナルティ。',
+      'ターンマークの手前でアクセルを緩めると、艇の後ろが滑らずに小さく回れる。',
+      '内側のブイに当たると大きく減速する。ギリギリを攻めすぎないこと。',
+      '1マークの攻防が勝負。スタートで前に出られれば有利。',
+      '潮の流れがある水面では、艇が横へ流される。早めに修正しよう。',
+    ],
+    prepare: (tr) => calibrateBoat(tr),
+    create: (tr, opts) => new BoatGame(tr, opts),
   },
 ];
 

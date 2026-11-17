@@ -168,7 +168,7 @@ export class Track {
   // レーシングライン: 最小曲率に近いラインを反復スムージングで求める
   buildRacingLine() {
     const N = this.N;
-    const lim = this.halfW - 1.15;
+    const lim = this.def.lineLimit ?? this.halfW - 1.15;
     const o = new Float32Array(N);
     const px = new Float32Array(N), pz = new Float32Array(N);
     const lx = (i) => this.tz[i];

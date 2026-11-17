@@ -31,7 +31,7 @@ function planarUV(g) {
 }
 
 // 断面ロフト: stations = [{z, hw, yb, yt, n, nb}]
-function loft(stations, seg = 28, capFront = true, capRear = true) {
+export function loft(stations, seg = 28, capFront = true, capRear = true) {
   const pos = [], idx = [], uv = [];
   const ring = seg + 1;
   stations.forEach((st, si) => {

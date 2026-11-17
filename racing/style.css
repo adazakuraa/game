@@ -285,3 +285,12 @@ body.force-touch .touch { display: block; }
 .note.s1 .sev { color: #ff3b2f; } .note.s2 .sev { color: #ff8a1f; } .note.s3 .sev { color: #ffd000; }
 .note.s4 .sev { color: #b8e04a; } .note.s5 .sev { color: #6fd36f; } .note.s6 .sev { color: #9ad0ff; }
 @media (max-height: 520px) { .notes { top: calc(88px + var(--st)); } .note.n0 .arrow { width: 40px; height: 40px; } .note.n0 .sev { font-size: 28px; } }
+
+/* 競艇の大時計（スタートまでの残り時間） */
+.clock { position: absolute; left: 50%; top: calc(58px + var(--st)); transform: translateX(-50%); display: none; flex-direction: column; align-items: center; padding: 6px 16px; border-radius: 12px; background: rgba(8, 10, 13, 0.6); border: 1px solid rgba(255, 255, 255, 0.18); font-variant-numeric: tabular-nums; pointer-events: none; }
+.clock.show { display: flex; }
+.clock b { font-size: 34px; font-weight: 900; font-style: italic; line-height: 1; }
+.clock small { font-size: 12px; color: var(--sub); font-weight: 700; margin-top: 2px; }
+.clock.hot b { color: #ffd000; }
+.clock.go b { color: #3ddc84; }
+.clock.bad b { color: #ff3b2f; }

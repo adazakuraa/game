@@ -178,6 +178,36 @@ export class Effects {
   }
 
   // ---- 雨 ----
+  // ボート: 艇首の水しぶき・スターンの噴き上げ・白い航跡
+  boatFx(st, dt, rate = 1) {
+    const sp = Math.hypot(st.vx || 0, st.vz || 0);
+    if (sp < 2) return;
+    const fx = Math.sin(st.psi), fz = Math.cos(st.psi);
+    const lx = Math.cos(st.psi), lz = -Math.sin(st.psi);
+    const k = Math.min(1.5, sp / 18) * rate;
+    const br0 = this.dim ?? 1;
+    // 航跡（泡）
+    if (Math.random() < dt * 34 * k) {
+      const x = st.x - fx * 1.7, z = st.z - fz * 1.7;
+      this.emit(x + (Math.random() - 0.5) * 0.6, 0.05, z + (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.4, 0.05, (Math.random() - 0.5) * 0.4, 0.8, 1.4, 2.6, 0.95 * br0, 0.97 * br0, br0, 0.28);
+    }
+    // スターンの噴き上げ（ルースターテール）
+    const br = this.dim ?? 1;
+    if (Math.random() < dt * 30 * k * (0.4 + (st.throttle || 0))) {
+      const x = st.x - fx * 2.0, z = st.z - fz * 2.0;
+      this.emit(x, 0.2, z, -fx * sp * 0.3 + (Math.random() - 0.5) * 1.2, 1.6 + Math.random() * 2, -fz * sp * 0.3 + (Math.random() - 0.5) * 1.2, 0.25, 0.9, 0.8, 0.92 * br, 0.95 * br, br, 0.3);
+    }
+    // 艇首の左右に飛ぶしぶき（旋回中は外側が強い）
+    const lean = Math.max(-1, Math.min(1, (st.r || 0) * 1.4));
+    for (const side of [1, -1]) {
+      const w = 1 + side * -lean * 0.8;
+      if (Math.random() < dt * 20 * k * w) {
+        const x = st.x + fx * 0.6 + lx * side * 0.5, z = st.z + fz * 0.6 + lz * side * 0.5;
+        this.emit(x, 0.15, z, lx * side * (1.5 + Math.random() * 2) - fx * sp * 0.1, 0.9 + Math.random() * 1.2, lz * side * (1.5 + Math.random() * 2) - fz * sp * 0.1, 0.22, 0.8, 0.6, 0.92 * br, 0.95 * br, br, 0.32);
+      }
+    }
+  }
+
   buildRain() {
     const N = this.quality >= 2 ? 5000 : 2500;
     const g = new THREE.BufferGeometry();

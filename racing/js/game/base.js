@@ -89,6 +89,10 @@ export class GameBase {
     $('#hLastL').textContent = 'LAST';
     $('#hBestL').textContent = 'BEST';
     $('#hNotes').classList.remove('show');
+    $('#hClock').className = 'clock';
+    $('#fTcs').textContent = 'TCS';
+    $('#fAbs').textContent = 'ABS';
+    $('#hGear').style.color = '';
     $('#hNotes').innerHTML = '';
     $('#hud .pos').style.display = '';
     $('#hStand').style.display = '';

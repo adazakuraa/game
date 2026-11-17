@@ -12,8 +12,17 @@ export function mulberry32(seed) {
   };
 }
 
+// AI の車両特性（加速・減速・回転数）。既定は GT カー
+export const CAR_AI = {
+  accel: (v, grip) => Math.min(9.5 * grip, 395000 / (1320 * Math.max(v, 4))) - (0.5 * 1.2 * 0.78 * v * v) / 1320,
+  brake: (grip) => 13 * grip,
+  rpm: null,
+  wheelR: 0.335,
+};
+
 export class AICar {
-  constructor(track, pace, seed) {
+  constructor(track, pace, seed, spec = CAR_AI) {
+    this.spec = spec;
     this.track = track;
     this.pace = pace;
     this.rng = mulberry32(seed);
@@ -51,10 +60,12 @@ export class AICar {
   }
 
   // others: 他車の配列（{progress, d, v, x, z}）
-  update(dt, others, myProgress, started) {
+  // forceVt: 指定すると目標速度をこの値にする（ボートのスタート前の速度調整など）
+  update(dt, others, myProgress, started, forceVt = null) {
     const tr = this.track;
     if (!started) { this.updatePose(dt); return; }
     let vt = Math.min(this.targetSpeed(this.s + 3), this.targetSpeed(this.s + 3 + this.v * 0.25));
+    if (forceVt != null) vt = forceVt;
     const lineD = tr.sampleArr(tr.line, this.s + 8) + this.lineBias;
     const hw = tr.halfW - 1.2;
     let wantD = lineD;
@@ -96,15 +107,13 @@ export class AICar {
     this.d = Math.max(-tr.halfW - 0.5, Math.min(tr.halfW + 0.5, this.d));
 
     // 縦方向
-    const P = 395000, m = 1320;
-    const drag = (0.5 * 1.2 * 0.78 * this.v * this.v) / m;
     if (this.v < vt) {
-      const a = Math.min(9.5 * tr.grip, P / (m * Math.max(this.v, 4))) - drag;
+      const a = this.spec.accel(this.v, tr.grip);
       this.v = Math.min(vt, this.v + Math.max(a, 0) * dt);
       this.throttle = 1;
       this.braking = 0;
     } else {
-      const dec = 13 * tr.grip;
+      const dec = this.spec.brake(tr.grip);
       this.v = Math.max(vt, this.v - dec * dt);
       this.throttle = 0;
       this.braking = this.v - vt > 0.5 ? 1 : 0;
@@ -133,15 +142,19 @@ export class AICar {
     this.vx = (this.x - ox) / Math.max(dt, 1e-3);
     this.vz = (this.z - oz) / Math.max(dt, 1e-3);
     if (dt === 0) { this.vx = 0; this.vz = 0; }
-    this.wheelRot += (this.v / 0.335) * dt;
+    this.wheelRot += (this.v / this.spec.wheelR) * dt;
     // 疑似エンジン回転
-    const gears = [3.1, 2.22, 1.72, 1.39, 1.16, 0.98];
-    let g = this.gear;
-    let rpm = (this.v / 0.335) * gears[g - 1] * 3.45 * 9.549;
-    if (rpm > 7600 && g < 6) g++;
-    else if (rpm < 4300 && g > 1) g--;
-    this.gear = g;
-    this.rpm = Math.max(1100, (this.v / 0.335) * gears[g - 1] * 3.45 * 9.549);
+    if (this.spec.rpm) {
+      this.rpm = this.spec.rpm(this);
+    } else {
+      const gears = [3.1, 2.22, 1.72, 1.39, 1.16, 0.98];
+      let g = this.gear;
+      let rpm = (this.v / 0.335) * gears[g - 1] * 3.45 * 9.549;
+      if (rpm > 7600 && g < 6) g++;
+      else if (rpm < 4300 && g > 1) g--;
+      this.gear = g;
+      this.rpm = Math.max(1100, (this.v / 0.335) * gears[g - 1] * 3.45 * 9.549);
+    }
     this.slopePitch = Math.atan(tr.sampleArr(tr.slope, this.s));
     this.pitch = this.slopePitch;
     this.roll = k * this.v * this.v * 0.004;

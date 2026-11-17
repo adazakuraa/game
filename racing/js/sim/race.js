@@ -54,64 +54,7 @@ export const DRIVERS = [
   { name: 'A. MORENO', color: 0x7b2fd0, num: 5 },
 ];
 
-export class Race {
-  // opts: { mode: 'race'|'ta', difficulty, laps, playerColor, assist }
-  constructor(track, opts) {
-    this.track = track;
-    this.opts = opts;
-    this.mode = opts.mode;
-    this.laps = opts.mode === 'race' ? opts.laps : 999;
-    this.time = 0; // 総経過
-    this.raceTime = 0; // スタートからの時間
-    this.state = 'grid'; // grid -> countdown -> racing -> finished
-    this.countdown = 0;
-    this.entries = [];
-    this.finishOrder = [];
-    this.events = [];
-    const L = track.length;
-    const player = new Car(track);
-    player.assist = opts.assist;
-    const pe = { kind: 'player', name: 'YOU', color: opts.playerColor, num: 1, car: player, lap: 0, prevS: 0, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 };
-    if (this.mode === 'race') {
-      const diff = DIFFICULTY[opts.difficulty];
-      const n = DRIVERS.length;
-      const cal = calibrate(track);
-      const top = cal.aiLap / (cal.botLap * diff.factor);
-      this.aiTop = top;
-      // グリッド: 先頭から AI、プレイヤーは最後尾
-      const paces = DRIVERS.map((_, i) => top - i * diff.spread);
-      // 速い順に並べずに少し混ぜる
-      const order = [0, 2, 1, 3, 5, 4, 6];
-      for (let g = 0; g < n; g++) {
-        const di = order[g];
-        const ai = new AICar(track, paces[di], 1000 + di * 77);
-        const s = L - 12 - g * 8;
-        ai.place(s, g % 2 === 0 ? 3 : -3);
-        this.entries.push({ kind: 'ai', ...DRIVERS[di], ai, lap: 0, prevS: ai.s, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 });
-      }
-      const ps = L - 12 - n * 8;
-      player.reset(ps, n % 2 === 0 ? 3 : -3);
-      pe.prevS = player.s;
-      this.entries.push(pe);
-    } else {
-      player.reset(L - 40, track.sampleArr(track.line, L - 40));
-      pe.prevS = player.s;
-      this.entries.push(pe);
-    }
-    this.player = pe;
-    this.bot = null;
-    this.lastLap = null;
-    this.ghostFrames = [];
-    this.recording = [];
-    this.recT = 0;
-    this.taTiming = false;
-  }
-
-  startCountdown() {
-    this.state = 'countdown';
-    this.countdown = 0;
-  }
-
+class RaceBase {
   progress(e) {
     const s = e.kind === 'player' ? e.car.s : e.ai.s;
     return (e.lap - 1) * this.track.length + s;
@@ -119,78 +62,6 @@ export class Race {
 
   pose(e) {
     return e.kind === 'player' ? e.car : e.ai;
-  }
-
-  step(dt, input) {
-    this.time += dt;
-    this.events.length = 0;
-    const started = this.state === 'racing' || this.state === 'finished';
-    if (this.state === 'countdown') {
-      this.countdown += dt;
-      // 5灯が1秒ごとに点灯し、ランダム後に消灯
-      if (this.countdown >= 5 + (this.lightsOutDelay ??= 0.4 + Math.random() * 0.9)) {
-        this.state = 'racing';
-        this.raceTime = 0;
-        this.events.push({ type: 'go' });
-        for (const e of this.entries) e.lapStart = 0;
-      }
-    }
-    if (started) this.raceTime += dt;
-
-    // プレイヤー
-    const p = this.player;
-    let inp = input;
-    if (p.finished || this.opts.autopilot) {
-      if (!this.bot) this.bot = new BotDriver(p.car, this.track, 0.9);
-      inp = this.bot.update();
-    }
-    if (!started && this.mode === 'race') {
-      // スタート前: 回転だけ上げられる
-      p.car.rpm += ((1100 + input.throttle * 6000) - p.car.rpm) * Math.min(1, dt * 6);
-      p.car.throttle = input.throttle;
-    } else {
-      p.car.step(dt, inp);
-      if (p.car.impact > 2) this.events.push({ type: 'wall', power: p.car.impact });
-    }
-    if (this.mode === 'ta' && this.state === 'countdown') {
-      // TA はカウントダウン無し
-    }
-
-    // AI
-    if (this.mode === 'race') {
-      const others = this.entries.map((e) => {
-        const o = this.pose(e);
-        return { self: e.kind === 'ai' ? e.ai : e.car, progress: this.progress(e), d: e.kind === 'ai' ? e.ai.d : e.car.d, v: e.kind === 'ai' ? e.ai.v : e.car.u, x: o.x, z: o.z };
-      });
-      for (const e of this.entries) {
-        if (e.kind !== 'ai') continue;
-        e.ai.update(dt, others, this.progress(e), started);
-      }
-      this.collide();
-    }
-
-    // 周回判定
-    const L = this.track.length;
-    for (const e of this.entries) {
-      const s = this.pose(e).s;
-      if (e.prevS > L * 0.75 && s < L * 0.25) {
-        e.lap++;
-        if (started) this.onCross(e);
-      } else if (e.prevS < L * 0.25 && s > L * 0.75) {
-        e.lap--;
-      }
-      e.prevS = s;
-    }
-
-    // ゴースト記録（プレイヤー）
-    if (started || this.mode === 'ta') {
-      this.recT += dt;
-      if (this.recT >= 1 / 20) {
-        this.recT -= 1 / 20;
-        const c = p.car;
-        this.recording.push(c.x, c.y, c.z, c.psi);
-      }
-    }
   }
 
   onCross(e) {
@@ -267,8 +138,8 @@ export class Race {
 
   collide() {
     const ents = this.entries;
-    const R = 1.0;
-    const offs = [-1.45, 0, 1.45];
+    const R = this.collR ?? 1.0;
+    const offs = this.collOffs ?? [-1.45, 0, 1.45];
     for (let i = 0; i < ents.length; i++) {
       for (let j = i + 1; j < ents.length; j++) {
         const A = this.pose(ents[i]), B = this.pose(ents[j]);
@@ -319,4 +190,138 @@ export class Race {
       e.ai.applyPush(dx, dz, dvx, dvz);
     }
   }
+}
+
+export { RaceBase };
+
+export class Race extends RaceBase {
+  constructor(track, opts) {
+    super();
+    this.track = track;
+    this.opts = opts;
+    this.mode = opts.mode;
+    this.laps = opts.mode === 'race' ? opts.laps : 999;
+    this.time = 0; // 総経過
+    this.raceTime = 0; // スタートからの時間
+    this.state = 'grid'; // grid -> countdown -> racing -> finished
+    this.countdown = 0;
+    this.entries = [];
+    this.finishOrder = [];
+    this.events = [];
+    const L = track.length;
+    const player = new Car(track);
+    player.assist = opts.assist;
+    const pe = { kind: 'player', name: 'YOU', color: opts.playerColor, num: 1, car: player, lap: 0, prevS: 0, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 };
+    if (this.mode === 'race') {
+      const diff = DIFFICULTY[opts.difficulty];
+      const n = DRIVERS.length;
+      const cal = calibrate(track);
+      const top = cal.aiLap / (cal.botLap * diff.factor);
+      this.aiTop = top;
+      // グリッド: 先頭から AI、プレイヤーは最後尾
+      const paces = DRIVERS.map((_, i) => top - i * diff.spread);
+      // 速い順に並べずに少し混ぜる
+      const order = [0, 2, 1, 3, 5, 4, 6];
+      for (let g = 0; g < n; g++) {
+        const di = order[g];
+        const ai = new AICar(track, paces[di], 1000 + di * 77);
+        const s = L - 12 - g * 8;
+        ai.place(s, g % 2 === 0 ? 3 : -3);
+        this.entries.push({ kind: 'ai', ...DRIVERS[di], ai, lap: 0, prevS: ai.s, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 });
+      }
+      const ps = L - 12 - n * 8;
+      player.reset(ps, n % 2 === 0 ? 3 : -3);
+      pe.prevS = player.s;
+      this.entries.push(pe);
+    } else {
+      player.reset(L - 40, track.sampleArr(track.line, L - 40));
+      pe.prevS = player.s;
+      this.entries.push(pe);
+    }
+    this.player = pe;
+    this.bot = null;
+    this.lastLap = null;
+    this.ghostFrames = [];
+    this.recording = [];
+    this.recT = 0;
+    this.taTiming = false;
+  }
+
+  startCountdown() {
+    this.state = 'countdown';
+    this.countdown = 0;
+  }
+
+  step(dt, input) {
+    this.time += dt;
+    this.events.length = 0;
+    const started = this.state === 'racing' || this.state === 'finished';
+    if (this.state === 'countdown') {
+      this.countdown += dt;
+      // 5灯が1秒ごとに点灯し、ランダム後に消灯
+      if (this.countdown >= 5 + (this.lightsOutDelay ??= 0.4 + Math.random() * 0.9)) {
+        this.state = 'racing';
+        this.raceTime = 0;
+        this.events.push({ type: 'go' });
+        for (const e of this.entries) e.lapStart = 0;
+      }
+    }
+    if (started) this.raceTime += dt;
+
+    // プレイヤー
+    const p = this.player;
+    let inp = input;
+    if (p.finished || this.opts.autopilot) {
+      if (!this.bot) this.bot = new BotDriver(p.car, this.track, 0.9);
+      inp = this.bot.update();
+    }
+    if (!started && this.mode === 'race') {
+      // スタート前: 回転だけ上げられる
+      p.car.rpm += ((1100 + input.throttle * 6000) - p.car.rpm) * Math.min(1, dt * 6);
+      p.car.throttle = input.throttle;
+    } else {
+      p.car.step(dt, inp);
+      if (p.car.impact > 2) this.events.push({ type: 'wall', power: p.car.impact });
+    }
+    if (this.mode === 'ta' && this.state === 'countdown') {
+      // TA はカウントダウン無し
+    }
+
+    // AI
+    if (this.mode === 'race') {
+      const others = this.entries.map((e) => {
+        const o = this.pose(e);
+        return { self: e.kind === 'ai' ? e.ai : e.car, progress: this.progress(e), d: e.kind === 'ai' ? e.ai.d : e.car.d, v: e.kind === 'ai' ? e.ai.v : e.car.u, x: o.x, z: o.z };
+      });
+      for (const e of this.entries) {
+        if (e.kind !== 'ai') continue;
+        e.ai.update(dt, others, this.progress(e), started);
+      }
+      this.collide();
+    }
+
+    // 周回判定
+    const L = this.track.length;
+    for (const e of this.entries) {
+      const s = this.pose(e).s;
+      if (e.prevS > L * 0.75 && s < L * 0.25) {
+        e.lap++;
+        if (started) this.onCross(e);
+      } else if (e.prevS < L * 0.25 && s > L * 0.75) {
+        e.lap--;
+      }
+      e.prevS = s;
+    }
+
+    // ゴースト記録（プレイヤー）
+    if (started || this.mode === 'ta') {
+      this.recT += dt;
+      if (this.recT >= 1 / 20) {
+        this.recT -= 1 / 20;
+        const c = p.car;
+        this.recording.push(c.x, c.y, c.z, c.psi);
+      }
+    }
+  }
+
 }
