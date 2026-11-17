@@ -79,8 +79,8 @@ function drawTrackMap(cv, track, opts = {}) {
   const pad = opts.pad ?? 10;
   const sc = Math.min((W - pad * 2) / (maxX - minX), (H - pad * 2) / (maxZ - minZ));
   const ox = W / 2 - ((minX + maxX) / 2) * sc, oz = H / 2 - ((minZ + maxZ) / 2) * sc;
-  // 上から見た向き（x 反転で進行方向が自然になるように）
-  const P = (x, z) => [W - (ox + x * sc), oz + z * sc];
+  // 真上から見た向き（x は右、z は下。3D ビューの左右と一致する）
+  const P = (x, z) => [ox + x * sc, oz + z * sc];
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   const path = () => {
