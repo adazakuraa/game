@@ -166,10 +166,11 @@ export class Effects {
       if (a > 0.15 && sp > 3 && Math.random() < dt * 40 * a) {
         this.emit(x, st.y + 0.25, z, -st.vx * 0.15 + (Math.random() - 0.5), 0.6 + Math.random(), -st.vz * 0.15 + (Math.random() - 0.5), 0.9, 2.8, 1.6 + Math.random(), sr, sg, sb, this.rain ? 0.25 : 0.4);
       }
-      if (surf >= 2 && sp > 4 && Math.random() < dt * 30) {
+      // 芝・砂に出たときの土ぼこり（視界を遮らない程度に控えめ）
+      if (surf >= 2 && rear && sp > 6 && Math.random() < dt * 9) {
         const sand = surf === 3;
         const r = sand ? 0.75 : 0.45, g = sand ? 0.6 : 0.38, b = sand ? 0.45 : 0.25;
-        this.emit(x, st.y + 0.2, z, -st.vx * 0.2 + (Math.random() - 0.5) * 2, 1 + Math.random() * 1.5, -st.vz * 0.2 + (Math.random() - 0.5) * 2, 1.2, 3.5, 1.5, r, g, b, 0.5);
+        this.emit(x, st.y + 0.15, z, -st.vx * 0.1 + (Math.random() - 0.5), 0.4 + Math.random() * 0.6, -st.vz * 0.1 + (Math.random() - 0.5), 0.5, 1.4, 0.9, r, g, b, 0.28);
       }
       if (this.rain && rear && sp > 12 && Math.random() < dt * 25 * (sp / 50)) {
         this.emit(x - fx * 0.5, st.y + 0.3, z - fz * 0.5, -fx * sp * 0.15 + (Math.random() - 0.5) * 2, 0.6 + Math.random(), -fz * sp * 0.15 + (Math.random() - 0.5) * 2, 1.4, 4, 0.9, 0.82, 0.85, 0.9, 0.22);

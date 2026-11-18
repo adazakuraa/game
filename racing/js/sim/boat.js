@@ -10,7 +10,7 @@ export const BOAT = {
   kT: 45, // 速度による推力の低下
   cDrag: 2.29, // 水の抵抗
   brakeF: 1900,
-  mu: 1.6,
+  mu: 1.3,
   B: 8,
   C: 1.45,
   halfLen: 1.5,
@@ -20,7 +20,7 @@ export const BOAT = {
 
 // コース側（理想速度の計算）に渡す特性
 export const BOAT_TRACK_SPEC = {
-  mu: 1.4, ClA: 0, CdA: 3.8, mass: 330, power: 31500, topSpeed: 24, tractionK: 0.85, brakeK: 0.55,
+  mu: 1.12, ClA: 0, CdA: 3.8, mass: 330, power: 31500, topSpeed: 24, tractionK: 0.85, brakeK: 0.55,
 };
 
 const accelAt = (v) => (BOAT.T0 - BOAT.kT * v - BOAT.cDrag * v * v) / BOAT.mass;
@@ -77,7 +77,7 @@ export class Boat {
   }
 
   steerMax(u) {
-    return 0.55 / (1 + (Math.abs(u) / 13) ** 2) + 0.07;
+    return 0.36 / (1 + (Math.abs(u) / 9) ** 2) + 0.05;
   }
 
   step(dt, input) {
@@ -109,10 +109,10 @@ export class Boat {
     const ar = Math.atan2(vl - c.b * r, ua);
     // アシスト（横滑り防止）: スターンが流れ始めたらスロットルを自動で絞る
     const thrIn = thr;
-    if (this.assist) thr *= 1 - Math.max(0, Math.min(0.65, Math.abs(ar) * 2.6 - 0.12));
+    if (this.assist) thr *= 1 - Math.max(0, Math.min(0.4, Math.abs(ar) * 2.2 - 0.15));
     const N = (c.mass * G) / 2;
     const muF = c.mu * (0.92 + 0.08 * (1 - thr));
-    const muR = c.mu * (1 - 0.24 * thr * Math.min(1, ua / 9));
+    const muR = c.mu * (1 - 0.38 * thr * Math.min(1, ua / 9));
     let Fyf = -muF * N * pac(af, c.B, c.C);
     let Fyr = -muR * N * pac(ar, c.B, c.C);
     // 水面のうねり（潮流）

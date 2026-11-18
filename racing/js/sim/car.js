@@ -84,6 +84,7 @@ export class Car {
     this.braking = 0;
     this.throttle = 0;
     this.reverseTimer = 0;
+    this.crashT = 0;
     this.track.project(this.x, this.z, -1, proj);
     this.hint = proj.i;
     this.s = proj.s;
@@ -160,6 +161,8 @@ export class Car {
 
     // パワートレイン
     let throttle = Math.max(0, Math.min(1, input.throttle));
+    this.crashed = false;
+    if (this.crashT > 0) { this.crashT -= dt; throttle = 0; }
     let brake = Math.max(0, Math.min(1, input.brake));
     const ratio = c.gears[this.gear - 1] * c.final;
     let rpm = (Math.abs(u) / c.wheelR) * ratio * (60 / (2 * Math.PI));
@@ -300,7 +303,8 @@ export class Car {
         this.vx -= (1 + e) * vn * proj.lx * side;
         this.vz -= (1 + e) * vn * proj.lz * side;
         // 摩擦による減速
-        const loss = Math.max(0.6, 1 - vn * 0.045);
+        // 壁に当たると大きく失速する（壁に沿って全開で走るのが速くならないように）
+        const loss = Math.max(0.45, 0.9 - vn * 0.07);
         this.vx *= loss;
         this.vz *= loss;
         // 車体を壁沿いへ向ける
@@ -312,9 +316,18 @@ export class Car {
         this.psi += dpsi * Math.min(0.5, vn * 0.03);
         this.r *= 0.4;
         this.impact = vn;
+        // 正面に近い角度で強く当たるとクラッシュ（しばらく走れない）
+        if (vn > 11 && this.crashT <= 0) {
+          this.crashT = 1.6;
+          this.vx *= 0.25;
+          this.vz *= 0.25;
+          this.r += (Math.random() - 0.5) * 3;
+          this.crashed = true;
+        }
       }
+      this.scrape = true;
       tr.project(this.x, this.z, this.hint, proj);
-    }
+    } else this.scrape = false;
     this.s = proj.s;
     this.d = proj.d;
     this.y = proj.y;

@@ -18,6 +18,7 @@ export const BIKE = {
   latSpeed: 3.4,
 };
 
+const PJ = {};
 const wrapDelta = (d, L) => (d > L / 2 ? d - L : d < -L / 2 ? d + L : d);
 
 export class Rider {
@@ -33,6 +34,12 @@ export class Rider {
   }
 
   place(s, d, v = 0) {
+    const p = this.track.pointAt(s, d, {});
+    this.x = p.x; this.z = p.z; this.y = p.y;
+    this.psi = p.hd;
+    this.hint = -1;
+    this.k = 0;
+    this.slipMeter = 0;
     this.s = s; this.d = d; this.v = v;
     this.latV = 0;
     this.W = this.wmax;
@@ -61,7 +68,7 @@ export class Rider {
     for (const o of others) {
       if (o.self === this) continue;
       const gap = o.prog - myProg;
-      if (gap > 0.4 && gap < 7 && Math.abs(o.d - this.d) < 1.0) draft = Math.min(draft, 0.56 + 0.44 * (gap / 7));
+      if (gap > 0.4 && gap < 10 && Math.abs(o.d - this.d) < 1.4) draft = Math.min(draft, 0.55 + 0.45 * (gap / 10));
     }
     this.draft += (draft - this.draft) * Math.min(1, dt * 4);
     // パワーとスタミナ
@@ -70,8 +77,8 @@ export class Rider {
     let P = brake > 0.1 ? 0 : this.pcruise + (this.phard - this.pcruise) * thr;
     // スタミナを使い切ると「脚が売り切れ」: 回復するまで巡航より弱い力しか出せない
     if (this.blown) {
-      P = Math.min(P, this.cp * 0.72);
-      if (this.W > this.wmax * 0.3) this.blown = false;
+      P = Math.min(P, this.cp * 0.62);
+      if (this.W > this.wmax * 0.35) this.blown = false;
     }
     if (P > this.cp) {
       this.W -= (P - this.cp) * dt;
@@ -89,51 +96,73 @@ export class Rider {
     const v = this.v;
     const F = P / Math.max(v, 2.5) - 0.5 * 1.2 * c.CdA * this.draft * v * v - crr * c.mass * G - c.mass * G * Math.sin(Math.atan(slope)) - brake * c.mass * c.brakeDec * (v > 0.3 ? 1 : 0);
     this.v = Math.max(0, v + (F / c.mass) * dt);
-    // コーナー: 曲がりきれない速さだと滑って大きく失速する
-    const kc = tr.kappa[i];
-    const kp = kc / Math.max(0.3, 1 - kc * this.d);
-    const lat = this.v * this.v * Math.abs(kp);
-    const lim = c.mu * G * tr.gripArr[i];
+    // ハンドル: 指の量で曲がる強さ（曲率）を決める。速いほど曲がれる限界は小さく、
+    // 限界を超えて切り続けるとスリップして大きく失速する
+    const grip = tr.gripArr[i];
+    const kMax = 1 / 5.5;
+    const kDes = -Math.max(-1, Math.min(1, input.steer || 0)) * kMax;
+    const kGrip = (c.mu * G * grip) / Math.max(this.v * this.v, 1);
+    const over = (Math.abs(kDes) * this.v * this.v) / (c.mu * G * grip);
+    this.over = over;
+    if (over > (this.isPlayer && this.assist ? 1.25 : 1.12) && this.v > 5) this.slipMeter += dt;
+    else this.slipMeter = Math.max(0, this.slipMeter - dt * 2);
     if (this.slipT > 0) this.slipT -= dt;
-    if (lat > lim && this.slipT <= 0 && this.v > 6) {
+    let kT = Math.max(-kGrip, Math.min(kGrip, kDes));
+    if (this.slipMeter > 0.3 && this.slipT <= 0) {
       this.slipT = 1.4;
-      this.v *= 0.62;
-      this.latV -= Math.sign(kp) * 2.5;
+      this.slipMeter = 0;
+      this.v *= 0.6;
       this.impact = 4;
       this.slipped = true;
     }
-    // 横移動（ハンドル）
-    const target = Math.max(-1, Math.min(1, input.steer || 0)) * -c.latSpeed;
-    this.latV += (target - this.latV) * Math.min(1, dt * 6);
-    this.d += this.latV * dt;
+    if (this.slipT > 0) kT *= 0.35;
+    // 自転車は傾けてから曲がるので、少し遅れて効く
+    this.k += (kT - this.k) * Math.min(1, dt * 5);
+    this.psi += this.v * this.k * dt;
+    this.x += Math.sin(this.psi) * this.v * dt;
+    this.z += Math.cos(this.psi) * this.v * dt;
+    // コース上の位置
+    const pj = tr.project(this.x, this.z, this.hint, PJ);
+    this.hint = pj.i;
     const lim2 = tr.halfW - 0.45;
-    if (Math.abs(this.d) > lim2) {
-      this.d = Math.sign(this.d) * lim2;
-      this.latV = 0;
-      this.v *= 1 - 0.8 * dt; // 柵や路肩にこすれる
-    }
-    // 前進
-    const adv = (this.v * dt) / Math.max(0.3, 1 - kc * this.d);
-    this.s += adv;
-    if (this.s >= tr.length) this.s -= tr.length;
-    if (this.s < 0) this.s += tr.length;
-    this.adv = adv;
+    if (Math.abs(pj.d) > lim2) {
+      // 柵・路肩にぶつかる: 押し戻して減速し、向きを道に沿わせる
+      const side = Math.sign(pj.d), over2 = Math.abs(pj.d) - lim2;
+      this.x -= pj.lx * over2 * side;
+      this.z -= pj.lz * over2 * side;
+      let dpsi = pj.hd - this.psi;
+      while (dpsi > Math.PI) dpsi -= 2 * Math.PI;
+      while (dpsi < -Math.PI) dpsi += 2 * Math.PI;
+      this.psi += dpsi * 0.25;
+      this.v *= 1 - 1.2 * dt;
+      if (!this.onEdge) this.impact = Math.max(this.impact, 1.5);
+      this.onEdge = true;
+    } else this.onEdge = false;
+    const prevS = this.s;
+    this.s = pj.s;
+    this.d = pj.d;
+    this.y = pj.y;
+    this.adv = wrapDelta(this.s - prevS, tr.length);
     this.throttle = thr;
     this.braking = brake;
     // ペダル: パワーを出しているときだけ回る
     if (P > 20) this.crank += this.v * dt * 0.95;
-    this.lean += (Math.atan((this.v * this.v * kp) / G) - this.lean) * Math.min(1, dt * 6);
+    this.lean += (Math.atan((this.v * this.v * this.k) / G) - this.lean) * Math.min(1, dt * 8);
     this.updatePose(dt);
   }
 
+  // 横に押す（選手どうしの接触）
+  nudge(dd) {
+    const i = this.hint >= 0 ? this.hint : 0;
+    this.x += this.track.tz[i] * dd;
+    this.z -= this.track.tx[i] * dd;
+    this.d += dd;
+  }
+
   updatePose() {
-    const tr = this.track;
-    const p = tr.pointAt(this.s, this.d, {});
-    this.x = p.x; this.y = p.y; this.z = p.z;
-    this.psi = p.hd - Math.atan2(this.latV, Math.max(this.v, 3));
     this.vx = Math.sin(this.psi) * this.v;
     this.vz = Math.cos(this.psi) * this.v;
-    this.slopePitch = Math.atan(tr.sampleArr(tr.slope, this.s));
+    this.slopePitch = Math.atan(this.track.sampleArr(this.track.slope, this.s));
   }
 }
 
@@ -157,23 +186,22 @@ export function brain(r, race, me) {
   const slope = tr.sampleArr(tr.slope, r.s);
   const p = me.plan;
   // 前の集団との差
-  let gapAhead = 1e9;
+  let gapAhead = 1e9, gapBehind = 1e9;
   const myProg = race.progress(me);
   for (const o of race.entries) {
     if (o === me) continue;
     const g2 = race.progress(o) - myProg;
     if (g2 > 0 && g2 < gapAhead) gapAhead = g2;
+    if (g2 < 0 && -g2 < gapBehind) gapBehind = -g2;
   }
   let thr;
   if (remaining < p.sprintDist && r.W > r.wmax * 0.05) thr = 1; // ゴールスプリント
-  else if (slope > 0.03) thr = p.climb;
-  else if (gapAhead < 6) thr = p.sit; // 集団の中で脚を貯める
-  else if (gapAhead < 40) thr = p.chase;
-  else thr = p.solo;
-  // アタック: 登りで時々ペースを上げる（クライマー）
-  if (p.attackT > 0) { p.attackT -= 1 / 120; thr = Math.max(thr, 0.85); }
-  else if (slope > 0.05 && p.climber && r.W > r.wmax * 0.6 && race.rng() < 0.0006) p.attackT = 12;
-  if (r.W < r.wmax * 0.15 && remaining > p.sprintDist) thr = Math.min(thr, 0.15);
+  else if (gapAhead < 30) {
+    // 前の選手の 2.5m 後ろに付く（集団の中で脚を貯める）
+    thr = Math.max(0, Math.min(0.85, 0.1 + (gapAhead - 2.5) * 0.12));
+    if (slope > 0.03) thr = Math.max(thr, p.climb * 0.6);
+  } else if (gapAhead < 1e8) thr = p.chase; // 集団から離れた: 追う
+  else thr = gapBehind > 14 ? 0.08 : p.solo; // 先頭: 後続を待ちつつ集団を引く
   out.throttle = thr;
   return withSteer(out, r, race, me);
 }
@@ -196,7 +224,16 @@ function withSteer(out, r, race, me) {
   }
   const lim = tr.halfW - 0.8;
   target = Math.max(-lim, Math.min(lim, target));
-  out.steer = Math.max(-1, Math.min(1, -(target - r.d) * 0.7));
+  // 目標点を追いかける（ピュアパシュート）
+  const look = 5 + r.v * 0.75;
+  const p = tr.pointAt(r.s + look, target, {});
+  const dx = p.x - r.x, dz = p.z - r.z;
+  const lat = dx * Math.cos(r.psi) - dz * Math.sin(r.psi);
+  const d2 = dx * dx + dz * dz;
+  let k = (2 * lat) / Math.max(d2, 1);
+  const kGrip = (BIKE.mu * G * tr.sampleArr(tr.gripArr, r.s) * 0.95) / Math.max(r.v * r.v, 1);
+  k = Math.max(-kGrip, Math.min(kGrip, k));
+  out.steer = Math.max(-1, Math.min(1, -k * 5.5));
   return out;
 }
 
@@ -211,7 +248,7 @@ export const RIDERS = [
 ];
 
 // CPU の強さ（プレイヤー = 1.0 に対する倍率）
-const STRENGTH = { easy: 0.8, normal: 0.935, hard: 0.985 };
+const STRENGTH = { easy: 0.8, normal: 0.915, hard: 0.97 };
 
 export class BikeRace extends RaceBase {
   constructor(track, opts) {
@@ -237,7 +274,7 @@ export class BikeRace extends RaceBase {
       climb: type === 'climber' ? 0.55 : 0.32,
       sit: 0.05,
       chase: type === 'rouleur' ? 0.55 : 0.4,
-      solo: 0.35,
+      solo: 0.25,
       climber: type === 'climber',
       offset: ((k % 3) - 1) * 0.9,
       attackT: 0,
@@ -253,6 +290,8 @@ export class BikeRace extends RaceBase {
       this.entries.push({ kind: 'ai', ...d, ai: r, plan: plan(d.type, k), lap: 0, prevS: r.s, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 });
     });
     const pr = new Rider(track, 1, 1);
+    pr.isPlayer = true;
+    pr.assist = opts.assist !== false;
     const k = RIDERS.length;
     pr.place(L - 6 - Math.floor(k / 2) * 3, k % 2 ? 1.2 : -1.2);
     this.player = { kind: 'player', name: 'YOU', color: opts.playerColor, num: 1, car: pr, plan: plan('rouleur', 1), lap: 0, prevS: pr.s, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 };
@@ -304,10 +343,10 @@ export class BikeRace extends RaceBase {
         const dd = a.d - b.d;
         if (Math.abs(dd) > 0.7) continue;
         const push = (0.7 - Math.abs(dd)) * 0.5 * (dd >= 0 ? 1 : -1);
-        a.d += push; b.d -= push;
+        a.nudge(push); b.nudge(-push);
         // 後ろの選手は少し減速
         const back = dp < 0 ? a : b;
-        back.v *= 0.995;
+        back.v *= 1 - 0.25 / 120; // 接触でわずかに減速（毎ステップ）
         if (ents[i].kind === 'player' || ents[j].kind === 'player') this.events.push({ type: 'hit', power: 0.5 });
       }
     }

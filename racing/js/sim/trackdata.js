@@ -109,6 +109,7 @@ export const TRACKS = [
     runoff: 0.8,
     grip: 0.98,
     scenery: 'city',
+    lineLimit: 4.1, // 壁が近いのでライン取りに余裕を持たせる
     env: { time: 'night', sunElev: -8, sunAzim: 200, fog: 0.0016, exposure: 0.85 },
     points: poly([
       [-300, 0, 16], [350, 0, 20], [350, 250, 16], [180, 250, 14], [180, 150, 14], [60, 150, 14],
