@@ -195,7 +195,7 @@ svg { fill: currentColor; }
 .res-empty { font-size: 13px; color: var(--ink-dim); }
 .res-unlock { font-size: 13.5px; font-weight: 700; color: var(--ok); }
 
-#dex { background: rgba(1, 12, 20, 0.94); align-items: stretch; padding: 0; }
+#dex { background: #020f19; align-items: stretch; padding: 0; }
 .dex-wrap { width: 100%; max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; height: 100%; padding: calc(12px + var(--safe-t)) calc(14px + var(--safe-r)) 0 calc(14px + var(--safe-l)); }
 .dex-head { display: flex; align-items: center; gap: 12px; padding-bottom: 10px; }
 .dex-head h2 { margin: 0; font-size: 20px; flex: 1; }
@@ -231,8 +231,9 @@ svg { fill: currentColor; }
   .depth-row b { font-size: 28px; }
   #discover { bottom: calc(12px + var(--safe-b)); }
 }
-@media (max-width: 380px) {
-  #toast { max-width: calc(100vw - 40px); top: calc(120px + var(--safe-t)); }
+@media (max-width: 520px) {
+  #toast { max-width: calc(100vw - 40px); top: calc(122px + var(--safe-t)); white-space: normal; text-align: center; }
+  #surface-btn { top: calc(170px + var(--safe-t)); }
 }
 @media (prefers-reduced-motion: reduce) {
   #flash.go { animation-duration: 0.01s; }

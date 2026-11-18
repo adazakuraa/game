@@ -103,8 +103,8 @@ export class Terrain {
         col[k * 3 + 1] = m[1] * ao;
         col[k * 3 + 2] = m[2] * ao;
         sand[k] = m[3] * (1 - Math.min(1, slope * 3));
-        uv[k * 2] = x / 7;
-        uv[k * 2 + 1] = z / 7;
+        uv[k * 2] = x / 3.5;
+        uv[k * 2 + 1] = z / 3.5;
       }
     }
     const idx = new Uint32Array(seg * seg * 6);

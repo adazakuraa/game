@@ -161,7 +161,7 @@ function anemoneGeometry(): THREE.BufferGeometry {
     const a = r() * Math.PI * 2;
     const rad = Math.sqrt(r()) * 0.33;
     const len = 0.16 + r() * 0.14;
-    const t = new THREE.CylinderGeometry(0.006, 0.014, len, 3, 2, true);
+    const t = new THREE.CylinderGeometry(0.004, 0.012, len, 4, 2, true);
     t.translate(0, len / 2, 0);
     const lean = new THREE.Quaternion().setFromEuler(new THREE.Euler((r() - 0.5) * 1.1 + Math.sin(a) * rad * 2, 0, -Math.cos(a) * rad * 2 + (r() - 0.5) * 0.6));
     t.applyQuaternion(lean);
@@ -528,7 +528,7 @@ export class Flora {
     // ---- reef corals
     const reefOk = (x: number, z: number) => zoneAt(x, z) === 'reef' && slopeAt(x, z) < 0.55 && (bommieAt(x, z) > 0.9 || r() < 0.18);
     const brainG = rockGeometry(3, 2, 0.62);
-    const brains = sample(300, [-200, 200, 120, 345], reefOk, 30);
+    const brains = sample(420, [-200, 200, 120, 345], reefOk, 30);
     add(brainG, brainMat, brains.map(([x, z]) => {
       const c = [color(0.1, 0.35, 0.55), color(0.28, 0.3, 0.5), color(0.08, 0.45, 0.5), color(0.6, 0.2, 0.55)][Math.floor(r() * 4)];
       return { m: placeMatrix(x, z, 0.5 + r() * 1.1, r, 0.6, 0.15), c };
@@ -573,7 +573,7 @@ export class Flora {
     });
     this.mats.push(bushMat);
     const bushG = rockGeometry(21, 1, 0.8);
-    const bushes = sample(520, [-200, 200, 125, 345], reefOk, 30);
+    const bushes = sample(900, [-200, 200, 125, 345], reefOk, 30);
     add(bushG, bushMat, bushes.map(([x, z]) => {
       const p = coralPalette[Math.floor(r() * coralPalette.length)];
       return { m: placeMatrix(x, z, 0.2 + r() * 0.4, r, 0.5, 0.03), c: color(p[0], p[1] * 0.9, p[2] * 0.95) };
