@@ -9,6 +9,7 @@ import { DIVE_POINTS, heightAt, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type Div
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
+import { Minimap } from '../ui/minimap';
 
 type Save = { found: Record<string, { photo: string; depth: number; t: number }>; dives: number; maxDepth: number; muted?: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
@@ -64,6 +65,7 @@ export class Game {
   private stateBeforeDex: State = 'title';
   private photoCanvas = document.createElement('canvas');
   private fpsSamples: number[] = [];
+  private minimap: Minimap | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     patchFogChunks();
@@ -172,6 +174,8 @@ export class Game {
     $('dd-close').addEventListener('click', () => $('dex-detail').classList.add('hidden'));
     $('surface-btn').addEventListener('click', () => this.endDive('surface'));
     $('res-ok').addEventListener('click', () => this.toTitle());
+    $('minimap-btn').addEventListener('click', () => this.toggleMap(true));
+    $('map').addEventListener('click', () => this.toggleMap(false));
     $('toggle-sound').addEventListener('click', () => {
       this.save.muted = !this.save.muted;
       this.audio.setMuted(!!this.save.muted);
@@ -277,6 +281,21 @@ export class Game {
     }
   }
 
+  private boatPos(): { x: number; z: number } | null {
+    return this.ads ? null : { x: this.flora.boat.position.x, z: this.flora.boat.position.z };
+  }
+
+  private toggleMap(open: boolean): void {
+    if (!this.minimap) return;
+    $('map').classList.toggle('hidden', !open);
+    this.minimap.open = open;
+    if (open) {
+      this.input.reset();
+      const p = this.camera.position;
+      this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
+    }
+  }
+
   private setPaused(p: boolean): void {
     if (this.state !== 'diving' && this.state !== 'paused') return;
     this.state = p ? 'paused' : 'diving';
@@ -294,6 +313,13 @@ export class Game {
     this.state = 'title';
     this.renderTitle();
     this.renderer.setAnimationLoop(() => this.tick());
+    // build the bathymetric chart while the player is on the title screen
+    window.setTimeout(() => this.ensureMinimap(), 1200);
+  }
+
+  private ensureMinimap(): Minimap {
+    if (!this.minimap) this.minimap = new Minimap($<HTMLCanvasElement>('minimap'), $<HTMLCanvasElement>('bigmap'));
+    return this.minimap;
   }
 
   private titleCamera(t: number): void {
@@ -324,6 +350,7 @@ export class Game {
       this.yaw = Math.PI; // face offshore (+z)
       this.pitch = this.ads ? -0.5 : -0.35;
       this.flora.placeBoat(dp.x, dp.z - 3);
+      this.ensureMinimap();
       this.flora.boat.visible = !this.ads;
       this.terrain.prime(dp.x, dp.z, 80);
       this.env.lightOn = this.ads;
@@ -364,6 +391,8 @@ export class Game {
     this.paused = true;
     $('pause').classList.add('hidden');
     $('hud').classList.add('hidden');
+    $('map').classList.add('hidden');
+    if (this.minimap) this.minimap.open = false;
     $('mask').classList.remove('on');
     $('result').classList.remove('hidden');
     $('res-kicker').textContent = reason === 'surface' ? 'SURFACED' : 'BLACKOUT';
@@ -409,6 +438,7 @@ export class Game {
       $('btn-light').classList.toggle('on', this.env.lightOn);
     }
     if (inp.consume('dex')) this.openDex();
+    if (inp.consume('map')) this.toggleMap(!this.minimap?.open);
     if (inp.consume('menu')) this.setPaused(true);
     if (inp.consume('surface') && this.canSurface()) this.endDive('surface');
 
@@ -559,6 +589,8 @@ export class Game {
     const secs = Math.max(0, (this.air - 0) / rate);
     $('air-time').textContent = `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
     $('narc').style.opacity = String(this.narc * 0.8);
+    this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
+    if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
 
     const sb = $('surface-btn');
     const can = this.canSurface();

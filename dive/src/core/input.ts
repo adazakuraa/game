@@ -28,7 +28,7 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
-      const map: Record<string, string> = { KeyE: 'shutter', Enter: 'shutter', KeyF: 'shutter', KeyL: 'light', KeyM: 'dex', Tab: 'dex', Escape: 'menu', KeyR: 'surface' };
+      const map: Record<string, string> = { KeyE: 'shutter', Enter: 'shutter', KeyF: 'shutter', KeyL: 'light', KeyM: 'dex', Tab: 'dex', KeyN: 'map', Escape: 'menu', KeyR: 'surface' };
       if (map[e.code]) {
         this.pressed.add(map[e.code]);
         if (e.code === 'Tab') e.preventDefault();

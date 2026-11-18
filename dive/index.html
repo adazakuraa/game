@@ -29,6 +29,7 @@
           <div class="sub-row dim"><span id="heading">N</span><span class="sep"></span><span>最大 <span id="max-depth">0</span>m</span></div>
           <div id="depth-warn" class="hidden">深度注意</div>
         </div>
+        <button id="minimap-btn" type="button" aria-label="マップを開く"><canvas id="minimap"></canvas></button>
         <div id="hud-right">
           <div id="air" class="glass">
             <svg viewBox="0 0 64 64" class="ring">
@@ -81,6 +82,12 @@
           <div><b>右側をドラッグ</b> 見回す</div>
           <div><b>▲▼</b> 浮上・潜降　<b>📷</b> 撮影</div>
         </div>
+      </section>
+
+      <section id="map" class="screen hidden" aria-label="マップ">
+        <canvas id="bigmap"></canvas>
+        <div class="map-legend"><span><i class="lg-you"></i>現在地</span><span><i class="lg-boat"></i>ボート／ポイント</span><span><i class="lg-mark"></i>目印</span></div>
+        <button id="map-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" fill="none"/></svg></button>
       </section>
 
       <!-- ===================== BOAT / TITLE ===================== -->
