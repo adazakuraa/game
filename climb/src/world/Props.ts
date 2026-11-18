@@ -42,10 +42,21 @@ function flapMaterial(mat: THREE.MeshStandardMaterial, wind: WindUniforms, mode:
   return mat;
 }
 
-export interface SeracHazard {
+export interface Hazard {
+  kind: 'serac' | 'icefall' | 'rock';
+  /** route arc-length range where the hazard threatens */
+  s0: number;
+  s1: number;
   origin: THREE.Vector3;
-  width: number;
   along: THREE.Vector3;
+}
+
+export interface Ladder {
+  cx: number; cz: number;
+  ux: number; uz: number;
+  halfLen: number;
+  y0: number; y1: number;
+  s: number;
 }
 
 export interface OxygenCache {
@@ -58,7 +69,8 @@ export interface OxygenCache {
 export class Props {
   readonly group = new THREE.Group();
   readonly wind: WindUniforms = { uTime: { value: 0 }, uWind: { value: 20 } };
-  serac: SeracHazard | null = null;
+  readonly hazards: Hazard[] = [];
+  readonly ladders: Ladder[] = [];
   readonly caches: OxygenCache[] = [];
   private readonly rng: () => number;
 
@@ -69,21 +81,171 @@ export class Props {
   ) {
     this.group.name = 'props';
     this.rng = createSeededRandom(def.seed + 5);
-    this.buildCamp();
-    this.buildSummit();
+    const base = def.campAltitude < 5600;
+    this.buildCamp(0, base ? 14 : 6, base);
+    if (def.goal === 'camp') this.buildCamp(route.length, 6, false);
+    else this.buildSummit();
+    if (base) this.buildChorten();
     this.buildRocks();
-    this.buildLitter();
-    this.buildCache();
-    if (def.seracZone) this.buildSerac();
+    if (def.campAltitude >= 7000) this.buildLitter();
+    if (def.goal === 'summit') this.buildCache();
+    this.buildLadders();
+    if (def.seracField) this.buildIceTowers();
+    this.buildHazards();
+  }
+
+  /** Ice-axe point of each crevasse crossing: an aluminium ladder bridge. */
+  private buildLadders(): void {
+    const metal = new THREE.MeshStandardMaterial({ color: 0xc4ccd2, metalness: 0.85, roughness: 0.35 });
+    const lash = new THREE.MeshStandardMaterial({ color: 0x2a5bd1, roughness: 0.8 });
+    for (const c of this.field.cracks) {
+      const cosA = Math.max(0.5, Math.abs(c.nx * c.routeX + c.nz * c.routeZ));
+      const len = (c.half * 2) / cosA + 2.8;
+      const half = len / 2;
+      const ax = c.cx - c.routeX * half, az = c.cz - c.routeZ * half;
+      const bx = c.cx + c.routeX * half, bz = c.cz + c.routeZ * half;
+      const y0 = this.field.surfaceHeight(ax, az) + 0.05;
+      const y1 = this.field.surfaceHeight(bx, bz) + 0.05;
+      const g = new THREE.Group();
+      g.name = 'ladderBridge';
+      const railGeo = new THREE.BoxGeometry(0.035, 0.07, len);
+      for (const side of [-0.22, 0.22]) {
+        const rail = new THREE.Mesh(railGeo, metal);
+        rail.position.set(side, 0, 0);
+        rail.castShadow = true;
+        g.add(rail);
+      }
+      const rungGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.44, 6).rotateZ(Math.PI / 2);
+      for (let r = -half + 0.15; r < half; r += 0.3) {
+        const rung = new THREE.Mesh(rungGeo, metal);
+        rung.position.set(0, 0.0, r);
+        g.add(rung);
+      }
+      // Lashings where ladder sections are tied together.
+      for (let k = -1; k <= 1; k += 2) {
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.09, 0.08), lash);
+        l.position.set(0, 0, k * half * 0.33);
+        g.add(l);
+      }
+      const ry = Math.atan2(c.routeX, c.routeZ);
+      g.position.set(c.cx, (y0 + y1) / 2, c.cz);
+      g.rotation.order = 'YXZ';
+      g.rotation.y = ry;
+      g.rotation.x = -Math.atan2(y1 - y0, len);
+      this.group.add(g);
+      const near = this.route.nearest(c.cx, c.cz);
+      this.ladders.push({ cx: c.cx, cz: c.cz, ux: c.routeX, uz: c.routeZ, halfLen: half, y0, y1, s: near.s });
+    }
+  }
+
+  /** Icefall seracs: tumbled towers of blue ice either side of the route. */
+  private buildIceTowers(): void {
+    const geo = new THREE.BoxGeometry(1, 1, 1, 4, 6, 4);
+    const n = new Noise2D(this.def.seed + 31);
+    const pos = geo.getAttribute('position');
+    const col = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const k = 1 + n.noise(x * 2.1 + y * 1.3, z * 2.1) * 0.22;
+      pos.setXYZ(i, x * k, y + (y > 0.4 ? n.noise(x * 3, z * 3) * 0.12 : 0), z * k);
+    }
+    geo.computeVertexNormals();
+    const nrm = geo.getAttribute('normal');
+    for (let i = 0; i < pos.count; i++) {
+      const top = nrm.getY(i) > 0.6 ? 1 : 0;
+      col[i * 3] = top ? 0.95 : 0.62;
+      col[i * 3 + 1] = top ? 0.97 : 0.8;
+      col[i * 3 + 2] = top ? 1.0 : 0.92;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, emissive: 0x061422 });
+    const count = 120;
+    const mesh = new THREE.InstancedMesh(geo, mat, count);
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    let used = 0;
+    for (let i = 0; i < count * 3 && used < count; i++) {
+      const sAt = this.rng() * this.route.length;
+      if (this.route.crevasseS.some((cs) => Math.abs(cs - sAt) < 10)) continue;
+      const p = this.route.pointAt(sAt);
+      const d = this.route.directionAt(sAt);
+      const lat = (this.rng() < 0.5 ? -1 : 1) * (7 + Math.pow(this.rng(), 1.3) * 55);
+      const x = p.x - d.z * lat, z = p.z + d.x * lat;
+      const w = 3 + this.rng() * 7;
+      const h = 4 + this.rng() * 12 * Math.min(1, Math.abs(lat) / 20);
+      q.setFromEuler(new THREE.Euler((this.rng() - 0.5) * 0.3, this.rng() * 6, (this.rng() - 0.5) * 0.3));
+      m4.compose(new THREE.Vector3(x, this.ground(x, z) + h * 0.4, z), q, new THREE.Vector3(w, h, w * (0.6 + this.rng() * 0.6)));
+      mesh.setMatrixAt(used++, m4);
+    }
+    mesh.count = used;
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.computeBoundingSphere();
+    mesh.name = 'iceTowers';
+    this.group.add(mesh);
+  }
+
+  private buildHazards(): void {
+    const def = this.def;
+    const r = this.route;
+    if (def.seracZone && def.goal === 'summit') {
+      this.buildSerac();
+    } else if (def.seracZone) {
+      const s0 = r.waypointS[def.seracZone[0]], s1 = r.waypointS[def.seracZone[1]];
+      const mid = r.pointAt((s0 + s1) / 2);
+      const d = r.directionAt((s0 + s1) / 2);
+      const origin = mid.clone().add(new THREE.Vector3(-d.z * 45, 18, d.x * 45));
+      this.hazards.push({ kind: 'icefall', s0, s1, origin, along: d.clone() });
+    }
+    if (def.rockfallZone) {
+      const s0 = r.waypointS[def.rockfallZone[0]], s1 = r.waypointS[def.rockfallZone[1]];
+      const mid = r.pointAt((s0 + s1) / 2);
+      const ahead = r.pointAt(Math.min(r.length, s1 + 60));
+      const up = ahead.clone().sub(mid).setY(0).normalize();
+      const origin = mid.clone().addScaledVector(up, 60);
+      origin.y = mid.y + 40;
+      const along = new THREE.Vector3(-up.z, 0, up.x);
+      this.hazards.push({ kind: 'rock', s0, s1, origin, along });
+    }
+  }
+
+  /** Base camp chorten: a stone altar with prayer-flag lines radiating out. */
+  private buildChorten(): void {
+    const camp = this.route.pointAt(0);
+    const dir = this.route.directionAt(4);
+    const x = camp.x + dir.x * 4 - dir.z * 9;
+    const z = camp.z + dir.z * 4 + dir.x * 9;
+    const y = this.ground(x, z);
+    const stone = new THREE.MeshStandardMaterial({ color: 0x8a8580, roughness: 0.95 });
+    const white = new THREE.MeshStandardMaterial({ color: 0xe9e6df, roughness: 0.9 });
+    const g = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.9, 2.4, 3, 2, 3), stone);
+    base.position.y = 0.45;
+    g.add(base);
+    const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 1.0, 1.0, 10), white);
+    mid.position.y = 1.4;
+    g.add(mid);
+    const top = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.0, 10), white);
+    top.position.y = 2.4;
+    g.add(top);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 5.5, 6), new THREE.MeshStandardMaterial({ color: 0x6b4a2e }));
+    pole.position.y = 3.2;
+    g.add(pole);
+    g.traverse((o) => { o.castShadow = true; o.receiveShadow = true; });
+    g.position.set(x, y, z);
+    g.name = 'pujaChorten';
+    this.group.add(g);
+    this.buildFlags(new THREE.Vector3(x, y + 5.8, z), 9, 12, 18, 26);
   }
 
   private ground(x: number, z: number): number {
     return this.field.height(x, z);
   }
 
-  private buildCamp(): void {
-    const camp = this.route.pointAt(0);
-    const dir = this.route.directionAt(4);
+  private buildCamp(atS: number, count: number, wide: boolean): void {
+    const camp = this.route.pointAt(atS);
+    const dir = this.route.directionAt(Math.min(this.route.length, Math.max(0, atS + (atS > 0 ? -4 : 4))));
     const side = new THREE.Vector3(-dir.z, 0, dir.x);
     const colors = [0xf2a516, 0xe8531d, 0xf2c014, 0x2a6fc4, 0xe8531d, 0xf2a516];
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4, metalness: 0.6 });
@@ -99,15 +261,17 @@ export class Props {
       pos.setXYZ(i, x * sag * 1.25, y * 0.82, z * sag);
     }
     tentGeo.computeVertexNormals();
-    for (let i = 0; i < 6; i++) {
-      const along = -6 - i * 4.2 + (this.rng() - 0.5) * 2;
-      const lat = (i % 2 ? 1 : -1) * (4 + this.rng() * 4);
+    const spread = wide ? 2.2 : 1;
+    for (let i = 0; i < count; i++) {
+      // Tents line both sides of the track, ahead of and behind the start point.
+      const along = (atS > 0 ? -16 : -14) + (i / count) * (atS > 0 ? 24 : 30) * spread + (this.rng() - 0.5) * 3;
+      const lat = (i % 2 ? 1 : -1) * (4.5 + this.rng() * 5 * spread);
       const x = camp.x + dir.x * along + side.x * lat;
       const z = camp.z + dir.z * along + side.z * lat;
       const y = this.ground(x, z);
       const tent = new THREE.Group();
       tent.name = 'campTent';
-      const mat = flapMaterial(new THREE.MeshStandardMaterial({ color: colors[i], roughness: 0.65 }), this.wind, 'tent');
+      const mat = flapMaterial(new THREE.MeshStandardMaterial({ color: colors[i % colors.length], roughness: 0.65 }), this.wind, 'tent');
       const body = new THREE.Mesh(tentGeo, mat);
       body.castShadow = true;
       body.receiveShadow = true;
@@ -141,10 +305,19 @@ export class Props {
 
   private buildSummit(): void {
     const top = this.route.pointAt(this.route.length);
+    this.buildFlags(new THREE.Vector3(top.x, top.y + 1.3, top.z), 7, 14, 4, 7);
+    // Summit marker: small survey pole wrapped in khata scarves.
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.05, 1.5, 6),
+      new THREE.MeshStandardMaterial({ color: 0x9a9fa5, metalness: 0.7, roughness: 0.4 }),
+    );
+    pole.position.set(top.x, top.y + 0.7, top.z);
+    this.group.add(pole);
+  }
+
+  private buildFlags(origin: THREE.Vector3, lines: number, perLine: number, lenMin: number, lenMax: number): void {
     const colors = [0x1f5fd1, 0xf3f3f3, 0xd62b2b, 0x1f9b4a, 0xf2c51a];
     const flagGeo = new THREE.PlaneGeometry(0.28, 0.2, 6, 1).translate(0.14, -0.1, 0);
-    const lines = 7;
-    const perLine = 14;
     const mats = colors.map((c) =>
       flapMaterial(new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, side: THREE.DoubleSide }), this.wind, 'flag'),
     );
@@ -154,12 +327,11 @@ export class Props {
     const linePts: THREE.Vector3[] = [];
     const m4 = new THREE.Matrix4();
     const q = new THREE.Quaternion();
-    const origin = new THREE.Vector3(top.x, top.y + 1.3, top.z);
     for (let l = 0; l < lines; l++) {
       const a = (l / lines) * Math.PI * 2 + this.rng() * 0.4;
-      const len = 4 + this.rng() * 3;
-      const ex = top.x + Math.cos(a) * len;
-      const ez = top.z + Math.sin(a) * len;
+      const len = lenMin + this.rng() * (lenMax - lenMin);
+      const ex = origin.x + Math.cos(a) * len;
+      const ez = origin.z + Math.sin(a) * len;
       const end = new THREE.Vector3(ex, this.ground(ex, ez) + 0.15, ez);
       linePts.push(origin.clone(), end.clone());
       const dir = end.clone().sub(origin);
@@ -167,7 +339,7 @@ export class Props {
       for (let f = 0; f < perLine; f++) {
         const t = (f + 0.5) / perLine;
         const p = origin.clone().lerp(end, t);
-        p.y -= Math.sin(t * Math.PI) * 0.35;
+        p.y -= Math.sin(t * Math.PI) * (0.35 + len * 0.04);
         const ci = f % 5;
         q.setFromEuler(new THREE.Euler(0, yaw, -0.2));
         m4.compose(p, q, new THREE.Vector3(1, 1, 1));
@@ -182,13 +354,6 @@ export class Props {
       this.group.add(m);
     });
     this.group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(linePts), lineMat));
-    // Summit marker: small survey pole wrapped in khata scarves.
-    const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.04, 0.05, 1.5, 6),
-      new THREE.MeshStandardMaterial({ color: 0x9a9fa5, metalness: 0.7, roughness: 0.4 }),
-    );
-    pole.position.set(top.x, top.y + 0.7, top.z);
-    this.group.add(pole);
   }
 
   private makeRockGeometry(seed: number, detail = 2): THREE.BufferGeometry {
@@ -259,7 +424,7 @@ export class Props {
     });
 
     // Hillary-step style rock band on Everest just below the summit.
-    if (this.def.id === 'everest') {
+    if (this.def.stageKey === 'everest-summit') {
       const g = this.makeRockGeometry(41, 3);
       for (let k = 0; k < 7; k++) {
         const s = this.route.waypointS[9] - 6 + k * 1.6;
@@ -376,11 +541,13 @@ export class Props {
     );
     cap.position.set(0, 18, 1);
     mesh.add(cap);
-    this.serac = {
+    this.hazards.push({
+      kind: 'serac',
+      s0: this.route.waypointS[from],
+      s1: this.route.waypointS[to],
       origin: new THREE.Vector3(center.x, groundY + 4, center.z).addScaledVector(toSummit, -12),
-      width,
       along,
-    };
+    });
   }
 
   update(time: number, wind: number): void {

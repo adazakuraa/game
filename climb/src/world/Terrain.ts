@@ -22,6 +22,14 @@ function buildSegments(poly: Vec3Tuple[]): Segment[] {
   return segs;
 }
 
+export interface Crack {
+  cx: number; cz: number;
+  nx: number; nz: number;
+  vx: number; vz: number;
+  routeX: number; routeZ: number;
+  half: number; halfLen: number; depth: number;
+}
+
 function smax(a: number, b: number, k: number): number {
   const h = Math.max(k - Math.abs(a - b), 0) / k;
   return Math.max(a, b) + h * h * k * 0.25;
@@ -33,14 +41,60 @@ export class MountainField {
   private readonly noise: Noise2D;
   private readonly noise2: Noise2D;
   lastRouteDistance = 0;
+  readonly cracks: Crack[] = [];
+  private readonly flat: Set<number>;
 
   constructor(readonly def: MountainDef) {
     this.ridges = def.ridges.map(buildSegments);
     this.noise = new Noise2D(def.seed);
     this.noise2 = new Noise2D(def.seed * 7 + 3);
+    this.flat = new Set(def.flatRidges ?? []);
+    for (const c of def.crevasses ?? []) {
+      const i = Math.min(Math.floor(c.at), def.route.length - 2);
+      const f = c.at - i;
+      const a = def.route[i];
+      const b = def.route[i + 1];
+      const dx = b[0] - a[0];
+      const dz = b[1] - a[1];
+      const l = Math.hypot(dx, dz) || 1;
+      const ang = c.angle ?? 0;
+      // n: crack normal (≈ route direction), v: along the crack
+      const ux = dx / l, uz = dz / l;
+      const nx = ux * Math.cos(ang) - uz * Math.sin(ang);
+      const nz = ux * Math.sin(ang) + uz * Math.cos(ang);
+      this.cracks.push({
+        cx: a[0] + dx * f, cz: a[1] + dz * f,
+        nx, nz, vx: -nz, vz: nx,
+        routeX: ux, routeZ: uz,
+        half: c.width / 2, halfLen: c.length / 2, depth: 24,
+      });
+    }
+  }
+
+  /** Depth of crevasse cut at a point (0 outside cracks). */
+  crevasseDepth(x: number, z: number): number {
+    let depth = 0;
+    for (const c of this.cracks) {
+      const px = x - c.cx;
+      const pz = z - c.cz;
+      const t = Math.abs(px * c.vx + pz * c.vz);
+      if (t > c.halfLen) continue;
+      const across = Math.abs(px * c.nx + pz * c.nz);
+      if (across > c.half) continue;
+      const edge = smoothstep(c.half, c.half - 0.7, across);
+      const ends = 1 - smoothstep(c.halfLen - 8, c.halfLen, t);
+      depth = Math.max(depth, c.depth * edge * ends);
+    }
+    return depth;
   }
 
   height(x: number, z: number): number {
+    const h = this.surfaceHeight(x, z);
+    return this.cracks.length ? h - this.crevasseDepth(x, z) : h;
+  }
+
+  /** Snow surface ignoring crevasses (used for ropes, ladders, trail). */
+  surfaceHeight(x: number, z: number): number {
     const def = this.def;
     const s = def.faceSlope;
     const w = def.crestWidth;
@@ -64,9 +118,19 @@ export class MountainField {
       }
       const d = Math.sqrt(best);
       if (r === 0) routeD = d;
-      // Faces get a little steeper higher up, flatter towards the glacier.
-      const slope = s * (r === 0 ? 1 : 1.08);
-      const rh = crest - slope * (Math.sqrt(d * d + w * w) - w) + 0.00022 * d * d;
+      let rh: number;
+      if (r === 0 && def.valley) {
+        // Glacier: U-shaped valley floor rising gently away from the route line.
+        const dc = Math.min(d, 220);
+        rh = crest + 0.0009 * dc * dc;
+      } else if (this.flat.has(r)) {
+        const ww = 140;
+        rh = crest - 0.22 * (Math.sqrt(d * d + ww * ww) - ww);
+      } else {
+        // Faces get a little steeper higher up, flatter towards the glacier.
+        const slope = s * (r === 0 ? 1 : 1.08);
+        rh = crest - slope * (Math.sqrt(d * d + w * w) - w) + 0.00022 * d * d;
+      }
       h = smax(h, rh, 28);
     }
     this.lastRouteDistance = routeD;
@@ -80,7 +144,12 @@ export class MountainField {
     const ang = Math.atan2(z, x);
     const rad = Math.hypot(x, z);
     const rib = this.noise2.ridged(Math.cos(ang) * 4.2, Math.sin(ang) * 4.2 + rad * 0.006, 4);
-    h += (rib - 0.5) * away * 26 * smoothstep(60, 260, rad);
+    h += (rib - 0.5) * away * (def.valley ? 10 : 26) * smoothstep(60, 260, rad);
+    // Icefall: tumbled glacier surface with ice blocks.
+    if (def.seracField) {
+      const blocks = this.noise.ridged(x * 0.05, z * 0.05, 2);
+      h += (blocks - 0.4) * 5 * smoothstep(5, 14, routeD);
+    }
     // Gentle boot-scale undulation on the crest itself.
     h += this.noise2.noise(x * 0.09, z * 0.09) * 0.35;
     return h;
@@ -141,6 +210,7 @@ export interface TerrainUniforms {
   uBandLow: { value: number };
   uBandHigh: { value: number };
   uSnowCover: { value: number };
+  uBandCol: { value: THREE.Vector3 };
 }
 
 export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
@@ -157,6 +227,7 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
     uBandLow: { value: altitudeToWorldY(def, def.rockBand[0]) },
     uBandHigh: { value: altitudeToWorldY(def, def.rockBand[1]) },
     uSnowCover: { value: 1 },
+    uBandCol: { value: new THREE.Vector3(...(def.bandColor ?? [0.5, 0.41, 0.27])) },
   };
   const material = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -174,11 +245,14 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         '#include <common>',
         `#include <common>
          varying vec3 vWPos;
-         varying vec3 vWNrm;`,
+         varying vec3 vWNrm;
+         attribute float aCrev;
+         varying float vCrev;`,
       )
       .replace(
         '#include <worldpos_vertex>',
         `#include <worldpos_vertex>
+         vCrev = aCrev;
          vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
          vWNrm = normalize(mat3(modelMatrix) * objectNormal);`,
       );
@@ -195,6 +269,8 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
          uniform float uBandLow;
          uniform float uBandHigh;
          uniform float uSnowCover;
+         uniform vec3 uBandCol;
+         varying float vCrev;
          float tHash(vec3 p){ p = fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
          float tNoise(vec2 p){ vec2 i=floor(p); vec2 f=fract(p); f=f*f*(3.0-2.0*f);
            float a=tHash(vec3(i,1.0)); float b=tHash(vec3(i+vec2(1,0),1.0));
@@ -222,11 +298,15 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         float strata = sin(vWPos.y*1.7 + n1*6.0)*0.5+0.5;
         vec3 rockCol = mix(vec3(0.20,0.19,0.18), vec3(0.33,0.30,0.27), strata*0.6) * (0.55 + rA*0.9);
         float band = smoothstep(uBandLow-6.0, uBandLow+4.0, vWPos.y) * (1.0 - smoothstep(uBandHigh-4.0, uBandHigh+6.0, vWPos.y));
-        rockCol = mix(rockCol, vec3(0.50,0.41,0.27)*(0.6+rA*0.7), band*0.85);
+        rockCol = mix(rockCol, uBandCol*(0.6+rA*0.7), band*0.85);
         vec3 snowCol = mix(vec3(0.93,0.95,0.98), vec3(0.86,0.90,0.95), n2*0.6);
         vec3 iceCol = vec3(0.72,0.82,0.90);
         vec3 surf = mix(snowCol, iceCol, gIce*0.7);
         diffuseColor.rgb = mix(rockCol, surf, gSnow);
+        // Crevasse walls: blue ice darkening with depth.
+        float crev = smoothstep(0.01, 0.2, vCrev);
+        diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.45,0.7,0.85), vec3(0.01,0.05,0.12), smoothstep(0.1, 0.8, vCrev)), crev);
+        gSnow = mix(gSnow, 1.0, crev); gIce = mix(gIce, 1.0, crev);
         `,
       )
       .replace(
@@ -266,7 +346,7 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         }`,
       );
   };
-  material.customProgramCacheKey = () => 'terrain-v3';
+  material.customProgramCacheKey = () => 'terrain-v4';
   return { material, uniforms };
 }
 
@@ -356,6 +436,14 @@ export function buildTerrainMeshes(
   baseMesh.receiveShadow = true;
   group.add(baseMesh);
 
+  for (const g of [patch, base]) {
+    const pos = g.getAttribute('position');
+    const crev = new Float32Array(pos.count);
+    if (field.cracks.length) {
+      for (let i = 0; i < pos.count; i++) crev[i] = field.crevasseDepth(pos.getX(i), pos.getZ(i)) / 24;
+    }
+    g.setAttribute('aCrev', new THREE.BufferAttribute(crev, 1));
+  }
   const triangles = (patch.index!.count + base.index!.count) / 3;
   return { group, frame, triangles };
 }

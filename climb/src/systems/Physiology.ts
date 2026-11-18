@@ -32,17 +32,22 @@ export class Physiology {
   heartPhase = 0;
   heatBalance = 0;
   regulatorFrozen = 0;
+  /** Altitude (m) the body is adapted to; climbing far above it lowers SpO2. */
+  acclim = 5600;
+  hasO2 = true;
 
-  reset(spares: number): void {
+  reset(spares: number, opts: { o2?: boolean; acclim?: number; frost?: number } = {}): void {
+    this.acclim = opts.acclim ?? this.acclim;
+    this.hasO2 = opts.o2 ?? true;
     this.spo2 = 80;
     this.heartRate = 96;
     this.stamina = 100;
     this.coreTemp = 36.9;
-    this.frostbite = 0;
+    this.frostbite = opts.frost ?? 0;
     this.hace = 0;
-    this.bottle = BOTTLE_LITERS;
-    this.spares = spares;
-    this.flow = 2;
+    this.bottle = this.hasO2 ? BOTTLE_LITERS : 0;
+    this.spares = this.hasO2 ? spares : 0;
+    this.flow = this.hasO2 ? 2 : 0;
     this.collapsed = false;
   }
 
@@ -69,7 +74,7 @@ export class Physiology {
     // Oxygen: each L/min roughly "lowers" the felt altitude.
     const flow = this.effectiveFlow;
     this.bottle = Math.max(0, this.bottle - flow * c.gameMinutes);
-    const effAlt = c.altitude - flow * 620;
+    const effAlt = c.altitude - flow * 620 + Math.max(0, c.altitude - this.acclim - 400) * 0.5;
     const target = Physiology.spo2ForAltitude(effAlt) - c.exertion * 7 + (c.resting ? 2 : 0);
     this.spo2 += (target - this.spo2) * Math.min(1, dt / 5);
 
@@ -142,6 +147,8 @@ export class Weather {
   private gustPeak = 0;
   private stormTarget = 0;
   private stormChecked = false;
+  /** Chance that the afternoon brings a storm (rises as the season wears on). */
+  stormChance = 0.55;
 
   constructor(private rng: () => number, private readonly baseWind: number) {}
 
@@ -164,7 +171,7 @@ export class Weather {
     // Afternoon storms are a real Himalayan pattern.
     if (!this.stormChecked && hours > 11.5) {
       this.stormChecked = true;
-      if (this.rng() < 0.55) this.stormTarget = 0.85;
+      if (this.rng() < this.stormChance) this.stormTarget = 0.85;
     }
     if (hours > 14.5) this.stormTarget = Math.max(this.stormTarget, 0.9);
     s.storm += (this.stormTarget - s.storm) * Math.min(1, dt / 40);

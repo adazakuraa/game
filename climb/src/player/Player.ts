@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Intents } from '../core/Input';
 import type { MountainField } from '../world/Terrain';
 import type { Route, RopeSegment } from '../world/Route';
+import type { Ladder } from '../world/Props';
 import { clamp } from '../utils/noise';
 
 export type PlayerMode = 'walk' | 'slide' | 'transfer' | 'clipping' | 'dead';
@@ -29,7 +30,10 @@ export type PlayerEvent =
   | { type: 'transferred' }
   | { type: 'anchorBlock' }
   | { type: 'tooSteep' }
-  | { type: 'gustKnock' };
+  | { type: 'gustKnock' }
+  | { type: 'crevasseDeath' }
+  | { type: 'crevasseCaught' }
+  | { type: 'ladderWobble' };
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -62,12 +66,29 @@ export class Player {
   private readonly tmp = new THREE.Vector3();
   private readonly nrm = new THREE.Vector3();
   descending = false;
+  onLadder = false;
+  ladders: Ladder[] = [];
 
   constructor(private readonly field: MountainField, private readonly route: Route) {}
 
+  /** Ground height including ladder decks over crevasses. */
+  groundAt(x: number, z: number): { y: number; ladder: Ladder | null; lat: number } {
+    for (const l of this.ladders) {
+      const px = x - l.cx;
+      const pz = z - l.cz;
+      const along = px * l.ux + pz * l.uz;
+      if (Math.abs(along) > l.halfLen) continue;
+      const lat = px * -l.uz + pz * l.ux;
+      if (Math.abs(lat) > 0.55) continue;
+      const t = (along + l.halfLen) / (2 * l.halfLen);
+      return { y: l.y0 + (l.y1 - l.y0) * t + 0.04, ladder: l, lat };
+    }
+    return { y: this.field.height(x, z), ladder: null, lat: 0 };
+  }
+
   reset(s: number, yawTowardsRoute = true): void {
     const p = this.route.pointAt(s);
-    this.pos.set(p.x, this.field.height(p.x, p.z), p.z);
+    this.pos.set(p.x, this.groundAt(p.x, p.z).y, p.z);
     const d = this.route.directionAt(s + 2);
     if (yawTowardsRoute) this.yaw = Math.atan2(-d.x, -d.z);
     this.pitch = 0.05;
@@ -128,8 +149,15 @@ export class Player {
     this.pitch = clamp(this.pitch + input.lookY, -1.35, 1.2);
     if (ctx.drift > 0) this.yaw += Math.sin(performance.now() * 0.0007) * 0.0025 * ctx.drift;
 
-    this.field.normal(this.pos.x, this.pos.z, this.nrm);
-    this.slopeDeg = THREE.MathUtils.radToDeg(Math.acos(clamp(this.nrm.y, -1, 1)));
+    const g0 = this.groundAt(this.pos.x, this.pos.z);
+    this.onLadder = !!g0.ladder;
+    if (this.onLadder) {
+      this.nrm.set(0, 1, 0);
+      this.slopeDeg = 5;
+    } else {
+      this.field.normal(this.pos.x, this.pos.z, this.nrm);
+      this.slopeDeg = THREE.MathUtils.radToDeg(Math.acos(clamp(this.nrm.y, -1, 1)));
+    }
 
     if (this.mode === 'slide') {
       this.updateSlide(dt, input);
@@ -178,8 +206,8 @@ export class Player {
       const mag = Math.min(1, dir.length());
       dir.normalize();
       const probe = 0.8;
-      const h0 = this.field.height(this.pos.x, this.pos.z);
-      const h1 = this.field.height(this.pos.x + dir.x * probe, this.pos.z + dir.z * probe);
+      const h0 = this.groundAt(this.pos.x, this.pos.z).y;
+      const h1 = this.groundAt(this.pos.x + dir.x * probe, this.pos.z + dir.z * probe).y;
       const grade = (h1 - h0) / probe;
       const up = Math.max(0, grade);
       const down = Math.max(0, -grade);
@@ -223,9 +251,22 @@ export class Player {
         this.events.push({ type: 'step', surface: rock ? 'rock' : 'snow', heavy: this.exertion });
       }
 
+      // Ladder: crampons on aluminium rungs. A wobble off the rungs is a fall into the crevasse.
+      const gl = this.groundAt(this.pos.x, this.pos.z);
+      if (gl.ladder) {
+        // Balance assist toward the ladder's centre line.
+        const k = Math.min(1, dt * 2.5);
+        this.pos.x -= -gl.ladder.uz * gl.lat * k;
+        this.pos.z -= gl.ladder.ux * gl.lat * k;
+        const p = 0.012 * (1 + ctx.hypoxia + ctx.gust * 3 + (ctx.stamina < 25 ? 2 : 0) + ctx.drift * 3);
+        if (moved > 0 && ctx.rng() < p * moved) {
+          if (this.clip) { this.shake = 1; this.events.push({ type: 'ladderWobble' }); }
+          else this.fallIntoCrevasse();
+        }
+      }
       // Slip risk on steep ground when not clipped.
       const slope = this.slopeDeg;
-      if (moved > 0 && slope > 31) {
+      if (moved > 0 && slope > 31 && !gl.ladder) {
         const base = Math.pow((slope - 31) / 19, 2) * 0.05;
         const mult = 1 + ctx.hypoxia * 2 + (ctx.stamina < 25 ? 1.5 : 0) + down * 2.5 + ctx.gust * 1.5 + ctx.drift * 2;
         // Kicked steps in the boot track are far more secure than fresh slope.
@@ -238,8 +279,15 @@ export class Player {
     }
     if (this.mode !== 'walk') { this.updateRoute(); return; }
 
+    // Stepping off the ladder or the lip of a crevasse.
+    const gNow = this.groundAt(this.pos.x, this.pos.z);
+    if (!gNow.ladder && this.field.crevasseDepth(this.pos.x, this.pos.z) > 1.6) {
+      this.fallIntoCrevasse();
+      if (this.mode !== 'walk') { this.updateRoute(); return; }
+    }
+
     // Standing on very steep ground: slide unless clipped.
-    if (this.slopeDeg > 54 && !this.clip) this.slip(false);
+    if (this.slopeDeg > 54 && !this.clip && !gNow.ladder) this.slip(false);
 
     // Gust knock-down on exposed ground.
     if (ctx.gust > 0.7 && this.lastGust <= 0.7 && !this.resting && this.slopeDeg > 24) {
@@ -253,10 +301,31 @@ export class Player {
     }
     this.lastGust = ctx.gust;
 
-    this.pos.y = this.field.height(this.pos.x, this.pos.z);
+    this.pos.y = this.groundAt(this.pos.x, this.pos.z).y;
     this.updateRoute();
     this.bob = Math.sin(this.stepPhase * Math.PI) * Math.min(1, this.speed / 1.2);
     this.shake = Math.max(0, this.shake - dt * 1.5);
+  }
+
+  private fallIntoCrevasse(): void {
+    if (this.clip) {
+      // The handline holds: haul back out onto the near rim.
+      const l = this.ladders.reduce<Ladder | null>((best, c) => {
+        const d = Math.hypot(c.cx - this.pos.x, c.cz - this.pos.z);
+        return !best || d < Math.hypot(best.cx - this.pos.x, best.cz - this.pos.z) ? c : best;
+      }, null);
+      if (l) {
+        const along = (this.pos.x - l.cx) * l.ux + (this.pos.z - l.cz) * l.uz;
+        const side = along >= 0 ? 1 : -1;
+        this.pos.x = l.cx + l.ux * side * (l.halfLen + 0.4);
+        this.pos.z = l.cz + l.uz * side * (l.halfLen + 0.4);
+      }
+      this.shake = 1;
+      this.events.push({ type: 'crevasseCaught' });
+      return;
+    }
+    this.mode = 'dead';
+    this.events.push({ type: 'crevasseDeath' });
   }
 
   private handleClipAction(): void {
@@ -359,6 +428,11 @@ export class Player {
     // Rotate view to tumble a little
     this.pitch = clamp(this.pitch - dt * 0.4, -1.2, 1.2);
 
+    if (this.field.crevasseDepth(this.pos.x, this.pos.z) > 1.6) {
+      this.mode = 'dead';
+      this.events.push({ type: 'crevasseDeath' });
+      return;
+    }
     const drop = this.slideStartY - this.pos.y;
     if (this.speed > 21 || drop > 70) {
       this.mode = 'dead';

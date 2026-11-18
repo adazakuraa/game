@@ -219,6 +219,15 @@ export class Audio {
     this.burst({ t: t + 0.3, dur: 3.5, freq: 120, q: 0.5, gain: 0.7, attack: 0.4, type: 'lowpass', rate: 0.5 });
   }
 
+  rockfall(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < 9; i++) {
+      this.burst({ t: t + i * 0.13 + Math.random() * 0.08, dur: 0.07, freq: 700 + Math.random() * 1500, q: 4, gain: 0.3, attack: 0.002 });
+    }
+    this.burst({ t: t + 0.2, dur: 1.8, freq: 300, q: 0.6, gain: 0.25, attack: 0.1, type: 'lowpass' });
+  }
+
   valve(): void {
     this.burst({ dur: 0.6, freq: 6000, q: 0.8, gain: 0.08, attack: 0.02, type: 'highpass' });
     this.tone(900, 0.08, 0.04, 'square');

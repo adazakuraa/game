@@ -92,7 +92,7 @@
           </header>
           <div id="mountain-cards"></div>
           <div class="options">
-            <label>予備ボンベ
+            <label>山頂アタックの予備ボンベ
               <select id="opt-bottles">
                 <option value="0">0本</option>
                 <option value="1" selected>1本</option>
@@ -101,7 +101,8 @@
             </label>
             <label class="check"><input type="checkbox" id="opt-sound" checked /> サウンド</label>
           </div>
-          <button id="start-btn" class="primary" type="button">サミットプッシュ開始</button>
+          <button id="continue-btn" class="primary hidden" type="button">続きから</button>
+          <button id="start-btn" class="primary" type="button">ベースキャンプから遠征開始</button>
           <details class="controls">
             <summary>操作方法</summary>
             <div class="ctl-grid">
@@ -129,6 +130,7 @@
           <p id="result-desc"></p>
           <dl id="result-stats"></dl>
           <button id="result-primary" class="primary" type="button">再挑戦</button>
+          <button id="result-rest" class="hidden" type="button">休養して高度順応（+1日）</button>
           <button id="result-secondary" type="button">山を選び直す</button>
         </div>
       </section>

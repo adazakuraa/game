@@ -140,10 +140,14 @@ export class Environment {
   private readonly cloudMat: THREE.ShaderMaterial;
   private readonly moonDir = new THREE.Vector3(-0.55, 0.45, 0.35).normalize();
   private readonly lightDir = new THREE.Vector3();
-  readonly cloudY: number;
+  cloudY: number;
+  private readonly baseCloudY: number;
+  private cloudMesh!: THREE.Mesh;
+  private distant!: THREE.Mesh;
 
   constructor(cloudY: number, seed: number, mobile: boolean) {
     this.cloudY = cloudY;
+    this.baseCloudY = cloudY;
     this.group.name = 'environment';
     this.skyMat = new THREE.ShaderMaterial({
       vertexShader: SKY_VERT,
@@ -182,8 +186,10 @@ export class Environment {
     clouds.name = 'cloudSea';
     clouds.position.y = cloudY;
     this.group.add(clouds);
+    this.cloudMesh = clouds;
 
-    this.group.add(this.buildDistantRange(seed, mobile));
+    this.distant = this.buildDistantRange(seed, mobile);
+    this.group.add(this.distant);
 
     this.sun.castShadow = true;
     const sm = mobile ? 1024 : 2048;
@@ -264,6 +270,13 @@ export class Environment {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.name = 'distantRange';
     return mesh;
+  }
+
+  /** Move the cloud sea (and the distant skyline that rises out of it) for a new stage. */
+  setCloudY(y: number): void {
+    this.cloudY = y;
+    this.cloudMesh.position.y = y;
+    this.distant.position.y = y - this.baseCloudY;
   }
 
   /** hours: 0-24 local time. storm 0-1. */

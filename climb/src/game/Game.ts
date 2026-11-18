@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Input } from '../core/Input';
-import { MOUNTAINS, type MountainDef } from './Mountains';
+import { EXPEDITIONS, altitudeToWorldY, type MountainDef } from './Mountains';
 import { MountainField, buildTerrainMeshes, createTerrainMaterial, type TerrainUniforms } from '../world/Terrain';
 import { Route } from '../world/Route';
 import { Environment } from '../world/Environment';
@@ -16,8 +16,8 @@ import { Hud, formatClock } from '../ui/Hud';
 import { createSeededRandom } from '../utils/random';
 import { clamp, smoothstep } from '../utils/noise';
 
-type GameState = 'title' | 'play' | 'paused' | 'dead' | 'summit' | 'won';
-type DeathKind = 'fall' | 'hace' | 'hypothermia' | 'serac' | 'exhaustion';
+type GameState = 'title' | 'play' | 'paused' | 'dead' | 'summit' | 'camp' | 'won';
+type DeathKind = 'fall' | 'hace' | 'hypothermia' | 'serac' | 'exhaustion' | 'crevasse' | 'rock' | 'icefall';
 
 const TIME_SCALE = 40; // game seconds per real second
 const START_HOURS = 3.0;
@@ -29,7 +29,36 @@ const DEATH_TEXT: Record<DeathKind, { title: string; desc: string }> = {
   hypothermia: { title: '低体温症', desc: '風と寒さに体温を奪われ続けた。デスゾーンで長く立ち止まることは死を意味する。動き続けて熱を作れ。' },
   serac: { title: 'セラック崩落', desc: '頭上の巨大な氷塔が崩れ、トラバース中に直撃した。崩落音が聞こえたら落下ラインから即座に離れろ。' },
   exhaustion: { title: '力尽きた', desc: '体力が尽き、立ち上がることができなかった。休息と酸素を管理し、ペースを守れ。' },
+  crevasse: { title: 'クレバス転落', desc: 'ハシゴから足を踏み外し、青い闇の底へ落ちた。ハシゴを渡る前には必ず横のロープに確保しろ。' },
+  rock: { title: '落石', desc: '頭上から落ちてきた岩が直撃した。落石の音が聞こえたら、落下ラインから横へ逃げろ。' },
+  icefall: { title: '氷塔の崩壊', desc: 'アイスフォールの氷塔が崩れ、巻き込まれた。崩壊帯では立ち止まらず、日が高くなる前に抜けろ。' },
 };
+
+const SAVE_KEY = 'dz8000-expedition-v1';
+interface SaveData {
+  exp: 'everest' | 'k2';
+  stage: number;
+  day: number;
+  acclim: number;
+  frost: number;
+  spares: number;
+}
+
+function readSave(): SaveData | null {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as SaveData;
+    if (!EXPEDITIONS[d.exp] || !EXPEDITIONS[d.exp].stages[d.stage]) return null;
+    return d;
+  } catch { return null; }
+}
+function writeSave(d: SaveData | null): void {
+  try {
+    if (d) localStorage.setItem(SAVE_KEY, JSON.stringify(d));
+    else localStorage.removeItem(SAVE_KEY);
+  } catch { /* storage unavailable: progress lasts this session only */ }
+}
 
 interface IceChunk {
   mesh: THREE.Mesh;
@@ -68,7 +97,12 @@ export class Game {
   private player: Player | null = null;
   private state: GameState = 'title';
   private selected: 'everest' | 'k2' = 'everest';
+  private stageIndex = 0;
+  private day = 1;
+  private acclim = 5600;
+  private frostCarry = 0;
   private spares = 1;
+  private builtKey = '';
   private rng = createSeededRandom(1);
   private seed = 1;
   private hours = START_HOURS;
@@ -95,6 +129,8 @@ export class Game {
   private readonly chunks: IceChunk[] = [];
   private chunkGeo = new THREE.DodecahedronGeometry(1, 0);
   private chunkMat = new THREE.MeshStandardMaterial({ color: 0xa9cde4, roughness: 0.3 });
+  private rockChunkMat = new THREE.MeshStandardMaterial({ color: 0x4a4541, roughness: 0.9, flatShading: true });
+  private chunkKind: 'serac' | 'icefall' | 'rock' = 'serac';
   private titleAngle = 0.6;
   /** Test-only: simulation steps per rendered frame. */
   simSpeed = 1;
@@ -136,7 +172,7 @@ export class Game {
     this.input.bindButton(document.getElementById('pause-btn')!, 'pause');
 
     this.setupMenus();
-    this.buildWorld(this.selected);
+    this.buildStage(this.selected, 0);
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.installTestHooks();
@@ -145,7 +181,7 @@ export class Game {
   // ---------------------------------------------------------------- menus
   private setupMenus(): void {
     const cards = document.getElementById('mountain-cards')!;
-    for (const m of [MOUNTAINS.everest, MOUNTAINS.k2]) {
+    for (const m of [EXPEDITIONS.everest, EXPEDITIONS.k2]) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'mcard' + (m.id === this.selected ? ' sel' : '');
@@ -154,12 +190,12 @@ export class Game {
         <div class="row"><h3>${m.name}</h3><span class="elev">${m.summitAltitude.toLocaleString('en-US')}m</span></div>
         <div class="sub">${m.subtitle} · ${m.routeName}</div>
         <p>${m.description}</p>
-        <div class="meta"><span>出発 ${m.campName}</span><span>難度 <b>${m.difficulty}</b></span></div>`;
+        <div class="meta"><span>BC ${m.baseAltitude.toLocaleString('en-US')}m から ${m.stages.length}区間</span><span>難度 <b>${m.difficulty}</b></span></div>`;
       b.addEventListener('click', () => {
         if (this.selected === m.id) return;
         this.selected = m.id;
         cards.querySelectorAll('.mcard').forEach((c) => c.classList.toggle('sel', (c as HTMLElement).dataset.id === m.id));
-        this.withLoading(() => this.buildWorld(m.id));
+        this.withLoading(() => this.buildStage(m.id, 0));
       });
       cards.appendChild(b);
     }
@@ -167,16 +203,33 @@ export class Game {
       this.audio.unlock();
       this.audio.setMuted(!(document.getElementById('opt-sound') as HTMLInputElement).checked);
       this.spares = Number((document.getElementById('opt-bottles') as HTMLSelectElement).value);
-      this.startRun();
-      if (!this.mobile) this.tryPointerLock();
+      this.withLoading(() => {
+        this.newExpedition(this.selected);
+        if (!this.mobile) this.tryPointerLock();
+      });
     });
+    document.getElementById('continue-btn')!.addEventListener('click', () => {
+      const sv = readSave();
+      if (!sv) return;
+      this.audio.unlock();
+      this.audio.setMuted(!(document.getElementById('opt-sound') as HTMLInputElement).checked);
+      this.withLoading(() => {
+        this.loadSave(sv);
+        this.startRun();
+        if (!this.mobile) this.tryPointerLock();
+      });
+    });
+    this.refreshContinue();
     document.getElementById('resume-btn')!.addEventListener('click', () => this.setPaused(false));
     document.getElementById('restart-btn')!.addEventListener('click', () => this.startRun());
     document.getElementById('quit-btn')!.addEventListener('click', () => this.toTitle());
     document.getElementById('result-primary')!.addEventListener('click', () => {
       if (this.state === 'summit') this.beginDescent();
+      else if (this.state === 'camp') this.withLoading(() => this.departNextStage());
+      else if (this.state === 'won') this.withLoading(() => this.newExpedition(this.selected));
       else this.startRun();
     });
+    document.getElementById('result-rest')!.addEventListener('click', () => this.restDay());
     document.getElementById('result-secondary')!.addEventListener('click', () => this.toTitle());
     document.addEventListener('pointerlockchange', () => {
       if (!document.pointerLockElement && this.state === 'play' && !this.mobile) this.setPaused(true);
@@ -205,7 +258,67 @@ export class Game {
     }
   }
 
+  private refreshContinue(): void {
+    const sv = readSave();
+    const btn = document.getElementById('continue-btn')!;
+    btn.classList.toggle('hidden', !sv);
+    if (sv) {
+      const e = EXPEDITIONS[sv.exp];
+      const st = e.stages[sv.stage];
+      btn.textContent = `続きから — ${e.name} ${st.campName}（${st.campAltitude.toLocaleString('en-US')}m）· ${sv.day}日目`;
+    }
+  }
+
+  private loadSave(sv: SaveData): void {
+    this.selected = sv.exp;
+    this.day = sv.day;
+    this.acclim = sv.acclim;
+    this.frostCarry = sv.frost;
+    this.spares = sv.spares;
+    this.buildStage(sv.exp, sv.stage);
+    document.querySelectorAll('.mcard').forEach((c) => c.classList.toggle('sel', (c as HTMLElement).dataset.id === sv.exp));
+  }
+
+  private save(): void {
+    writeSave({ exp: this.selected, stage: this.stageIndex, day: this.day, acclim: this.acclim, frost: this.frostCarry, spares: this.spares });
+  }
+
+  private newExpedition(exp: 'everest' | 'k2'): void {
+    this.selected = exp;
+    this.day = 1;
+    this.acclim = EXPEDITIONS[exp].baseAltitude + 300; // acclimatised on the trek in
+    this.frostCarry = 0;
+    this.buildStage(exp, 0);
+    this.save();
+    this.startRun();
+  }
+
+  /** Sleep at camp, then set off on the next leg in the morning. */
+  private departNextStage(): void {
+    const exp = EXPEDITIONS[this.selected];
+    const campAlt = this.world!.def.summitAltitude;
+    this.acclim = Math.max(this.acclim, campAlt + 300);
+    this.frostCarry = Math.max(0, this.physio.frostbite * 0.8 - 5);
+    this.day += 1;
+    this.buildStage(this.selected, Math.min(exp.stages.length - 1, this.stageIndex + 1));
+    this.save();
+    this.startRun();
+  }
+
+  /** Stay a day at camp: better acclimatised and rested, but the season moves on. */
+  private restDay(): void {
+    if (this.state !== 'camp') return;
+    const campAlt = this.world!.def.summitAltitude;
+    this.acclim = Math.max(this.acclim, campAlt + 300) + 350;
+    this.physio.frostbite = Math.max(0, this.physio.frostbite - 15);
+    this.day += 1;
+    this.save();
+    this.audio.zip();
+    this.showCamp(true);
+  }
+
   private toTitle(): void {
+    this.refreshContinue();
     this.state = 'title';
     this.input.enabled = false;
     this.hud.show(false);
@@ -238,7 +351,12 @@ export class Game {
     return Math.min(d.summitAltitude, d.campAltitude + ((y - y0) / (y1 - y0)) * (d.summitAltitude - d.campAltitude));
   }
 
-  private buildWorld(id: 'everest' | 'k2'): void {
+  private buildStage(id: 'everest' | 'k2', stage: number): void {
+    const key = `${id}-${stage}`;
+    this.selected = id;
+    this.stageIndex = stage;
+    if (this.builtKey === key && this.world) return;
+    this.builtKey = key;
     if (this.world) {
       this.scene.remove(this.world.root);
       this.world.root.traverse((o) => {
@@ -246,7 +364,7 @@ export class Game {
         if (m.geometry) m.geometry.dispose();
       });
     }
-    const def = MOUNTAINS[id];
+    const def = EXPEDITIONS[id].stages[stage];
     const field = new MountainField(def);
     const route = new Route(def, field);
     const { material, uniforms } = createTerrainMaterial(def, this.renderer.capabilities.getMaxAnisotropy());
@@ -258,8 +376,10 @@ export class Game {
     this.scene.add(root);
     this.world = { def, field, route, props, root, terrainUniforms: uniforms, triangles: terrain.triangles };
     this.player = new Player(field, route);
+    this.player.ladders = props.ladders;
     this.player.reset(0);
     this.weather = new Weather(this.rng, def.baseWind);
+    this.env.setCloudY(altitudeToWorldY(def, def.cloudAlt));
     const marks = def.landmarks.slice(1, -1).map((l) => route.waypointS[l.routeIndex] / route.length);
     this.hud.setMarks(marks);
     this.renderer.compile(this.scene, this.camera);
@@ -268,10 +388,14 @@ export class Game {
   private startRun(): void {
     if (!this.world || !this.player) return;
     this.rng = createSeededRandom(this.seed);
+    const def = this.world.def;
     this.weather.reset(this.rng);
-    this.physio.reset(this.spares);
+    this.weather.stormChance = def.goal === 'summit' ? Math.min(0.9, 0.35 + Math.max(0, this.day - 7) * 0.08) : 0.3;
+    this.physio.reset(def.o2 === 'summit' ? this.spares : 0, {
+      o2: def.o2 !== 'none', acclim: this.acclim, frost: this.frostCarry,
+    });
     this.player.reset(0);
-    this.hours = START_HOURS;
+    this.hours = def.startHours;
     this.playTime = 0;
     this.flash = 0;
     this.fade = 0;
@@ -294,7 +418,8 @@ export class Game {
     this.input.enabled = true;
     this.showScreen(null);
     this.hud.show(true);
-    this.hud.banner(`${this.world.def.campName} 出発`, `${formatClock(this.hours)} · 目標 ${this.world.def.summitAltitude.toLocaleString('en-US')}m · 折返 ${TURNAROUND}:00`, '', 4200);
+    const goal = def.goal === 'summit' ? `山頂 ${def.summitAltitude.toLocaleString('en-US')}m · 折返 ${TURNAROUND}:00` : `${def.goalName}（${def.summitAltitude.toLocaleString('en-US')}m）へ`;
+    this.hud.banner(`${this.day}日目 — ${def.stageName}`, `${formatClock(this.hours)} ${def.campName}出発 · ${goal}`, '', 4500);
   }
 
   private beginDescent(): void {
@@ -396,8 +521,8 @@ export class Game {
     const ws = this.weather.state;
 
     // Oxygen flow
-    if (intents.o2Up) { ph.flow = Math.min(4, ph.flow + 0.5); this.audio.valve(); }
-    if (intents.o2Down) { ph.flow = Math.max(0, ph.flow - 0.5); this.audio.valve(); }
+    if (intents.o2Up && ph.hasO2) { ph.flow = Math.min(4, ph.flow + 0.5); this.audio.valve(); }
+    if (intents.o2Down && ph.hasO2) { ph.flow = Math.max(0, ph.flow - 0.5); this.audio.valve(); }
 
     // Interactions: cache pickup / bottle swap
     let interact: string | null = null;
@@ -419,7 +544,7 @@ export class Game {
         this.audio.clink();
         this.hud.banner('デポしたボンベを回収', `予備 ${ph.spares}本`, 'good');
       }
-    } else if (ph.spares > 0 && ph.bottle < BOTTLE_LITERS * 0.35) {
+    } else if (ph.hasO2 && ph.spares > 0 && ph.bottle < BOTTLE_LITERS * 0.35) {
       interact = '交換';
       if (intents.interactPressed) {
         this.swapT = 3.2;
@@ -458,7 +583,7 @@ export class Game {
       dt,
       handsExposed,
     });
-    if (ph.bottle <= 0 && !this.warned.has('o2empty')) {
+    if (ph.hasO2 && ph.bottle <= 0 && !this.warned.has('o2empty')) {
       this.warned.add('o2empty');
       this.audio.alarm();
       this.hud.banner('酸素ボンベが空', ph.spares > 0 ? '予備ボンベに交換しろ（F / 交換）' : '予備はない。急いで下れ', 'danger', 4500);
@@ -482,7 +607,7 @@ export class Game {
     this.updateProgress();
 
     // Turnaround time
-    if (!this.turnWarned && this.hours >= TURNAROUND && !this.summitReached) {
+    if (!this.turnWarned && w.def.goal === 'summit' && this.hours >= TURNAROUND && !this.summitReached) {
       this.turnWarned = true;
       this.audio.alarm();
       this.hud.banner('折り返し時刻を過ぎた', '登頂しても、暗くなる前に戻れないかもしれない', 'danger', 5000);
@@ -570,6 +695,16 @@ export class Game {
         case 'anchorBlock': this.hud.banner('アンカーで止まった', 'カラビナを付け替えろ（クリップ / E）', '', 2200); break;
         case 'tooSteep': this.hud.banner('急すぎて登れない', 'フィックスロープに確保すれば登れる', '', 2200); break;
         case 'gustKnock': this.audio.slip(); break;
+        case 'crevasseDeath': this.audio.slip(); this.die('crevasse'); break;
+        case 'crevasseCaught':
+          this.audio.impact(); this.audio.clink(); this.flash = 0.6;
+          this.physio.stamina = Math.max(0, this.physio.stamina - 25);
+          this.hud.banner('クレバスに落ちた — ロープが止めた', 'ロープを手繰って這い上がった', 'danger', 3200);
+          break;
+        case 'ladderWobble':
+          this.audio.clink();
+          this.hud.banner('ハシゴの上でよろけた', 'ロープに確保していて助かった', '', 2400);
+          break;
       }
     }
   }
@@ -577,44 +712,53 @@ export class Game {
   private updateSerac(dt: number): void {
     const w = this.world!;
     const p = this.player!;
-    const serac = w.props.serac;
-    if (serac && w.def.seracZone) {
-      const s0 = w.route.waypointS[w.def.seracZone[0]];
-      const s1 = w.route.waypointS[w.def.seracZone[1]];
-      const inZone = p.routeS > s0 - 5 && p.routeS < s1 + 5;
-      if (inZone) {
-        if (!this.warned.has('seracZone')) {
-          this.warned.add('seracZone');
-          this.hud.banner('セラック直下', '頭上に巨大な氷塔。立ち止まるな', 'danger', 3600);
-        }
-        this.seracTimer -= dt;
-        if (this.seracTimer <= 0 && this.seracWarn < 0) {
-          this.seracWarn = 4.5;
-          const offset = (this.rng() - 0.5) * 10;
-          const s = clamp(p.routeS + offset, s0, s1);
-          w.route.pointAt(s, this.seracLane);
-          this.audio.crack();
-          this.flash = 0.2;
-          this.hud.banner('頭上で氷が割れる音！', '落下ラインから離れろ', 'danger', 3500);
-          // Spawn falling chunks at the serac lip above the lane.
-          const toLane = this.tmpV.copy(this.seracLane).sub(serac.origin).setY(0).normalize();
-          for (let i = 0; i < 7; i++) {
-            const mesh = new THREE.Mesh(this.chunkGeo, this.chunkMat);
-            const sc = 1 + this.rng() * 2.2;
-            mesh.scale.setScalar(sc);
-            mesh.castShadow = true;
-            const start = this.seracLane.clone().addScaledVector(toLane, -55 - this.rng() * 10);
-            start.y = w.field.height(start.x, start.z) + 18 + this.rng() * 8;
-            start.addScaledVector(serac.along, (this.rng() - 0.5) * 7);
-            this.scene.add(mesh);
-            this.chunks.push({ mesh, pos: start, vel: toLane.clone().multiplyScalar(4 + this.rng() * 3), life: 9 });
-          }
+    const TEXT = {
+      serac: { zone: ['セラック直下', '頭上に巨大な氷塔。立ち止まるな'], warn: ['頭上で氷が割れる音！', '落下ラインから離れろ'] },
+      icefall: { zone: ['氷塔の崩壊帯', '不安定な氷塔の間を抜ける。急げ'], warn: ['氷塔が崩れる音！', '崩落ラインから離れろ'] },
+      rock: { zone: ['落石地帯', '頭上の岩壁から石が落ちてくる'], warn: ['落石！', '音のした方を見て、横へ逃げろ'] },
+    } as const;
+    let active: (typeof w.props.hazards)[number] | null = null;
+    for (const hz of w.props.hazards) {
+      if (p.routeS > hz.s0 - 5 && p.routeS < hz.s1 + 5) active = hz;
+    }
+    if (active && this.state === 'play') {
+      const hz = active;
+      const key = `zone-${hz.kind}-${hz.s0}`;
+      if (!this.warned.has(key)) {
+        this.warned.add(key);
+        this.hud.banner(TEXT[hz.kind].zone[0], TEXT[hz.kind].zone[1], 'danger', 3600);
+      }
+      this.seracTimer -= dt;
+      if (this.seracTimer <= 0 && this.seracWarn < 0) {
+        this.seracWarn = 4.5;
+        const offset = (this.rng() - 0.5) * 10;
+        const sLane = clamp(p.routeS + offset, hz.s0, hz.s1);
+        w.route.pointAt(sLane, this.seracLane);
+        if (hz.kind === 'rock') this.audio.rockfall(); else this.audio.crack();
+        this.flash = 0.2;
+        this.hud.banner(TEXT[hz.kind].warn[0], TEXT[hz.kind].warn[1], 'danger', 3500);
+        this.chunkKind = hz.kind;
+        const toLane = this.tmpV.copy(this.seracLane).sub(hz.origin).setY(0).normalize();
+        const rock = hz.kind === 'rock';
+        const dist = hz.kind === 'icefall' ? 26 : 55;
+        const n = rock ? 9 : 7;
+        for (let i = 0; i < n; i++) {
+          const mesh = new THREE.Mesh(this.chunkGeo, rock ? this.rockChunkMat : this.chunkMat);
+          const sc = rock ? 0.35 + this.rng() * 0.8 : 1 + this.rng() * 2.2;
+          mesh.scale.setScalar(sc);
+          mesh.castShadow = true;
+          const start = this.seracLane.clone().addScaledVector(toLane, -dist - this.rng() * 10);
+          start.y = w.field.height(start.x, start.z) + (rock ? 10 : 18) + this.rng() * 8;
+          start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 10 : 7));
+          this.scene.add(mesh);
+          const speed = hz.kind === 'icefall' ? 6 + this.rng() * 2 : 4 + this.rng() * 3;
+          this.chunks.push({ mesh, pos: start, vel: toLane.clone().multiplyScalar(speed), life: 9 });
         }
       }
-      if (this.seracWarn >= 0) {
-        this.seracWarn -= dt;
-        if (this.seracWarn < 0) this.seracTimer = 22 + this.rng() * 18;
-      }
+    }
+    if (this.seracWarn >= 0) {
+      this.seracWarn -= dt;
+      if (this.seracWarn < 0) this.seracTimer = 22 + this.rng() * 18;
     }
     // Chunk physics
     for (let i = this.chunks.length - 1; i >= 0; i--) {
@@ -636,7 +780,7 @@ export class Game {
       if (this.state === 'play' && p.mode !== 'dead' && c.pos.distanceTo(this.tmpV.copy(p.pos).setY(p.pos.y + 1)) < c.mesh.scale.x + 0.9) {
         this.flash = 1;
         this.audio.impact();
-        this.die('serac');
+        this.die(this.chunkKind === 'rock' ? 'rock' : this.chunkKind === 'icefall' ? 'icefall' : 'serac');
       }
       if (c.life <= 0) {
         this.scene.remove(c.mesh);
@@ -655,6 +799,23 @@ export class Game {
         if (i < lms.length - 1) this.hud.banner(lms[i].name, lms[i].note, 'good', 3600);
         break;
       }
+    }
+    if (w.def.goal === 'camp') {
+      if (p.routeS >= w.route.length - 3 && p.routeDist < 8 && this.state === 'play') {
+        this.state = 'camp';
+        this.input.enabled = false;
+        if (document.pointerLockElement) document.exitPointerLock();
+        this.audio.summit();
+        this.hud.banner(`${w.def.goalName} 到着`, `${w.def.summitAltitude.toLocaleString('en-US')}m`, 'good', 2500);
+        const campAlt = w.def.summitAltitude;
+        this.acclim = Math.max(this.acclim, campAlt + 300);
+        this.frostCarry = Math.max(0, this.physio.frostbite * 0.8 - 5);
+        this.stageIndex += 1; // progress is saved at the new camp
+        this.save();
+        this.stageIndex -= 1;
+        setTimeout(() => this.showCamp(false), 1200);
+      }
+      return;
     }
     if (!this.summitReached && p.routeS >= w.route.length - 2.5 && p.routeDist < 6) {
       this.summitReached = true;
@@ -709,6 +870,7 @@ export class Game {
     const panel = document.querySelector('.result-panel')!;
     panel.classList.remove('dead', 'win');
     panel.classList.add(cls);
+    document.getElementById('result-rest')!.classList.add('hidden');
     this.showScreen('result');
   }
 
@@ -731,7 +893,26 @@ export class Game {
     );
   }
 
+  private showCamp(rested: boolean): void {
+    const w = this.world!;
+    const exp = EXPEDITIONS[this.selected];
+    const next = exp.stages[this.stageIndex + 1];
+    const desc = rested
+      ? `${w.def.goalName}で1日休養した。体が高度に慣れ、指先の感覚も少し戻った。だが、モンスーンは近づいている。`
+      : `${w.def.goalName}に到着。テントに潜り込み、雪を溶かして水を作る。明日は「${next?.stageName ?? '山頂'}」。`;
+    this.showResult(
+      `${this.day}日目 · ${formatClock(this.hours)}`,
+      `${w.def.goalName}（${w.def.summitAltitude.toLocaleString('en-US')}m）`,
+      desc,
+      'win',
+      next ? `翌朝出発 — ${next.stageName}` : '出発',
+      [['高度順応', `${Math.round(this.acclim).toLocaleString('en-US')}m`], ['遠征日数', `${this.day}日目`]],
+    );
+    document.getElementById('result-rest')!.classList.remove('hidden');
+  }
+
   private showWin(): void {
+    writeSave(null);
     const w = this.world!;
     this.showResult('生還', `${w.def.name} 登頂・生還`, 'あなたは頂に立ち、そして生きて帰ってきた。デスゾーンから戻れることこそ、本当の登頂だ。', 'win', 'もう一度登る', [
       ['登頂時刻', formatClock(this.summitHours)],
@@ -845,7 +1026,9 @@ export class Game {
     this.hud.update({
       altitude,
       hours: this.hours,
-      turnaround: TURNAROUND,
+      turnaround: w.def.goal === 'summit' ? TURNAROUND : 18.5,
+      turnLabel: w.def.goal === 'summit' ? '折返' : '日没',
+      hasO2: ph.hasO2,
       nextName,
       nextDist,
       progress: clamp(p.routeS / w.route.length, 0, 1),
@@ -895,11 +1078,8 @@ export class Game {
 
   // ---------------------------------------------------------------- tests
   private applyTestState(name: string): void {
-    const set = (mountain: 'everest' | 'k2', frac: number, hours: number, storm = 0) => {
-      if (this.selected !== mountain || !this.world) {
-        this.selected = mountain;
-        this.buildWorld(mountain);
-      }
+    const set = (mountain: 'everest' | 'k2', frac: number, hours: number, storm = 0, stage = EXPEDITIONS[mountain].stages.length - 1) => {
+      this.buildStage(mountain, stage);
       this.startRun();
       const p = this.player!;
       const s = this.world!.route.length * frac;
@@ -928,6 +1108,26 @@ export class Game {
         this.deathTimer = 3;
         this.fade = 1;
         this.showDeath();
+        break;
+      case 'bc-start': set('everest', 0.0, 5.6, 0, 0); this.player!.reset(0); this.updatePlay(0.016); break;
+      case 'icefall': set('everest', 0.62, 6.5, 0, 0); break;
+      case 'ladder': {
+        set('everest', 0.1, 7.5, 0, 0);
+        const s = this.world!.route.crevasseS[0] - 4;
+        this.player!.reset(s);
+        this.updatePlay(0.016);
+        break;
+      }
+      case 'cwm': set('everest', 0.5, 9.5, 0, 1); break;
+      case 'lhotse': set('everest', 0.45, 8.5, 0, 2); break;
+      case 'yellow-band': set('everest', 0.4, 9, 0, 3); break;
+      case 'k2-bc': set('k2', 0.05, 7, 0, 0); break;
+      case 'k2-chimney': set('k2', 0.55, 9, 0, 1); break;
+      case 'k2-pyramid': set('k2', 0.5, 9, 0, 2); break;
+      case 'camp':
+        set('everest', 0.995, 13, 0, 1);
+        this.updatePlay(0.016);
+        this.showCamp(false);
         break;
       case 'summit':
         set('everest', 0.999, 9.8);

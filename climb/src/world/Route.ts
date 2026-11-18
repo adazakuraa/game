@@ -29,6 +29,14 @@ export class Route {
   readonly length: number;
   readonly ropes: RopeSegment[] = [];
   readonly ropeSectionsS: [number, number][] = [];
+  readonly crevasseS: number[] = [];
+
+  /** Arc length at a fractional waypoint index. */
+  sAtIndex(at: number): number {
+    const i = Math.min(Math.floor(at), this.waypointS.length - 2);
+    const f = at - i;
+    return this.waypointS[i] + (this.waypointS[i + 1] - this.waypointS[i]) * f;
+  }
 
   constructor(readonly def: MountainDef, readonly field: MountainField) {
     const wp = def.route;
@@ -44,7 +52,12 @@ export class Route {
         // Slight sinuous wander like a real boot track.
         const x0 = ax + (bx - ax) * t;
         const z0 = az + (bz - az) * t;
-        const wob = Math.sin((s + k) * 0.07) * 0.9 * Math.min(1, Math.min(t, 1 - t) * 6);
+        let wob = Math.sin((s + k) * 0.07) * 0.9 * Math.min(1, Math.min(t, 1 - t) * 6);
+        // Straight approach onto ladders.
+        for (const c of field.cracks) {
+          const dc = Math.hypot(x0 - c.cx, z0 - c.cz);
+          if (dc < 16) wob *= Math.max(0, (dc - 4) / 12);
+        }
         const nx = -(bz - az) / len;
         const nz = (bx - ax) / len;
         const x = x0 + nx * wob;
@@ -53,21 +66,29 @@ export class Route {
           const p = this.points[this.points.length - 1];
           s += Math.hypot(x - p.x, z - p.z);
         }
-        this.points.push({ x, z, y: field.height(x, z), s });
+        this.points.push({ x, z, y: field.surfaceHeight(x, z), s });
       }
       this.waypointS.push(s + len / n);
     }
     const last = wp[wp.length - 1];
     const p = this.points[this.points.length - 1];
     s += Math.hypot(last[0] - p.x, last[1] - p.z);
-    this.points.push({ x: last[0], z: last[1], y: field.height(last[0], last[1]), s });
+    this.points.push({ x: last[0], z: last[1], y: field.surfaceHeight(last[0], last[1]), s });
     this.waypointS[this.waypointS.length - 1] = s;
     this.length = s;
 
-    // Fixed ropes with anchors every ~20-26 m.
-    def.ropeSections.forEach(([from, to], sectionId) => {
-      const s0 = this.waypointS[from] - 6;
-      const s1 = Math.min(this.length - 3, this.waypointS[to] + 2);
+    // Fixed ropes with anchors every ~20-26 m; every ladder gets its own handline.
+    const sections: [number, number][] = def.ropeSections.map(([from, to]) => [
+      Math.max(1, this.waypointS[from] - 6),
+      Math.min(this.length - 3, this.waypointS[to] + 2),
+    ]);
+    for (const c of def.crevasses ?? []) {
+      const sc = this.sAtIndex(c.at);
+      this.crevasseS.push(sc);
+      if (!sections.some(([a, b]) => sc > a + 3 && sc < b - 3)) sections.push([sc - 9, sc + 9]);
+    }
+    sections.sort((a, b) => a[0] - b[0]);
+    sections.forEach(([s0, s1], sectionId) => {
       this.ropeSectionsS.push([s0, s1]);
       const count = Math.max(1, Math.round((s1 - s0) / 23));
       for (let k = 0; k < count; k++) {
@@ -119,7 +140,7 @@ export class Route {
     // Rope runs ~0.9 m to the right of the boot track.
     const x = p.x - d.z * 0.9;
     const z = p.z + d.x * 0.9;
-    return new THREE.Vector3(x, this.field.height(x, z) + 0.55, z);
+    return new THREE.Vector3(x, this.field.surfaceHeight(x, z) + 0.55, z);
   }
 
   nearest(x: number, z: number, hint = -1, window = 60): NearestResult {
@@ -180,7 +201,7 @@ export class Route {
   ropePoint(seg: RopeSegment, t: number, out = new THREE.Vector3()): THREE.Vector3 {
     out.lerpVectors(seg.a, seg.b, t);
     const sag = Math.sin(t * Math.PI) * Math.min(0.9, seg.a.distanceTo(seg.b) * 0.025);
-    const ground = this.field.height(out.x, out.z) + 0.18;
+    const ground = this.field.surfaceHeight(out.x, out.z) + 0.18;
     out.y = Math.max(ground, out.y - sag);
     return out;
   }
@@ -235,7 +256,7 @@ export class Route {
       for (let side = -1; side <= 1; side += 2) {
         const x = p.x + nx * width * 0.5 * side;
         const z = p.z + nz * width * 0.5 * side;
-        positions.push(x, this.field.height(x, z) + 0.06, z);
+        positions.push(x, this.field.surfaceHeight(x, z) + 0.06 - (this.field.crevasseDepth(x, z) > 0.5 ? 0.6 : 0), z);
         uvs.push(side < 0 ? 0 : 1, p.s / 3.2);
       }
       if (i < pts.length - 1) {
@@ -283,7 +304,7 @@ export class Route {
         curvePts.push(this.ropePoint(seg, t, new THREE.Vector3()));
         const o = this.ropePoint(seg, t, new THREE.Vector3());
         o.x += 0.35; o.z += 0.2;
-        o.y = Math.max(this.field.height(o.x, o.z) + 0.05, o.y - 0.25);
+        o.y = Math.max(this.field.surfaceHeight(o.x, o.z) + 0.05, o.y - 0.25);
         oldPts.push(o);
       }
       const curve = new THREE.CatmullRomCurve3(curvePts);

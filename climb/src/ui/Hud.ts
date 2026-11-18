@@ -10,6 +10,8 @@ export interface HudData {
   altitude: number;
   hours: number;
   turnaround: number;
+  turnLabel: string;
+  hasO2: boolean;
   nextName: string;
   nextDist: number;
   progress: number;
@@ -79,7 +81,8 @@ export class Hud {
     this.set('alt', e.alt, Math.round(d.altitude).toLocaleString('en-US'));
     this.set('clock', e.clock, formatClock(d.hours));
     const late = d.hours >= d.turnaround;
-    this.set('turn', e.turn, late ? '折返時刻超過' : `折返 ${formatClock(d.turnaround)}`);
+    this.set('turn', e.turn, late ? `${d.turnLabel}を過ぎた` : `${d.turnLabel} ${formatClock(d.turnaround)}`);
+    this.cls('o2vis', this.root, d.hasO2 ? '' : 'no-o2', ['no-o2']);
     this.cls('turnc', e.turn, late ? 'late' : '', ['late']);
     this.set('nextName', e.nextName, d.nextName);
     this.set('nextDist', e.nextDist, `${Math.max(0, Math.round(d.nextDist))}m`);
