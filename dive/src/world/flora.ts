@@ -3,7 +3,7 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { ARCH, bommieAt, heightAt, reefEdgeZ, rockyWeight, VENT, WRECK, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
 import { SWAY_VERTEX, underwaterMaterial } from '../render/underwater';
-import { baked } from '../render/baked';
+import { baked, pbr } from '../render/baked';
 import { makeBlade, makeSeaFan } from '../render/textures';
 import { fbm2, mulberry32, simplex2 } from '../utils/noise';
 
@@ -456,7 +456,7 @@ export class Flora {
       new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 }),
       {
         key: 'rock',
-        tri: { tex: baked().rock, scale: 0.38, strength: 1.7, albedo: 0.9 },
+        pbr: { ...pbr().rock, scale: 0.42, k: 1.8, albedo: 1.0 },
         vertexHead: 'varying vec3 vObj;',
         vertexBody: 'vObj = position;',
         fragHead: 'varying vec3 vObj;',
@@ -512,7 +512,7 @@ export class Flora {
       new THREE.MeshStandardMaterial({ color: 0x3a3029, roughness: 0.97, emissive: 0x220800, emissiveIntensity: 0.2 }),
       {
         key: 'chimney',
-        tri: { tex: baked().rock, scale: 0.6, strength: 2.0, albedo: 0.9 },
+        pbr: { ...pbr().rock, scale: 0.55, k: 2.0, albedo: 1.0 },
         vertexHead: 'varying vec3 vObj;',
         vertexBody: 'vObj = position;',
         fragHead: 'varying vec3 vObj;',
@@ -520,14 +520,14 @@ export class Flora {
       },
     );
     const rustMat = underwaterMaterial(
-      new THREE.MeshStandardMaterial({ color: 0x6e4a32, roughness: 0.9, metalness: 0.2, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0xb89a84, roughness: 0.85, metalness: 0.15, side: THREE.DoubleSide }),
       {
         key: 'rust',
-        tri: { tex: baked().rock, scale: 0.5, strength: 1.2, albedo: 0.0 },
-        fragDiffuse: `{ float n = uwNoise( vUwPos * 0.9 ); float m = uwNoise( vUwPos * 3.1 );
-          diffuseColor.rgb = mix( vec3( 0.42, 0.26, 0.17 ), vec3( 0.25, 0.3, 0.22 ), smoothstep( 0.3, 0.7, n ) ) * ( 0.7 + m * 0.5 );
+        pbr: { ...pbr().rust, scale: 0.35, k: 1.6, albedo: 1.0 },
+        fragDiffuse: `{ float n = uwNoise( vUwPos * 0.9 );
+          diffuseColor.rgb *= mix( vec3( 1.0, 0.82, 0.7 ), vec3( 0.62, 0.7, 0.55 ), smoothstep( 0.35, 0.75, n ) );
           float top = smoothstep( 0.3, 0.9, normalize( vUwNrm ).y );
-          diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.55, 0.5, 0.4 ), top * 0.5 ); }`,
+          diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.5, 0.48, 0.4 ) * ( 0.8 + 0.4 * n ), top * 0.55 ); }`,
       },
     );
     const darkMat = underwaterMaterial(new THREE.MeshStandardMaterial({ color: 0x1a1612, roughness: 0.95 }), { key: 'dark' });
@@ -825,6 +825,10 @@ export class Flora {
         this.group.add(block);
       }
     }
+    this.group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && !(m as unknown as THREE.Points).isPoints) { m.castShadow = true; m.receiveShadow = true; }
+    });
   }
 
   placeBoat(x: number, z: number): void {

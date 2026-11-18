@@ -381,6 +381,8 @@ export class Creatures {
       const mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
       const mesh = new THREE.InstancedMesh(geo, mat, def.count);
       mesh.frustumCulled = false;
+      mesh.castShadow = def.kind !== 'jelly';
+      mesh.receiveShadow = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.name = def.id;
       if (def.instColors) { mesh.setColorAt(0, new THREE.Color(1, 1, 1)); }

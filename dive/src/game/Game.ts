@@ -75,6 +75,9 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile, powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap));
     this.photoCanvas.width = 320;
     this.photoCanvas.height = 240;
@@ -82,7 +85,7 @@ export class Game {
     this.save = this.loadSave();
     this.audio.muted = !!this.save.muted;
     this.scene.add(this.camera);
-    this.env = new Environment(this.scene, this.camera);
+    this.env = new Environment(this.scene, this.camera, mobile);
     this.scene.environment = this.makeEnvMap();
     this.scene.environmentIntensity = 0.6;
     this.scene.add(this.terrain.group);
@@ -696,6 +699,7 @@ export class Game {
     const places: Record<string, { x: number; y: number; z: number; yaw: number; pitch: number; light?: boolean }> = {
       lagoon: { x: 22, y: -3.2, z: 64, yaw: Math.PI * 0.85, pitch: -0.2 },
       reef: { x: -30, y: -6.5, z: 230, yaw: Math.PI, pitch: -0.25 },
+      reefdown: { x: -24, y: -5.5, z: 236, yaw: Math.PI * 0.8, pitch: -0.75 },
       rocky: { x: 118, y: -9, z: 232, yaw: Math.PI, pitch: -0.1 },
       wall: { x: 0, y: -16, z: 330, yaw: Math.PI, pitch: -0.45 },
       wreck: { x: WRECK.x - 12, y: -32, z: WRECK.z - 22, yaw: Math.PI * 0.85, pitch: -0.3 },
@@ -789,6 +793,10 @@ export class Game {
         this.yaw = Math.atan2(-dx, -dz);
         this.pitch = Math.atan2(dy, Math.hypot(dx, dz));
         return true;
+      },
+      shadowInfo: () => {
+        const sh = this.env.sun.shadow;
+        return { map: !!sh.map, size: sh.mapSize.x, int: sh.intensity, en: this.renderer.shadowMap.enabled, pos: this.env.sun.position.toArray().map((v) => Math.round(v)), tgt: this.env.sun.target.position.toArray().map((v) => Math.round(v)), sunI: this.env.sun.intensity, hemi: this.env.hemi.intensity };
       },
       nearFish: (r = 25) => {
         const c = this.camera.position;

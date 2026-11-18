@@ -38,9 +38,19 @@ export class Environment {
   narcosis = 0;
   exposure = 1;
 
-  constructor(private scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
+  private shadowTick = 0;
+  constructor(private scene: THREE.Scene, camera: THREE.PerspectiveCamera, private mobile = false) {
     scene.fog = this.fog;
     this.sun.position.copy(UW.uSunDir.value).multiplyScalar(100);
+    this.sun.castShadow = true;
+    const S = this.sun.shadow;
+    S.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
+    const half = mobile ? 20 : 26;
+    Object.assign(S.camera, { left: -half, right: half, top: half, bottom: -half, near: 1, far: 140 });
+    S.camera.updateProjectionMatrix();
+    S.bias = -0.0006;
+    S.normalBias = 0.04;
+    S.radius = 2.5;
     this.group.add(this.sun, this.sun.target, this.hemi);
     camera.add(this.diverLight);
     camera.add(this.diverLight.target);
@@ -285,6 +295,22 @@ export class Environment {
     // daylight
     const day = Math.exp(-depth / 24);
     this.sun.intensity = 2.1 * day;
+    // sun shadows: crisp in the shallows, softer and weaker with depth, off in the deep
+    const sh = this.sun.shadow;
+    sh.intensity = clamp(Math.exp(-depth / 22) * 1.05, 0, 0.92);
+    sh.radius = 2 + depth * 0.25;
+    const camS = sh.camera as THREE.OrthographicCamera;
+    const texel = (camS.right - camS.left) / sh.mapSize.x;
+    const sd = UW.uSunDir.value;
+    // snap the light's focus to shadow texels (in light space) to avoid shimmering
+    const fx = Math.round(cp.x / texel) * texel, fz = Math.round(cp.z / texel) * texel;
+    const fy = Math.round(cp.y / texel) * texel;
+    this.sun.target.position.set(fx, fy - 4, fz);
+    this.sun.position.set(fx + sd.x * 70, fy - 4 + sd.y * 70, fz + sd.z * 70);
+    this.sun.target.updateMatrixWorld();
+    this.sun.updateMatrixWorld();
+    this.shadowTick++;
+    renderer.shadowMap.needsUpdate = depth < 45 && (!this.mobile || this.shadowTick % 2 === 0);
     this.tmpCol.setRGB(0.45 + 0.55 * Math.exp(-depth / 6), 0.82 + 0.18 * Math.exp(-depth / 25), 1);
     this.sun.color.copy(this.tmpCol);
     UW.uSunCol.value.copy(this.tmpCol);

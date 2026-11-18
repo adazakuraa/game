@@ -128,6 +128,8 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
   let g = 0.74 + 0.05 * n;
   let b = 0.6 + 0.04 * n;
   let sand = 1;
+  let reefHard = 0;
+  let rockHard = 0;
   const reefW = smoothstep(110, 150, z) * (1 - smoothstep(reefEdgeZ(x) + 2, reefEdgeZ(x) + 14, z));
   if (reefW > 0) {
     // reef framework: bommies are dead-coral rock with algal turf and coralline crusts
@@ -144,6 +146,7 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     g = lerp(g, lerp(0.42, cc[1], live) + 0.05 * n2, turf);
     b = lerp(b, lerp(0.3, cc[2], live), turf);
     sand *= 1 - turf;
+    reefHard = turf;
   }
   const rw = rockyWeight(x, z);
   const rockT = clamp(Math.max(rw * (0.35 + 0.6 * smoothstep(-0.25, 0.25, fbm2(x * 0.04 + 3, z * 0.04, 2))), smoothstep(0.25, 0.6, slope)), 0, 1);
@@ -153,6 +156,8 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     g = lerp(g, lerp(0.34, 0.4, alg) + 0.05 * n2, rockT);
     b = lerp(b, lerp(0.31, 0.24, alg) + 0.04 * n2, rockT);
     sand *= 1 - rockT;
+    rockHard = rockT;
+    reefHard *= 1 - rockT;
   }
   const deepT = smoothstep(460, 760, z);
   if (deepT > 0) {
@@ -167,11 +172,14 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     g = lerp(g, 0.21, t);
     b = lerp(b, 0.17, t);
     sand *= 1 - t;
+    rockHard = Math.max(rockHard, t);
   }
   out[0] = r;
   out[1] = g;
   out[2] = b;
   out[3] = sand;
+  out[4] = reefHard;
+  out[5] = rockHard;
 }
 
 export type DivePoint = {

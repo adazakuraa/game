@@ -3,7 +3,7 @@ import * as THREE from 'three';
 /** Shared uniforms referenced by every injected shader (update once per frame). */
 export const UW = {
   uTime: { value: 0 },
-  uSunDir: { value: new THREE.Vector3(0.25, 1, 0.35).normalize() },
+  uSunDir: { value: new THREE.Vector3(0.5, 1, 0.42).normalize() },
   uCaustic: { value: 1 }, // global caustic strength (fades with camera depth)
   uSunCol: { value: new THREE.Color(1, 1, 1) },
   uCamY: { value: 0 },
@@ -114,7 +114,29 @@ type InjectOpts = {
   uniforms?: Record<string, { value: unknown }>;
   /** Triplanar baked detail (RGB normal + A albedo) in world space. */
   tri?: { tex: THREE.Texture; scale: number; strength: number; albedo: number; tex2?: THREE.Texture; scale2?: number; mix2?: string };
+  /** Triplanar photo-sourced PBR pair (albedo mean 0.5, OpenGL normal). Two scales hide tiling. */
+  pbr?: { a: THREE.Texture; n: THREE.Texture; scale: number; k: number; albedo: number };
 };
+
+/** Triplanar / top-projected PBR helpers (albedo + OpenGL normal map pairs). */
+export const PBR_FUNCS = /* glsl */ `
+vec3 pbrW( vec3 N ) { vec3 w = pow( abs( N ), vec3( 4.0 ) ); return w / dot( w, vec3( 1.0 ) ); }
+vec3 pbrTriA( sampler2D A, vec3 P, vec3 w, float s ) {
+  return texture2D( A, P.zy * s ).rgb * w.x + texture2D( A, P.xz * s ).rgb * w.y + texture2D( A, P.xy * s ).rgb * w.z;
+}
+vec3 pbrTriN( sampler2D T, vec3 P, vec3 N, vec3 w, float s, float k ) {
+  vec3 nx = texture2D( T, P.zy * s ).xyz * 2.0 - 1.0, ny = texture2D( T, P.xz * s ).xyz * 2.0 - 1.0, nz = texture2D( T, P.xy * s ).xyz * 2.0 - 1.0;
+  nx.xy *= k; ny.xy *= k; nz.xy *= k;
+  nx = vec3( nx.xy + N.zy, abs( nx.z ) * N.x );
+  ny = vec3( ny.xy + N.xz, abs( ny.z ) * N.y );
+  nz = vec3( nz.xy + N.xy, abs( nz.z ) * N.z );
+  return normalize( nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z );
+}
+vec3 pbrTopN( sampler2D T, vec2 uv, vec3 N, float k ) {
+  vec3 t = texture2D( T, uv ).xyz * 2.0 - 1.0; t.xy *= k;
+  return normalize( vec3( t.x + N.x, abs( t.z ) * N.y, -t.y + N.z ) );
+}
+`;
 
 const TRI_FUNCS = /* glsl */ `
 vec4 uwTri( sampler2D T, vec3 P, vec3 N, float s, float k, out vec3 nW ) {
@@ -137,6 +159,21 @@ vec4 uwTri( sampler2D T, vec3 P, vec3 N, float s, float k, out vec3 nW ) {
  */
 export function underwaterMaterial<T extends THREE.MeshStandardMaterial>(mat: T, o: InjectOpts): T {
   const strength = o.caustic ?? 1;
+  if (o.pbr) {
+    const t = o.pbr;
+    o = { ...o };
+    o.uniforms = { ...(o.uniforms ?? {}), uPbrA: { value: t.a }, uPbrN: { value: t.n }, uPbrS: { value: t.scale }, uPbrK: { value: t.k }, uPbrAl: { value: t.albedo } };
+    o.fragHead = `${o.fragHead ?? ''}\nuniform sampler2D uPbrA; uniform sampler2D uPbrN; uniform float uPbrS; uniform float uPbrK; uniform float uPbrAl;`;
+    o.fragFuncs = PBR_FUNCS + (o.fragFuncs ?? '');
+    o.fragDiffuse = `vec3 pbN0 = normalize( vUwNrm ) * ( gl_FrontFacing ? 1.0 : -1.0 );
+      vec3 pbw = pbrW( pbN0 );
+      float pbm = smoothstep( 0.25, 0.75, uwNoise( vUwPos * 0.35 ) );
+      vec3 pbA = mix( pbrTriA( uPbrA, vUwPos, pbw, uPbrS ), pbrTriA( uPbrA, vUwPos.zxy + 7.3, pbw.zxy, uPbrS * 0.43 ), pbm );
+      vec3 pbNW = pbrTriN( uPbrN, vUwPos, pbN0, pbw, uPbrS, uPbrK );
+      diffuseColor.rgb *= mix( vec3( 1.0 ), pbA * 2.0, uPbrAl );
+      ${o.fragDiffuse ?? ''}`;
+    o.fragBeforeLights = `normal = normalize( mat3( viewMatrix ) * pbNW );\n${o.fragBeforeLights ?? ''}`;
+  }
   if (o.tri) {
     const t = o.tri;
     o = { ...o };
@@ -196,7 +233,11 @@ export function underwaterMaterial<T extends THREE.MeshStandardMaterial>(mat: T,
     float ca = uwCaustic( cp, uTime * 0.55 );
     float ca2 = uwCaustic( cp * 1.7 + 1.3, uTime * 0.43 + 2.0 );
     float cst = ( ca * 0.7 + ca2 * 0.5 ) * upF * depthF * uCaustic * uMatCaustic;
-    outgoingLight += diffuseColor.rgb * uSunCol * cst * 1.35;
+    float uwSh = 1.0;
+    #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+      uwSh = receiveShadow ? getShadow( directionalShadowMap[ 0 ], directionalLightShadows[ 0 ].shadowMapSize, directionalLightShadows[ 0 ].shadowIntensity, directionalLightShadows[ 0 ].shadowBias, directionalLightShadows[ 0 ].shadowRadius, vDirectionalShadowCoord[ 0 ] ) : 1.0;
+    #endif
+    outgoingLight += diffuseColor.rgb * uSunCol * cst * 1.35 * uwSh;
     // depth-relative falloff: surfaces below the camera receive less daylight
     float rel = clamp( exp( ( vUwPos.y - uCamY ) / 55.0 ), 0.45, 1.6 );
     outgoingLight *= mix( 1.0, rel, 0.85 );

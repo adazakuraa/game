@@ -39,6 +39,8 @@ export class ScatterSet {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       mesh.computeBoundingSphere();
       mesh.matrixAutoUpdate = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       this.cells.push({ mesh, cx: (ix + 0.5) * cellSize, cz: (iz + 0.5) * cellSize });
       this.group.add(mesh);
     }
