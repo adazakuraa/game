@@ -219,6 +219,34 @@ export class Audio {
     this.burst({ t: t + 0.3, dur: 3.5, freq: 120, q: 0.5, gain: 0.7, attack: 0.4, type: 'lowpass', rate: 0.5 });
   }
 
+  /** Radio squelch + beep before a base-camp call. */
+  radio(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst({ t, dur: 0.25, freq: 2200, q: 0.6, gain: 0.08, attack: 0.005 });
+    this.tone(1250, 0.09, 0.05, 'square', t + 0.05);
+    this.tone(1650, 0.09, 0.04, 'square', t + 0.16);
+    this.burst({ t: t + 0.3, dur: 2.4, freq: 1800, q: 0.4, gain: 0.012, attack: 0.1 });
+  }
+
+  /** Far-off avalanche roar; quieter the farther away. */
+  avalanche(distance: number): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const g = Math.max(0.12, 0.6 - distance / 1500);
+    this.burst({ t, dur: 7, freq: 90, q: 0.5, gain: g, attack: 1.2, type: 'lowpass', rate: 0.4 });
+    this.burst({ t: t + 0.4, dur: 6, freq: 350, q: 0.5, gain: g * 0.4, attack: 1.5, type: 'lowpass', rate: 0.6 });
+  }
+
+  /** Glacier ice settling: a sharp crack and a low boom. */
+  iceCrack(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst({ t, dur: 0.09, freq: 2600, q: 3, gain: 0.3, attack: 0.001 });
+    this.tone(60, 0.6, 0.25, 'sine', t + 0.02, 30);
+    this.burst({ t: t + 0.05, dur: 0.8, freq: 180, q: 0.7, gain: 0.25, attack: 0.01, type: 'lowpass' });
+  }
+
   rockfall(): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;

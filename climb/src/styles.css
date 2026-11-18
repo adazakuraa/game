@@ -345,3 +345,14 @@ h1 span { color: transparent; -webkit-text-stroke: 2px var(--ink); }
   #result-stats dd { font-size: 16px; }
   .panel { width: min(640px, calc(100% - 24px)); }
 }
+
+#radio {
+  position: absolute; left: 50%; transform: translateX(-50%); top: calc(64px + var(--safe-t));
+  display: flex; gap: 10px; align-items: flex-start; width: min(460px, calc(100vw - 32px));
+  padding: 8px 12px; border-radius: 6px; background: rgba(8, 11, 15, 0.72); border: 1px solid rgba(127, 211, 168, 0.35);
+  font-size: 13px; line-height: 1.6; color: #dfe9e3;
+}
+#radio b { color: var(--ok); font-family: var(--num); letter-spacing: 0.1em; margin-right: 8px; }
+.radio-ico { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: var(--ok); stroke-width: 1.8; margin-top: 2px; }
+@media (max-width: 560px) { #radio { top: calc(118px + var(--safe-t)); font-size: 12px; } }
+@media (max-height: 480px) { #radio { top: auto; bottom: calc(96px + var(--safe-b)); width: min(420px, 52vw); font-size: 12px; } }

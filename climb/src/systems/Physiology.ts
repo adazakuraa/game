@@ -159,7 +159,14 @@ export class Weather {
     this.state.storm = 0;
     this.stormTarget = 0;
     this.stormChecked = false;
+    // Decide today's weather up front so base camp can forecast it.
+    this.willStorm = this.rng() < this.stormChance;
+    this.stormAt = 11.3 + this.rng() * 2.4;
   }
+
+  /** Today's forecast: whether a storm comes and roughly when (local hours). */
+  willStorm = false;
+  stormAt = 12;
 
   forceStorm(v: number): void {
     this.stormTarget = v;
@@ -169,9 +176,9 @@ export class Weather {
   update(dt: number, hours: number, altitude: number, elapsed: number): void {
     const s = this.state;
     // Afternoon storms are a real Himalayan pattern.
-    if (!this.stormChecked && hours > 11.5) {
+    if (!this.stormChecked && hours > this.stormAt) {
       this.stormChecked = true;
-      if (this.rng() < this.stormChance) this.stormTarget = 0.85;
+      if (this.willStorm) this.stormTarget = 0.85;
     }
     if (hours > 14.5) this.stormTarget = Math.max(this.stormTarget, 0.9);
     s.storm += (this.stormTarget - s.storm) * Math.min(1, dt / 40);

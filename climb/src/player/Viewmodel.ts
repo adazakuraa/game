@@ -13,6 +13,9 @@ export class Viewmodel {
   readonly hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6);
   readonly lamp = new THREE.PointLight(0xfff2dd, 0, 3, 1.5);
   private t = 0;
+  /** 0 = arm lowered out of view, 1 = raised into view */
+  private rPres = 0;
+  private lPres = 0;
 
   constructor() {
     this.scene.add(this.rig, this.sun, this.sun.target, this.hemi);
@@ -128,7 +131,7 @@ export class Viewmodel {
     camera: THREE.Camera,
     s: {
       stepPhase: number; speed: number; resting: boolean; clipped: boolean; mode: string; actionT: number;
-      arresting: boolean; breath: number; shake: number; shiver: number; aspect: number;
+      arresting: boolean; breath: number; shake: number; shiver: number; aspect: number; slope: number;
     },
   ): void {
     this.t += dt;
@@ -139,13 +142,24 @@ export class Viewmodel {
     const breathe = Math.sin(s.breath * Math.PI * 2) * 0.008;
     const shiver = s.shiver > 0 ? Math.sin(this.t * 60) * 0.003 * s.shiver : 0;
 
-    // Right: ice axe swings with stride, plants when resting.
-    let rx = 0.3, ry = -0.36 + breathe, rz = -0.5;
-    let rRotX = 0.25, rRotZ = 0;
-    ry += Math.sin(ph) * 0.025 * walk;
-    rz += Math.cos(ph) * 0.04 * walk;
-    rRotX += Math.sin(ph) * 0.15 * walk;
-    if (s.resting) { ry -= 0.07; rRotX = 0.6; rz -= 0.05; }
+    // Arms stay down at the sides while walking on easy ground (as a real climber's would)
+    // and only come into view when they are doing something.
+    const caneNeeded = s.slope > 24 && !s.clipped;
+    const rTarget = s.mode === 'slide' || s.resting || caneNeeded ? 1 : 0;
+    const lTarget = s.clipped || s.mode === 'transfer' || s.mode === 'clipping' ? 1 : 0;
+    this.rPres += (rTarget - this.rPres) * Math.min(1, dt * 3.5);
+    this.lPres += (lTarget - this.lPres) * Math.min(1, dt * 3.5);
+
+    // Right: ice axe used as a cane on steep snow — planted low ahead every other step.
+    let rx = 0.3, ry = -0.44 + breathe, rz = -0.52;
+    let rRotX = 0.55, rRotZ = 0;
+    const plant = Math.max(0, Math.sin(ph * 0.5)) * walk;
+    ry += -0.05 * plant + Math.sin(ph) * 0.015 * walk;
+    rz += -0.08 * plant;
+    rRotX += 0.35 * plant;
+    if (s.resting) { ry = -0.47 + breathe; rRotX = 0.75; rz = -0.5; }
+    ry -= (1 - this.rPres) * 0.5;
+    rRotX += (1 - this.rPres) * 0.6;
     if (s.mode === 'slide') {
       rx = 0.12; ry = -0.25 + Math.sin(this.t * 20) * 0.02; rz = -0.42; rRotX = s.arresting ? 1.3 : -0.3; rRotZ = 0.6;
     }
@@ -154,16 +168,18 @@ export class Viewmodel {
     this.right.rotation.set(rRotX, -0.08, rRotZ);
 
     // Left: holds the ascender on the rope when clipped.
-    let lx = -0.3, ly = -0.36 + breathe, lz = -0.52;
+    let lx = -0.3, ly = -0.44 + breathe, lz = -0.52;
     let lRotX = 0.2;
-    ly += Math.sin(ph + Math.PI) * 0.025 * walk;
-    lz += Math.cos(ph + Math.PI) * 0.04 * walk;
-    if (s.clipped) { lx = -0.2; ly = -0.3 + Math.sin(ph) * 0.03 * walk; lz = -0.56; lRotX = 0.5; }
+    // Jumar: slid up the rope with each step.
+    if (s.clipped) { lx = -0.2; ly = -0.36 + Math.sin(ph) * 0.03 * walk; lz = -0.58 - Math.max(0, Math.sin(ph)) * 0.05 * walk; lRotX = 0.5; }
     if (s.mode === 'transfer' || s.mode === 'clipping') {
       const k = Math.sin(Math.min(1, s.actionT / 1.5) * Math.PI);
       lx = -0.12; ly = -0.24 + k * 0.05; lz = -0.62 - k * 0.08; lRotX = 0.9;
     }
     if (s.resting) { ly -= 0.06; }
+    ly -= (1 - this.lPres) * 0.5;
+    this.left.visible = this.lPres > 0.02;
+    this.right.visible = this.rPres > 0.02;
     this.left.position.set((lx - shiver) * ax, ly, lz);
     this.left.rotation.set(lRotX, 0.1, 0);
     this.jumar.visible = s.clipped || s.mode === 'transfer';

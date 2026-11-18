@@ -145,6 +145,17 @@ export class MountainField {
     const rad = Math.hypot(x, z);
     const rib = this.noise2.ridged(Math.cos(ang) * 4.2, Math.sin(ang) * 4.2 + rad * 0.006, 4);
     h += (rib - 0.5) * away * (def.valley ? 10 : 26) * smoothstep(60, 260, rad);
+    // Cliff bands: soft terracing on the faces away from the route gives layered
+    // rock steps with snow ledges, as on real Himalayan walls.
+    if (away > 0.05 && !def.valley || (def.valley && routeD > 120)) {
+      const T = 7.5;
+      const q = h / T;
+      const fl = Math.floor(q);
+      const fr = q - fl;
+      const stepped = (fl + smoothstep(0.25, 0.75, fr)) * T;
+      const k = away * 0.55 * smoothstep(0.3, 0.7, this.noise2.noise(x * 0.006 + 3, z * 0.006));
+      h += (stepped - h) * k;
+    }
     // Icefall: tumbled glacier surface with ice blocks.
     if (def.seracField) {
       const blocks = this.noise.ridged(x * 0.05, z * 0.05, 2);
@@ -189,7 +200,7 @@ export function computePatchFrame(def: MountainDef): PatchFrame {
     oz: camp[1] + uz * len * 0.5,
     ux, uz, vx, vz,
     halfL: len * 0.5 + 95,
-    halfW: maxLat + 105,
+    halfW: maxLat + (def.valley ? 170 : 105),
   };
 }
 
@@ -201,7 +212,7 @@ function patchInsideFactor(f: PatchFrame, x: number, z: number): number {
   const ea = f.halfL - a;
   const eb = f.halfW - b;
   const e = Math.min(ea, eb);
-  return smoothstep(0, 14, e);
+  return smoothstep(0, 5, e);
 }
 
 export interface TerrainUniforms {
@@ -247,12 +258,15 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
          varying vec3 vWPos;
          varying vec3 vWNrm;
          attribute float aCrev;
-         varying float vCrev;`,
+         varying float vCrev;
+         attribute float aAO;
+         varying float vAO;`,
       )
       .replace(
         '#include <worldpos_vertex>',
         `#include <worldpos_vertex>
          vCrev = aCrev;
+         vAO = aAO;
          vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
          vWNrm = normalize(mat3(modelMatrix) * objectNormal);`,
       );
@@ -271,6 +285,7 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
          uniform float uSnowCover;
          uniform vec3 uBandCol;
          varying float vCrev;
+         varying float vAO;
          float tHash(vec3 p){ p = fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
          float tNoise(vec2 p){ vec2 i=floor(p); vec2 f=fract(p); f=f*f*(3.0-2.0*f);
            float a=tHash(vec3(i,1.0)); float b=tHash(vec3(i+vec2(1,0),1.0));
@@ -284,25 +299,57 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         `
         vec3 wn = normalize(vWNrm);
         float slopeY = wn.y;
+        float camDist = length(vWPos - cameraPosition);
         float n1 = tNoise(vWPos.xz*0.045);
         float n2 = tNoise(vWPos.xz*0.31 + 7.0);
-        // Snow holds below ~50 degrees, with noisy edges and wind-scoured bands.
+        float n3 = tNoise(vWPos.xz*0.009 + 3.1);
+        vec3 tw = triW(wn);
+        // Rock micro-relief decides where snow can sit on ledges.
+        // Coarse sample far away, fine sample close up, so ledge snow never turns into speckle.
+        float ledgeFine = 1.0 - smoothstep(20.0, 70.0, camDist);
+        vec3 rNyF = texture2D(tRockN, vWPos.xz*0.08).xyz*2.0-1.0;
+        vec3 rNxF = texture2D(tRockN, vWPos.zy*0.08).xyz*2.0-1.0;
+        vec3 rNyC = texture2D(tRockN, vWPos.xz*0.018+0.2).xyz*2.0-1.0;
+        vec3 rNxC = texture2D(tRockN, vWPos.zy*0.018+0.2).xyz*2.0-1.0;
+        float ledge = mix(rNyC.y*tw.y + rNxC.y*tw.x, rNyF.y*tw.y + rNxF.y*tw.x, ledgeFine);
+        // Snow holds below ~50 degrees, with noisy edges, plus patches caught on ledges.
         float snowLine = 0.60 + (n1-0.5)*0.22 + (n2-0.5)*0.06 - (uSnowCover-1.0)*0.2;
         gSnow = smoothstep(snowLine-0.05, snowLine+0.06, slopeY);
+        float ledgeSnow = smoothstep(0.35, 0.6, ledge + slopeY*0.6 + (mix(n1, n2, ledgeFine)-0.5)*0.3) * (1.0 - gSnow) * smoothstep(0.15, 0.4, slopeY);
+        gSnow = max(gSnow, ledgeSnow * 0.9);
         gIce = (1.0 - smoothstep(0.72, 0.86, slopeY)) * gSnow * smoothstep(0.35,0.7,n1);
         gRock = 1.0 - gSnow;
-        vec3 tw = triW(wn);
         vec3 rA = texture2D(tRockA, vWPos.zy*0.06).rgb*tw.x + texture2D(tRockA, vWPos.xz*0.06).rgb*tw.y + texture2D(tRockA, vWPos.xy*0.06).rgb*tw.z;
         vec3 rB = texture2D(tRockA, vWPos.zy*0.0137+0.3).rgb*tw.x + texture2D(tRockA, vWPos.xz*0.0137+0.3).rgb*tw.y + texture2D(tRockA, vWPos.xy*0.0137+0.3).rgb*tw.z;
         rA = rA * (0.55 + rB * 0.9);
-        float strata = sin(vWPos.y*1.7 + n1*6.0)*0.5+0.5;
-        vec3 rockCol = mix(vec3(0.20,0.19,0.18), vec3(0.33,0.30,0.27), strata*0.6) * (0.55 + rA*0.9);
+        // Layered gneiss/schist: thin and thick strata, slightly warped.
+        float warp = n1*5.0 + tNoise(vWPos.xz*0.02)*8.0;
+        // Fine strata fade out with distance so they never alias into scan lines.
+        float fineK = 1.0 - smoothstep(25.0, 90.0, camDist);
+        float strata = mix(sin(vWPos.y*0.75 + warp)*0.5+0.5, sin(vWPos.y*1.9 + warp)*0.5+0.5, fineK);
+        float strata2 = smoothstep(0.55, 0.9, sin(vWPos.y*0.37 + warp*0.3)*0.5+0.5);
+        vec3 rockCol = mix(vec3(0.17,0.16,0.155), vec3(0.34,0.31,0.28), strata*0.55);
+        rockCol = mix(rockCol, vec3(0.42,0.38,0.33), strata2*0.45);
+        // Dark vertical water/varnish streaks down rock walls.
+        float streak = tNoise(vec2(dot(vWPos.xz, vec2(0.7,0.7))*0.45, vWPos.y*0.025));
+        rockCol *= 1.0 - smoothstep(0.55, 0.85, streak)*0.35;
+        rockCol *= (0.55 + rA*0.9);
         float band = smoothstep(uBandLow-6.0, uBandLow+4.0, vWPos.y) * (1.0 - smoothstep(uBandHigh-4.0, uBandHigh+6.0, vWPos.y));
-        rockCol = mix(rockCol, uBandCol*(0.6+rA*0.7), band*0.85);
-        vec3 snowCol = mix(vec3(0.93,0.95,0.98), vec3(0.86,0.90,0.95), n2*0.6);
-        vec3 iceCol = vec3(0.72,0.82,0.90);
+        rockCol = mix(rockCol, uBandCol*(0.6+rA*0.7)*(0.85+strata*0.3), band*0.85);
+        // Snow: wind crust vs powder patches, grey dusting near rock, blue in cavities.
+        vec3 snowCol = mix(vec3(0.94,0.955,0.98), vec3(0.84,0.88,0.93), n2*0.5 + n3*0.35);
+        // Wind-sculpted sastrugi: shade the ripple flanks a little so texture reads even under flat light.
+        vec2 rip = texture2D(tSnowN, vWPos.xz*0.023+0.37).xy*2.0-1.0;
+        vec2 rip2 = texture2D(tSnowN, vWPos.xz*0.11).xy*2.0-1.0;
+        snowCol *= 0.93 + 0.07*clamp(0.5 + (rip.x + rip.y)*0.9 + (rip2.x - rip2.y)*0.4, 0.0, 1.0);
+        float dirty = (1.0 - smoothstep(0.0, 0.5, gSnow - ledgeSnow)) * gSnow;
+        snowCol = mix(snowCol, vec3(0.62,0.6,0.58), dirty*0.35);
+        vec3 iceCol = vec3(0.70,0.81,0.90);
         vec3 surf = mix(snowCol, iceCol, gIce*0.7);
         diffuseColor.rgb = mix(rockCol, surf, gSnow);
+        float cav = clamp(vAO, 0.45, 1.12);
+        diffuseColor.rgb *= mix(vec3(1.0), vec3(0.78,0.86,1.0), (1.0-min(cav,1.0))*gSnow*1.2);
+        diffuseColor.rgb *= mix(1.0, cav, 0.85);
         // Crevasse walls: blue ice darkening with depth.
         float crev = smoothstep(0.01, 0.2, vCrev);
         diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.45,0.7,0.85), vec3(0.01,0.05,0.12), smoothstep(0.1, 0.8, vCrev)), crev);
@@ -312,7 +359,7 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
       .replace(
         '#include <roughnessmap_fragment>',
         `float roughnessFactor = roughness;
-         roughnessFactor = mix(0.92, mix(0.78, 0.32, gIce), gSnow);`,
+         roughnessFactor = mix(0.92, mix(0.72 + n2*0.14, 0.3, gIce), gSnow);`,
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -329,7 +376,8 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
           vec3 sN3 = texture2D(tSnowN, vWPos.xz*0.45+0.71).xyz*2.0-1.0;
           vec3 snowP = vec3(sN.x*0.6 + sN2.x*0.9 + sN3.x*0.25, 0.0, sN.y*0.6 + sN2.y*0.9 + sN3.y*0.25);
           vec3 rockP = vec3(0.0, rNx.y, rNx.x)*tw2.x + vec3(rNy.x, 0.0, rNy.y)*tw2.y + vec3(rNz.x, rNz.y, 0.0)*tw2.z;
-          wPert = mix(rockP*1.4, snowP*0.95, gSnow);
+          float dFade = 1.0 - smoothstep(60.0, 260.0, length(vWPos - cameraPosition));
+          wPert = mix(rockP*1.5, snowP*0.95, gSnow) * (0.35 + 0.65*dFade);
           vec3 wN = normalize(wn + wPert);
           normal = normalize((viewMatrix * vec4(wN, 0.0)).xyz);
         }`,
@@ -346,7 +394,7 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         }`,
       );
   };
-  material.customProgramCacheKey = () => 'terrain-v4';
+  material.customProgramCacheKey = () => 'terrain-v5';
   return { material, uniforms };
 }
 
@@ -428,7 +476,7 @@ export function buildTerrainMeshes(
     const z = cz + warp(j / n * 2 - 1) * half;
     const inside = patchInsideFactor(frame, x, z);
     out[0] = x;
-    out[1] = field.height(x, z) - inside * 4.5;
+    out[1] = field.height(x, z) - inside * 9;
     out[2] = z;
   });
   const baseMesh = new THREE.Mesh(base, material);
@@ -438,6 +486,17 @@ export function buildTerrainMeshes(
 
   for (const g of [patch, base]) {
     const pos = g.getAttribute('position');
+    // Cavity term: concave spots (gullies, the foot of walls) get darker, convex crests brighter.
+    const ao = new Float32Array(pos.count);
+    const r = g === patch ? 5 : 18;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      const h = field.surfaceHeight(x, z);
+      const avg = (field.surfaceHeight(x + r, z) + field.surfaceHeight(x - r, z) + field.surfaceHeight(x, z + r) + field.surfaceHeight(x, z - r)) * 0.25;
+      const c = (avg - h) / r;
+      ao[i] = Math.min(1.12, Math.max(0.45, 1 - c * 1.6));
+    }
+    g.setAttribute('aAO', new THREE.BufferAttribute(ao, 1));
     const crev = new Float32Array(pos.count);
     if (field.cracks.length) {
       for (let i = 0; i < pos.count; i++) crev[i] = field.crevasseDepth(pos.getX(i), pos.getZ(i)) / 24;

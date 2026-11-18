@@ -9,12 +9,15 @@ import { Snow } from '../world/Snow';
 import { Breath } from '../world/Breath';
 import { Player } from '../player/Player';
 import { Viewmodel } from '../player/Viewmodel';
+import { Body } from '../player/Body';
 import { Physiology, Weather, BOTTLE_LITERS } from '../systems/Physiology';
 import { PostFX } from '../systems/PostFX';
 import { Audio } from '../systems/Audio';
 import { Hud, formatClock } from '../ui/Hud';
 import { MapView } from '../ui/MapView';
 import { Tutorial } from '../ui/Tutorial';
+import { Radio } from '../ui/Radio';
+import { Ambient } from '../world/Ambient';
 import { createSeededRandom } from '../utils/random';
 import { clamp, smoothstep } from '../utils/noise';
 
@@ -93,6 +96,10 @@ export class Game {
   private readonly snow: Snow;
   private readonly viewmodel = new Viewmodel();
   private readonly breath = new Breath();
+  private readonly body = new Body();
+  private readonly radio = new Radio();
+  private readonly ambient = new Ambient();
+  private paceChecked = false;
   private readonly map = new MapView(() => this.map.show(false));
   private tutorial!: Tutorial;
   private readonly headlamp = new THREE.SpotLight(0xfff1dc, 0, 70, 0.42, 0.5, 1.2);
@@ -162,6 +169,18 @@ export class Game {
     this.snow = new Snow(this.mobile ? 2200 : 4200);
     this.scene.add(this.snow.points);
     this.scene.add(this.breath.group);
+    this.scene.add(this.body.group);
+    this.scene.add(this.ambient.group);
+    this.radio.onTransmit = () => this.audio.radio();
+    this.ambient.onAvalanche = (dist, delay) => {
+      setTimeout(() => this.audio.avalanche(dist), delay * 1000);
+      this.radio.say('avalanche', '今の音は雪崩だ！…大丈夫、遠い。こっちには来ない。');
+    };
+    this.ambient.onIceCrack = () => {
+      this.audio.iceCrack();
+      if (this.player) this.player.shake = Math.max(this.player.shake, 0.25);
+      this.radio.say('icecrack', '氷河が動いた音だ。氷は生きている。気にするな、ただし立ち止まるな。');
+    };
     this.headlamp.castShadow = false;
     this.scene.add(this.headlamp, this.headlamp.target);
     this.scene.add(this.camera);
@@ -421,8 +440,8 @@ export class Game {
     if (!this.world || !this.player) return;
     this.rng = createSeededRandom(this.seed);
     const def = this.world.def;
-    this.weather.reset(this.rng);
     this.weather.stormChance = def.goal === 'summit' ? Math.min(0.9, 0.35 + Math.max(0, this.day - 7) * 0.08) : 0.3;
+    this.weather.reset(this.rng);
     this.physio.reset(def.o2 === 'summit' ? this.spares : 0, {
       o2: def.o2 !== 'none', acclim: this.acclim, frost: this.frostCarry,
     });
@@ -451,6 +470,14 @@ export class Game {
     this.input.enabled = true;
     this.showScreen(null);
     this.hud.show(true);
+    this.radio.reset();
+    this.ambient.reset();
+    this.paceChecked = false;
+    this.radio.lore(def.stageKey, 0);
+    const deadline = def.goal === 'summit' ? TURNAROUND : 18.5;
+    this.radio.say('forecast', this.weather.willStorm && this.weather.stormAt < deadline + 1
+      ? `今日の予報：${formatClock(this.weather.stormAt)}ごろから天気が崩れる。それまでに${def.goalName}へ入れ。`
+      : '今日の予報：晴れ、風は弱い。いい日だ。');
     const goal = def.goal === 'summit' ? `山頂 ${def.summitAltitude.toLocaleString('en-US')}m · 折返 ${TURNAROUND}:00` : `${def.goalName}（${def.summitAltitude.toLocaleString('en-US')}m）へ`;
     this.hud.banner(`${this.day}日目 — ${def.stageName}`, `${formatClock(this.hours)} ${def.campName}出発 · ${goal}`, '', 4500);
   }
@@ -514,6 +541,7 @@ export class Game {
 
   private updateTitle(dt: number): void {
     const w = this.world!;
+    this.body.group.visible = false;
     this.titleAngle += dt * 0.012;
     const r = 820;
     const cx = w.def.route[0][0] * 0.3;
@@ -639,6 +667,25 @@ export class Game {
 
     // Serac fall (K2 traverse)
     this.updateSerac(dt);
+
+    // Base-camp radio and the life of the mountain around you.
+    this.radio.update(dt);
+    this.ambient.update(dt, p.pos, w.field, {
+      altitude, day: this.day, night: this.env.state.dayFactor < 0.3, glacier: !!w.def.valley || !!w.def.crevasses?.length, storm: ws.storm,
+    });
+    const prog = p.routeS / w.route.length;
+    if (!this.paceChecked && prog > 0.5 && !p.descending) {
+      this.paceChecked = true;
+      const deadline = w.def.goal === 'summit' ? TURNAROUND : 18.5;
+      const projected = w.def.startHours + (this.hours - w.def.startHours) / prog;
+      this.radio.say('pace', projected > deadline - 0.5
+        ? `半分を過ぎた。だがこのペースだと着くのは${formatClock(projected)}ごろだ。休みを短くしろ。`
+        : `半分を過ぎた。いいペースだ。この調子なら${formatClock(projected)}ごろには着ける。`);
+    }
+    if (ph.spo2 < 60) this.radio.say('spo2', ph.hasO2 ? '声がおかしいぞ。酸素が足りていない、流量を上げろ。' : '呼吸が荒いな。無理をするな、休みながら行け。');
+    if (ph.coreTemp < 35.6) this.radio.say('cold', '震えているな？止まるな、動いて体を温めろ。');
+    if (ws.storm > 0.3) this.radio.say('storm', '雲が上がってきた！急げ。視界がなくなる前にロープを離すな。');
+    if (ph.hasO2 && ph.bottle < BOTTLE_LITERS * 0.25) this.radio.say('o2low', 'ボンベの残りを確認しろ。交換の準備だ。');
 
     // Landmarks, summit, return
     this.updateProgress();
@@ -834,6 +881,7 @@ export class Game {
       if (p.routeS >= w.route.waypointS[lms[i].routeIndex] - 3 && i > this.lastLandmark && p.routeDist < 25) {
         this.lastLandmark = i;
         if (i < lms.length - 1) this.hud.banner(lms[i].name, lms[i].note, 'good', 3600);
+        this.radio.lore(w.def.stageKey, i);
         break;
       }
     }
@@ -970,6 +1018,9 @@ export class Game {
     this.camera.rotation.z = roll;
     this.camera.position.y += Math.sin(t * 9) * shiver * 0.5;
     this.camera.updateMatrixWorld();
+    const crouch = p.mode === 'slide' ? 1 : p.resting ? 0.6 : 0;
+    this.body.group.visible = p.mode !== 'dead';
+    this.body.update(p.pos, p.yaw, p.stepPhase, p.speed, crouch, (x, z) => p.groundAt(x, z).y);
     this.viewmodel.update(dt, this.camera, {
       stepPhase: p.stepPhase,
       speed: p.speed,
@@ -982,6 +1033,7 @@ export class Game {
       shake,
       shiver: shiver * 100,
       aspect: this.camera.aspect,
+      slope: p.onLadder ? 0 : p.slopeDeg,
     });
   }
 
@@ -993,7 +1045,7 @@ export class Game {
     const fog = this.scene.fog as THREE.FogExp2;
     fog.color.copy(es.horizon);
     const visibility = this.state === 'title' ? 0 : storm;
-    fog.density = 0.00008 + visibility * visibility * 0.018 + this.weather.state.gust * 0.0015 * (this.state === 'title' ? 0 : 1);
+    fog.density = 0.00014 + visibility * visibility * 0.018 + this.weather.state.gust * 0.0015 * (this.state === 'title' ? 0 : 1);
     this.post.params.exposure = es.exposure;
     w.terrainUniforms.uSparkle.value = es.dayFactor * (1 - storm);
     w.terrainUniforms.uSunDir.value.copy(es.sunDir);
@@ -1170,6 +1222,21 @@ export class Game {
         set('everest', 0.35, 6.5, 0, 0);
         this.map.show(true);
         this.map.update(this.player!.pos.x, this.player!.pos.z, this.player!.yaw, this.player!.routeS);
+        break;
+      case 'feet':
+        set('everest', 0.2, 9.5, 0, 1);
+        this.player!.pitch = -1.05;
+        this.player!.stepPhase = 0.35;
+        this.player!.speed = 1.1;
+        this.updateCamera(0.016);
+        break;
+      case 'shadow':
+        set('everest', 0.25, 16.3, 0, 1);
+        this.player!.yaw += Math.PI * 0.8;
+        this.player!.pitch = -0.55;
+        this.player!.stepPhase = 0.5;
+        this.player!.speed = 1.1;
+        this.updateCamera(0.016);
         break;
       case 'camp':
         set('everest', 0.995, 13, 0, 1);
