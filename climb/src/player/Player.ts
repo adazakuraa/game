@@ -211,7 +211,8 @@ export class Player {
       const grade = (h1 - h0) / probe;
       const up = Math.max(0, grade);
       const down = Math.max(0, -grade);
-      let speed = 2.75 * mag;
+      // Full stick = a steady mountaineering pace, not a brisk walk.
+      let speed = 1.6 * mag;
       speed *= 1 / (1 + up * 1.6) / (1 + down * 0.5);
       speed *= 1 - ctx.hypoxia * 0.45;
       speed *= ctx.stamina < 20 ? 0.55 + ctx.stamina * 0.0225 : 1;
@@ -243,7 +244,7 @@ export class Player {
       this.exertion = clamp((this.speed / 2.75) * (0.45 + up * 1.4 + (ascending ? 0.3 : 0)), 0, 1);
 
       // Step cadence
-      const stride = 0.62;
+      const stride = 0.5;
       const before = Math.floor(this.stepPhase);
       this.stepPhase += moved / stride;
       if (Math.floor(this.stepPhase) !== before) {
@@ -303,7 +304,7 @@ export class Player {
 
     this.pos.y = this.groundAt(this.pos.x, this.pos.z).y;
     this.updateRoute();
-    this.bob = Math.sin(this.stepPhase * Math.PI) * Math.min(1, this.speed / 1.2);
+    this.bob = Math.sin(this.stepPhase * Math.PI) * Math.min(1, this.speed / 0.8);
     this.shake = Math.max(0, this.shake - dt * 1.5);
   }
 

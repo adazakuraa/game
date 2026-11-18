@@ -10,6 +10,10 @@ export class Audio {
   private hissGain!: GainNode;
   private droneGain!: GainNode;
   private lastBreath = 0;
+  private breathBus!: GainNode;
+  breathOn = true;
+  /** whether the climber is breathing through an oxygen mask */
+  masked = false;
   private lastHeart = 0;
   muted = false;
 
@@ -37,6 +41,11 @@ export class Audio {
       b = 0.97 * b + 0.03 * w;
       d[i] = w * 0.6 + b * 3.0;
     }
+
+    // Breathing has its own bus so it can be switched off in settings.
+    this.breathBus = ctx.createGain();
+    this.breathBus.gain.value = this.breathOn ? 1 : 0;
+    this.breathBus.connect(this.master);
 
     // Wind: low roar + high whistle.
     const wsrc = this.loopNoise();
@@ -83,6 +92,71 @@ export class Audio {
       o.start();
     }
     lp.connect(this.droneGain).connect(this.master);
+  }
+
+  setBreathing(on: boolean): void {
+    this.breathOn = on;
+    if (this.ctx) this.breathBus.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.1);
+  }
+
+  /**
+   * One breath: filtered noise shaped like an inhale or exhale. Through a mask it is
+   * muffled with a demand-valve click; open-mouthed it is brighter and rougher.
+   */
+  private breathe(inhale: boolean, dur: number, effort: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.playbackRate.value = inhale ? 0.95 : 0.75;
+    const f1 = ctx.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.frequency.value = inhale ? 1500 + effort * 500 : 700 + effort * 250;
+    f1.Q.value = inhale ? 1.1 : 0.9;
+    const f2 = ctx.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.frequency.value = inhale ? 3200 : 1700;
+    f2.Q.value = 1.4;
+    const shape = ctx.createBiquadFilter();
+    shape.type = 'lowpass';
+    shape.frequency.value = this.masked ? 1400 : 5200;
+    const g = ctx.createGain();
+    const peak = (inhale ? 0.16 : 0.22) * (0.45 + effort * 0.9) * (this.masked ? 1.25 : 1);
+    // Natural envelope: inhale swells then stops; exhale bursts out then trails off.
+    const n = 24;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = i / (n - 1);
+      const env = inhale ? Math.pow(Math.sin(Math.min(1, x * 1.15) * Math.PI * 0.5), 1.6) * (1 - Math.pow(x, 6)) : Math.pow(1 - x, 1.7) * Math.min(1, x * 9);
+      curve[i] = Math.max(0.0001, env * peak * (0.9 + Math.random() * 0.2));
+    }
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.setValueCurveAtTime(curve, t, dur);
+    const mix = ctx.createGain();
+    mix.gain.value = 1;
+    src.connect(f1).connect(mix);
+    const f2g = ctx.createGain();
+    f2g.gain.value = 0.45;
+    src.connect(f2).connect(f2g).connect(mix);
+    mix.connect(shape).connect(g).connect(this.breathBus);
+    src.start(t, Math.random() * 2);
+    src.stop(t + dur + 0.1);
+    if (this.masked) {
+      // Demand valve: a soft click and hiss at the start of each breath.
+      const c = ctx.createBufferSource();
+      c.buffer = this.noiseBuf;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 3500;
+      const cg = ctx.createGain();
+      cg.gain.setValueAtTime(0.0001, t);
+      cg.gain.exponentialRampToValueAtTime(inhale ? 0.05 : 0.035, t + 0.01);
+      cg.gain.exponentialRampToValueAtTime(0.0001, t + (inhale ? 0.18 : 0.08));
+      c.connect(hp).connect(cg).connect(this.breathBus);
+      c.start(t, Math.random() * 2);
+      c.stop(t + 0.25);
+    }
   }
 
   setMuted(m: boolean): void {
@@ -157,15 +231,14 @@ export class Audio {
     this.hissGain.gain.setTargetAtTime(p.flow > 0 ? 0.004 + p.flow * 0.0015 : 0, now, 0.2);
     this.droneGain.gain.setTargetAtTime(p.drone * 0.18, now, 2.0);
 
-    // Breathing through the mask: inhale at phase 0, exhale at 0.45.
+    // Breathing: inhale at phase 0, exhale at 0.45 of each breath cycle.
+    this.masked = p.flow > 0;
     const ph = p.breathPhase;
     if (ph < this.lastBreath) {
-      const len = Math.min(1.2, 60 / p.breathRate * 0.42);
-      this.burst({ dur: len, freq: 1400 + p.effort * 400, q: 0.8, gain: 0.05 + p.effort * 0.09, attack: len * 0.5, rate: 0.8 });
+      this.breathe(true, Math.min(1.3, (60 / p.breathRate) * 0.42), p.effort);
     }
     if (this.lastBreath < 0.45 && ph >= 0.45) {
-      const len = Math.min(1.3, 60 / p.breathRate * 0.5);
-      this.burst({ dur: len, freq: 650 + p.effort * 200, q: 0.7, gain: 0.06 + p.effort * 0.11, attack: 0.05, rate: 0.7 });
+      this.breathe(false, Math.min(1.5, (60 / p.breathRate) * 0.52), p.effort);
     }
     this.lastBreath = ph;
 

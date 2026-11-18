@@ -85,7 +85,7 @@ export class Body {
   update(pos: THREE.Vector3, yaw: number, stepPhase: number, speed: number, crouch: number, ground: (x: number, z: number) => number): void {
     const fwd = this.fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw));
     const right = this.right.set(-fwd.z, 0, fwd.x);
-    const walk = Math.min(1, speed / 1.0);
+    const walk = Math.min(1, speed / 0.7);
     const ph = stepPhase * Math.PI;
     const hip = pos.y + 0.95 - crouch * 0.35;
     for (let i = 0; i < 2; i++) {

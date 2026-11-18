@@ -137,7 +137,7 @@ export class Viewmodel {
     this.t += dt;
     this.rig.position.copy(camera.position);
     this.rig.quaternion.copy(camera.quaternion);
-    const walk = Math.min(1, s.speed / 1.2);
+    const walk = Math.min(1, s.speed / 0.8);
     const ph = s.stepPhase * Math.PI;
     const breathe = Math.sin(s.breath * Math.PI * 2) * 0.008;
     const shiver = s.shiver > 0 ? Math.sin(this.t * 60) * 0.003 * s.shiver : 0;
