@@ -146,7 +146,7 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     sand *= 1 - turf;
   }
   const rw = rockyWeight(x, z);
-  const rockT = clamp(Math.max(rw * 0.85, smoothstep(0.25, 0.6, slope)), 0, 1);
+  const rockT = clamp(Math.max(rw * (0.35 + 0.6 * smoothstep(-0.25, 0.25, fbm2(x * 0.04 + 3, z * 0.04, 2))), smoothstep(0.25, 0.6, slope)), 0, 1);
   if (rockT > 0) {
     const alg = smoothstep(-40, -6, h) * smoothstep(0.0, 0.5, n + 0.3);
     r = lerp(r, lerp(0.36, 0.33, alg) + 0.05 * n2, rockT);

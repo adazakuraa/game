@@ -158,7 +158,11 @@ export class Creatures {
     const reg = def.region;
     const fromList = (arr: THREE.Vector3[]) => arr[Math.floor(r() * arr.length) % Math.max(1, arr.length)].clone();
     let p: THREE.Vector3;
-    if (reg === 'anemones') p = homes.anemones[i % homes.anemones.length].clone();
+    if (reg === 'anemones') {
+      // each anemonefish species keeps its own host anemones
+      const off: Record<string, number> = { clownfish: 0, hamakumanomi: 9, kumanomi: 14, hanabirakuma: 19 };
+      p = homes.anemones[((off[def.id] ?? 0) + i) % homes.anemones.length].clone();
+    }
     else if (reg === 'crevices') p = homes.crevices[(i * 7) % homes.crevices.length].clone();
     else if (reg === 'reefSpots') p = fromList(homes.reefSpots);
     else if (reg === 'rockSpots') p = fromList(homes.rockSpots);

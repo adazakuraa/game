@@ -122,7 +122,7 @@ export const SPECIES: SpeciesDef[] = [
     hint: 'サンゴ礁のイソギンチャクを探そう。',
     kind: 'fish', fish: { H: 0.42, W: 0.2, peak: 0.58, nose: 0.55, ped: 0.24, tail: 'round', tailL: 0.22, tailH: 0.38, dorsal: [{ a: 0.2, b: 0.7, h: 0.13 }], anal: [{ a: 0.18, b: 0.4, h: 0.12 }], pect: { t: 0.7, len: 0.1, wid: 0.07, down: 0.4 }, pelvic: true, eyes: 0.14 },
     paint: (p) => { fins(p, '#f07018'); p.g.fillStyle = '#111'; p.g.fillRect(0, 0, p.U(-0.47), p.H); p.shade('#f06010', '#f87a18', '#f89040'); p.bar(0.3, 0.07, '#fafafa', '#111'); p.bar(0.03, 0.09, '#fafafa', '#111'); p.bar(-0.38, 0.06, '#fafafa', '#111'); p.eye(0.14, '#f06010'); },
-    count: 38, groups: 18, behavior: 'anemone', region: 'anemones', speed: 0.35, flee: 0, swim: [5, 0.05, 6], photoRange: 6,
+    count: 18, groups: 9, behavior: 'anemone', region: 'anemones', speed: 0.35, flee: 0, swim: [5, 0.05, 6], photoRange: 6,
   },
   {
     id: 'bluetang', name: 'ナンヨウハギ', sci: 'Paracanthurus hepatus', zone: 'reef', depth: [2, 40], size: 0.25, rarity: 1,

@@ -86,9 +86,12 @@ export class Game {
     this.scene.environment = this.makeEnvMap();
     this.scene.environmentIntensity = 0.6;
     this.scene.add(this.terrain.group);
+    const t0 = performance.now();
     this.flora = new Flora();
+    const t1 = performance.now();
     this.scene.add(this.flora.group);
     this.creatures = new Creatures(this.flora.homes);
+    (window as unknown as Record<string, unknown>).__BOOT_MS__ = { flora: Math.round(t1 - t0), creatures: Math.round(performance.now() - t1) };
     this.scene.add(this.creatures.group);
     this.audio.onExhale = () => {
       if (this.state === 'diving') this.env.exhale(this.camera, this.ads ? 0 : 1);
@@ -266,7 +269,7 @@ export class Game {
     $('dd-name').textContent = f ? s.name : '？？？';
     $('dd-sci').textContent = f ? s.sci : '';
     $('dd-meta').textContent = f ? `大きさ 約${s.size >= 1 ? s.size.toFixed(1) + 'm' : Math.round(s.size * 100) + 'cm'}　撮影水深 ${f.depth.toFixed(1)}m${this.pending.has(id) && !this.save.found[id] ? '　（未保存：浮上で登録）' : ''}` : '';
-    $('dd-desc').textContent = f ? s.desc : `ヒント：${s.hint}`;
+    $('dd-desc').textContent = f ? s.desc + (s.habLabel ? `\n【くらし】${s.habLabel}。` : '') : `ヒント：${s.hint}`;
     $('dex-detail').classList.remove('hidden');
   }
 
@@ -775,6 +778,16 @@ export class Game {
         this.camera.updateMatrixWorld();
         this.creatures.update(0, this.camera.position, this.vel, this.camera.getWorldDirection(this.tmpDir));
         this.paused = true;
+        return true;
+      },
+      aimAt: (id: string) => {
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        const a = rt?.agents[0];
+        if (!a) return false;
+        const c = this.camera.position;
+        const dx = a.p.x - c.x, dy = a.p.y - c.y, dz = a.p.z - c.z;
+        this.yaw = Math.atan2(-dx, -dz);
+        this.pitch = Math.atan2(dy, Math.hypot(dx, dz));
         return true;
       },
       nearFish: (r = 25) => {

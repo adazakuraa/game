@@ -104,8 +104,8 @@ def rock(n=512):
     mid = fft_noise(n, 2.0, 12, lo=3)
     ridged = 1 - np.abs(fft_noise(n, 2.2, 16, lo=2) * 2 - 1)
     f1, f2, cid = worley(n, 9, 13)
-    mask = fft_noise(n, 3.0, 17, lo=1) > 0.55
-    cracks = np.where(mask, np.clip((f2 - f1) / 0.035, 0, 1), 1.0)
+    mask = fft_noise(n, 3.0, 17, lo=1) > 0.72
+    cracks = np.where(mask, np.clip((f2 - f1) / 0.025, 0, 1), 1.0) ** 0.5
     g1, g2, gid = worley(n, 30, 14)
     pits = np.clip(1 - g1 / 0.3, 0, 1) ** 2 * (gid > 0.6)
     rng = np.random.default_rng(15)

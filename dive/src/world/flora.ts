@@ -650,7 +650,7 @@ export class Flora {
 
     // ---- anemones (clownfish homes)
     const anG = anemoneGeometry();
-    const anem = sample(18, [-120, 60, 150, 320], (x, z) => reefOk(x, z) && heightAt(x, z) > -12.5, 30);
+    const anem = sample(28, [-150, 90, 150, 330], (x, z) => reefOk(x, z) && heightAt(x, z) > -12.5, 30);
     add(anG, anemoneMat, anem.map(([x, z]) => ({ m: placeMatrix(x, z, 1.1 + r() * 0.5, r, 0.8, 0), c: [color(0.9, 0.55, 0.62), color(0.06, 0.6, 0.66), color(0.78, 0.45, 0.62), color(0.22, 0.45, 0.6)][Math.floor(r() * 4)] })));
     this.homes.anemones = anem.map(([x, z]) => new THREE.Vector3(x, heightAt(x, z) + 0.45, z));
 
