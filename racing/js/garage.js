@@ -7,10 +7,18 @@ export const SLOTS = [
   { id: 'finish', name: '塗装', view: 'front' },
   { id: 'stripe', name: 'ストライプ', view: 'top' },
   { id: 'stripeColor', name: 'ストライプ色', view: 'top' },
+  { id: 'body', name: 'ボディキット', view: 'front' },
+  { id: 'front', name: 'フロント', view: 'nose' },
+  { id: 'hood', name: 'ボンネット', view: 'top' },
+  { id: 'roof', name: 'ルーフ', view: 'top' },
+  { id: 'height', name: '車高', view: 'side' },
   { id: 'wheel', name: 'ホイール', view: 'wheel' },
   { id: 'wheelColor', name: 'ホイール色', view: 'wheel' },
   { id: 'caliper', name: 'キャリパー', view: 'wheel' },
   { id: 'wing', name: 'リアウイング', view: 'rear' },
+  { id: 'exhaust', name: 'マフラー', view: 'rearLow' },
+  { id: 'window', name: 'ウインドウ', view: 'front' },
+  { id: 'light', name: 'ライト色', view: 'nose' },
   { id: 'glow', name: 'アンダーグロー', view: 'glow' },
   { id: 'smoke', name: 'スモーク', view: 'smoke' },
   { id: 'number', name: 'ゼッケン', view: 'side' },
@@ -100,6 +108,53 @@ export const ITEMS = {
     { id: 'high', name: 'ハイマウント', desc: '背の高い2段ウイング', price: 300 },
     { id: 'swan', name: 'スワンネック', desc: '上から吊る曲線のステー', price: 450 },
   ],
+  body: [
+    { id: 'std', name: 'ノーマル', desc: '標準のボディ', price: 0 },
+    { id: 'street', name: 'ストリート', desc: '低いサイドステップ', price: 300 },
+    { id: 'wide', name: 'ワイドボディ', desc: 'オーバーフェンダーで幅広く。トレッドも広がる', price: 900 },
+  ],
+  front: [
+    { id: 'lip', name: 'リップスポイラー', desc: '標準の薄いリップ', price: 0 },
+    { id: 'none', name: 'なし', desc: 'すっきりしたノーズ', price: 0 },
+    { id: 'big', name: '大型スプリッター', desc: '前に張り出す板とエンドプレート', price: 350 },
+    { id: 'canard', name: 'カナード', desc: 'バンパー左右の小さな羽根', price: 450 },
+  ],
+  hood: [
+    { id: 'std', name: '標準', desc: 'ボディ同色', price: 0 },
+    { id: 'vent', name: 'エアダクト', desc: '熱を抜く2つの開口', price: 250 },
+    { id: 'louver', name: 'ルーバー', desc: '細いスリットが並ぶ', price: 350 },
+    { id: 'carbon', name: 'カーボン', desc: 'ツヤのあるカーボンパネル', price: 500 },
+  ],
+  roof: [
+    { id: 'none', name: 'なし', price: 0 },
+    { id: 'fin', name: 'シャークフィン', desc: '後ろ寄りの小さなフィン', price: 120 },
+    { id: 'spoiler', name: 'ルーフスポイラー', desc: 'リアガラスの上の小さな羽根', price: 300 },
+    { id: 'scoop', name: 'ルーフスクープ', desc: 'ラリーカー風の空気取り入れ口', price: 280 },
+  ],
+  height: [
+    { id: 'std', name: '標準', price: 0 },
+    { id: 'low', name: 'ローダウン', desc: '-4cm', price: 150 },
+    { id: 'slam', name: 'シャコタン', desc: '-7.5cm。地をはうような低さ', price: 300 },
+    { id: 'lift', name: 'リフトアップ', desc: '+6cm', price: 200 },
+  ],
+  exhaust: [
+    { id: 'dual', name: 'デュアル', desc: '左右 1 本ずつ', price: 0 },
+    { id: 'center', name: 'センター出し', desc: '中央に太い 1 本', price: 200 },
+    { id: 'quad', name: '4本出し', desc: '左右 2 本ずつ', price: 350 },
+    { id: 'big', name: '大口径', desc: '太いテールを左右に', price: 250 },
+  ],
+  window: [
+    { id: 'clear', name: 'クリア', color: 0x7f97ad, price: 0 },
+    { id: 'smoke', name: 'スモーク', color: 0x2a323c, price: 100 },
+    { id: 'black', name: 'ブラック', color: 0x050505, price: 200 },
+    { id: 'mirror', name: 'ミラー', color: 0x3c6fa8, price: 400 },
+  ],
+  light: [
+    { id: 'white', name: 'ホワイト', color: 0xfff3dd, price: 0 },
+    { id: 'blue', name: 'ブルーホワイト', color: 0xcfe2ff, price: 120 },
+    { id: 'yellow', name: 'イエロー', color: 0xffcf4a, price: 150 },
+    { id: 'purple', name: 'パープル', color: 0xc9a6ff, price: 200 },
+  ],
   glow: [
     { id: 'none', name: 'なし', price: 0 },
     { id: 'white', name: 'ホワイト', color: 0xdfe8ff, price: 250 },
@@ -127,6 +182,7 @@ export const ITEMS = {
 const DEFAULT_EQUIP = {
   paint: 'ruby', finish: 'metallic', stripe: 'none', stripeColor: 'white', wheel: 'twin', wheelColor: 'silver',
   caliper: 'yellow', wing: 'gt', glow: 'none', smoke: 'white', number: 1,
+  body: 'std', front: 'lip', hood: 'std', roof: 'none', height: 'std', exhaust: 'dual', window: 'clear', light: 'white',
 };
 
 function load() {
@@ -207,6 +263,14 @@ export function resolveLook(eq) {
     glow: g('glow').color ?? null,
     smoke: g('smoke').color ?? null,
     num: eq.number,
+    body: g('body').id,
+    front: g('front').id,
+    hood: g('hood').id,
+    roof: g('roof').id,
+    height: g('height').id,
+    exhaust: g('exhaust').id,
+    window: g('window').id,
+    light: g('light').color,
   };
 }
 

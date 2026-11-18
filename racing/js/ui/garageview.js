@@ -15,9 +15,11 @@ const VIEWS = {
   glow: { yaw: 0.95, pitch: 0.12, dist: 9, target: [0, 0.4, 0], need: 7.6 },
   smoke: { yaw: 2.8, pitch: 0.08, dist: 6, target: [0, 0.4, -1.4], need: 3.2 },
   side: { yaw: 1.5708, pitch: 0.06, dist: 7.4, target: [0, 0.6, 0], need: 7.0 },
+  nose: { yaw: 0.45, pitch: 0.12, dist: 5.2, target: [0, 0.5, 1.5], need: 3.6 },
+  rearLow: { yaw: 2.85, pitch: 0.05, dist: 4.6, target: [0, 0.4, -1.9], need: 3.0 },
 };
 
-const SWATCH_SLOTS = ['paint', 'stripeColor', 'wheelColor', 'caliper', 'glow', 'smoke'];
+const SWATCH_SLOTS = ['paint', 'stripeColor', 'wheelColor', 'caliper', 'glow', 'smoke', 'window', 'light'];
 const wrap = (a) => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; };
 const hexCss = (n) => '#' + n.toString(16).padStart(6, '0');
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -110,6 +112,8 @@ export class GarageView {
   previewEq() {
     const eq = garage.equipped;
     if (this.pending) eq[this.pending.slot] = this.pending.id;
+    // ストライプ色を選んでいる間は、ストライプなしでも色が見えるよう仮のストライプで見せる
+    if (this.slot === 'stripeColor' && eq.stripe === 'none') eq.stripe = 'center2';
     return eq;
   }
 
@@ -313,14 +317,16 @@ export class GarageView {
     name.textContent = it.name;
     if (this.pending) {
       const short = it.price - garage.coins;
-      sub.textContent = short > 0 ? `あと ${short} コイン必要です` : '試着中。購入すると装備されます';
+      sub.textContent = short > 0 ? `あと ${short} コイン必要です` : this.slot === 'stripeColor' && garage.equipped.stripe === 'none' ? '試着中（ストライプなしのため見本のストライプで表示）' : '試着中。購入すると装備されます';
       btn.textContent = '';
       btn.appendChild(document.createTextNode('購入 '));
       btn.appendChild(el('i', 'coin'));
       btn.appendChild(document.createTextNode(String(it.price)));
       btn.disabled = short > 0;
     } else {
-      sub.textContent = it.desc || '装備中';
+      sub.textContent = this.slot === 'stripeColor' && garage.equipped.stripe === 'none'
+        ? '装備中（ストライプを付けると反映されます。今は見本のストライプで表示）'
+        : it.desc || '装備中';
       btn.textContent = '装備中';
       btn.disabled = true;
     }
