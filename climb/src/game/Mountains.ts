@@ -365,7 +365,7 @@ const K2_STAGES: MountainDef[] = [
     ];
     return {
       ...SUMMIT_STAGES.k2,
-      stageKey: 'k2-1', stageName: 'アブルッツィ稜 下部', goalName: 'C1', goal: 'camp', startHours: 5,
+      stageKey: 'k2-1', seracZone: undefined, stageName: 'アブルッツィ稜 下部', goalName: 'C1', goal: 'camp', startHours: 5,
       o2: 'none', cloudAlt: 4600,
       campAltitude: 5000, summitAltitude: 6050, campName: 'ベースキャンプ', routeName: 'ゴドウィン・オースティン氷河',
       flatRidges: [1],
@@ -397,7 +397,7 @@ const K2_STAGES: MountainDef[] = [
     ];
     return {
       ...SUMMIT_STAGES.k2,
-      stageKey: 'k2-2', stageName: 'ハウスのチムニー', goalName: 'C2', goal: 'camp', startHours: 5,
+      stageKey: 'k2-2', seracZone: undefined, stageName: 'ハウスのチムニー', goalName: 'C2', goal: 'camp', startHours: 5,
       o2: 'none', cloudAlt: 5300,
       campAltitude: 6050, summitAltitude: 6700, campName: 'C1', routeName: 'アブルッツィ稜',
       worldHeight: 193, faceSlope: 1.5, crestWidth: 5, floor: -320, seed: 6050, baseWind: 24,
@@ -425,7 +425,7 @@ const K2_STAGES: MountainDef[] = [
     ];
     return {
       ...SUMMIT_STAGES.k2,
-      stageKey: 'k2-3', stageName: 'ブラック・ピラミッド', goalName: 'C3', goal: 'camp', startHours: 5,
+      stageKey: 'k2-3', seracZone: undefined, stageName: 'ブラック・ピラミッド', goalName: 'C3', goal: 'camp', startHours: 5,
       o2: 'none', cloudAlt: 5800,
       campAltitude: 6700, summitAltitude: 7200, campName: 'C2', routeName: 'ブラック・ピラミッド',
       worldHeight: 148, faceSlope: 1.45, crestWidth: 7, floor: -360, seed: 6700, baseWind: 28,
@@ -453,7 +453,7 @@ const K2_STAGES: MountainDef[] = [
     ];
     return {
       ...SUMMIT_STAGES.k2,
-      stageKey: 'k2-4', stageName: 'ショルダー', goalName: 'C4 ショルダー', goal: 'camp', startHours: 6,
+      stageKey: 'k2-4', seracZone: undefined, stageName: 'ショルダー', goalName: 'C4 ショルダー', goal: 'camp', startHours: 6,
       o2: 'stage', cloudAlt: 6200,
       campAltitude: 7200, summitAltitude: 7600, campName: 'C3', routeName: 'アブルッツィ稜 上部',
       worldHeight: 119, faceSlope: 1.2, crestWidth: 18, floor: -380, seed: 7200, baseWind: 32,
