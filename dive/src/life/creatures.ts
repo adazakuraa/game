@@ -21,6 +21,7 @@ type Agent = {
   alarm: number;
   yaw: number;
   fixed?: boolean;
+  col?: THREE.Color;
 };
 
 export type SpeciesRuntime = {
@@ -36,7 +37,7 @@ export type SpeciesRuntime = {
   slot: number;
 };
 
-const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster', 'gardenEel']);
+const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster', 'gardenEel', 'inv']);
 const _m = new THREE.Matrix4();
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -77,12 +78,14 @@ function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Pai
       return { geo: buildCrustacean({}), paint: new Paint(tw, th) };
     case 'nudi':
       return { geo: buildNudibranch(), paint: new Paint(tw, th) };
+    case 'inv':
+      return { geo: def.build!(), paint: new Paint(tw, th) };
     default:
       throw new Error('no geometry for ' + def.kind);
   }
 }
 
-function makeMaterial(def: SpeciesDef, map: THREE.Texture): THREE.MeshStandardMaterial {
+function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THREE.MeshStandardMaterial {
   const m = def.mat ?? {};
   const translucent = m.translucent !== undefined;
   const mat = new THREE.MeshStandardMaterial({
@@ -101,6 +104,9 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture): THREE.MeshStandardMa
   const glow = new THREE.Color(m.glow ?? 0x000000);
   if (def.fish?.bendY) mat.defines = { BEND_Y: '' };
   if (def.id === 'atolla') mat.defines = { ...(mat.defines ?? {}), GLOW_SPIN: '' };
+  if (def.rainbow) mat.defines = { ...(mat.defines ?? {}), RAINBOW: '' };
+  const scaly = def.kind === 'fish' || def.kind === 'gardenEel';
+  if (scaly) mat.defines = { ...(mat.defines ?? {}), FISH_SCALES: '' };
   return underwaterMaterial(mat, {
     key: 'cr-' + def.kind + (translucent ? '-t' : ''),
     caustic: 0.9,
@@ -110,9 +116,11 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture): THREE.MeshStandardMa
       uPulse: { value: new THREE.Vector2(...pulse) },
       uGlowCol: { value: glow },
       uGlowAmt: { value: 1 },
+      uUvAspect: { value: uvAspect },
+      uFishSize: { value: def.size },
     },
-    vertexHead: `attribute float aBend; attribute float aFlap; attribute float aPulse; attribute float aGlow;
-      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow;`,
+    vertexHead: `attribute float aBend; attribute float aFlap; attribute float aPulse; attribute float aGlow; attribute float aFin;
+      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin;`,
     vertexBody: `
       float ph = 0.0;
       #ifdef USE_INSTANCING
@@ -130,11 +138,40 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture): THREE.MeshStandardMa
       transformed.xz *= 1.0 - pu * uPulse.y * aPulse;
       transformed.y += max( pu, 0.0 ) * uPulse.y * aPulse * 0.25;
       vGlow = aGlow;
+      vFin = aFin;
       #ifdef GLOW_SPIN
         vGlow *= 0.15 + pow( 0.5 + 0.5 * sin( atan( position.z, position.x ) * 2.0 - uTime * 4.0 ), 3.0 ) * 1.6;
       #endif`,
-    fragHead: 'uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow;',
-    fragEmissive: `totalEmissiveRadiance += uGlowCol * vGlow * uGlowAmt * ( 2.2 + 0.6 * sin( uTime * 2.7 ) );`,
+    fragHead: 'uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; uniform float uUvAspect; uniform float uFishSize;',
+    fragFuncs: `
+      #if defined( FISH_SCALES ) && defined( USE_MAP )
+      float fishScale( vec2 uv ) {
+        vec2 q = uv * vec2( 58.0, 58.0 * uUvAspect );
+        float row = floor( q.y );
+        q.x += mod( row, 2.0 ) * 0.5;
+        vec2 f = fract( q ) - vec2( 0.62, 0.5 );
+        return smoothstep( 0.66, 0.15, length( f * vec2( 0.85, 1.0 ) ) );
+      }
+      #endif`,
+    fragDiffuse: `
+      #if defined( FISH_SCALES ) && defined( USE_MAP )
+      if ( vFin < 0.5 ) diffuseColor.rgb *= 0.96 + 0.06 * fishScale( vMapUv );
+      else if ( vFin < 1.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * ( 0.88 + 0.18 * abs( sin( vMapUv.y * 150.0 ) ) ), 0.7 );
+      #endif`,
+    fragBeforeLights: `
+      #if defined( FISH_SCALES ) && defined( USE_MAP )
+      {
+        float hb = vFin < 0.5 ? fishScale( vMapUv ) * uFishSize * 0.0012 : vFin < 1.5 ? abs( sin( vMapUv.y * 150.0 ) ) * uFishSize * 0.0015 : 0.0;
+        normal = uwBump( normal, hb );
+      }
+      #endif`,
+    fragEmissive: `
+      #ifdef RAINBOW
+        vec3 hue = 0.5 + 0.5 * cos( 6.2831 * ( vUwPos.y * 4.0 - uTime * 0.9 + vec3( 0.0, 0.33, 0.67 ) ) );
+        totalEmissiveRadiance += hue * vGlow * 1.4;
+      #else
+        totalEmissiveRadiance += uGlowCol * vGlow * uGlowAmt * ( 2.2 + 0.6 * sin( uTime * 2.7 ) );
+      #endif`,
   });
 }
 
@@ -171,6 +208,7 @@ export class Creatures {
     else if (reg === 'wallSpots') p = fromList(homes.wallSpots);
     else if (reg === 'sandSpots') p = fromList(homes.sandSpots);
     else if (reg === 'grassSpots') p = fromList(homes.grassSpots);
+    else if (reg === 'bommieSpots') p = fromList(homes.bommieSpots);
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;
@@ -256,6 +294,7 @@ export class Creatures {
   }
 
   private altitude(def: SpeciesDef): number {
+    if (def.kind === 'inv' && (def.behavior === 'bottom' || def.behavior === 'static')) return 0.0;
     switch (def.behavior) {
       case 'bottom': return def.kind === 'isopod' ? 0.02 : def.kind === 'dumbo' ? 0.6 : 0.35;
       case 'static': return def.kind === 'ray' ? 0.02 : 0;
@@ -305,9 +344,10 @@ export class Creatures {
           a.p.y = heightAt(a.p.x, a.p.z) - 0.12 * a.s;
           a.fixed = true;
         } else {
-          // goby hovering over its burrow
+          // goby hovering over its burrow (or a tube worm fixed on coral)
           a.p.set(g.home.x + (r() - 0.5) * 1.2, 0, g.home.z + (r() - 0.5) * 1.2);
-          a.p.y = heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+          a.p.y = def.anchorHome ? g.home.y + (r() - 0.5) * 0.2 : heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+          if (def.anchorHome) a.fixed = true;
         }
       } else if (def.behavior === 'crevice') {
         const idx = (i * 7 + 3) % homes.crevices.length;
@@ -321,10 +361,11 @@ export class Creatures {
         a.fixed = true;
       } else if (def.behavior === 'static') {
         a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * 3, 0, (r() - 0.5) * 3));
-        if (def.region === 'rockSpots' || def.region === 'coralTops') a.p.copy(g.home);
+        if (def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots') a.p.copy(g.home);
         else a.p.y = heightAt(a.p.x, a.p.z) + this.altitude(def);
         if (def.kind === 'none') a.p.set(VENT.x, heightAt(VENT.x, VENT.z) + 1.5, VENT.z);
       }
+      if (def.instColors) a.col = new THREE.Color(def.instColors[Math.floor(r() * def.instColors.length)]);
       rt.agents.push(a);
     }
     for (const g of rt.groups) rt.bounds.expandByPoint(g.home);
@@ -336,11 +377,13 @@ export class Creatures {
       const tex = new THREE.CanvasTexture(paint.c);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 4;
-      const mat = makeMaterial(def, tex);
+      const lay = paint.fish;
+      const mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
       const mesh = new THREE.InstancedMesh(geo, mat, def.count);
       mesh.frustumCulled = false;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.name = def.id;
+      if (def.instColors) { mesh.setColorAt(0, new THREE.Color(1, 1, 1)); }
       rt.mesh = mesh;
       this.group.add(mesh);
       if (def.mat?.glow) {
@@ -408,9 +451,10 @@ export class Creatures {
     const dx = a.p.x - this.viewPos.x, dy = a.p.y - this.viewPos.y, dz = a.p.z - this.viewPos.z;
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
     const reach = s * 1.5 + 2;
-    if (d > 52 + s * 3) return;
+    if (d > (s < 0.12 ? 20 : s < 0.35 ? 34 : s < 1 ? 46 : 52 + s * 3)) return;
     if (d > reach && (dx * this.viewDir.x + dy * this.viewDir.y + dz * this.viewDir.z) < -reach) return;
     const i = rt.slot++;
+    if (a.col) rt.mesh!.setColorAt(i, a.col);
     if (rt.def.behavior === 'buried') {
       _v.copy(a.p);
       _v.y -= a.retract * s * 1.05;
@@ -479,11 +523,11 @@ export class Creatures {
       if (a.g !== gi) continue;
       if (def.behavior === 'static') {
         a.p.copy(p);
-        if (def.region !== 'rockSpots' && def.region !== 'coralTops') { a.p.x += (r() - 0.5) * 3; a.p.z += (r() - 0.5) * 3; a.p.y = heightAt(a.p.x, a.p.z) + this.altitude(def); }
+        if (def.region !== 'rockSpots' && def.region !== 'coralTops' && def.region !== 'bommieSpots') { a.p.x += (r() - 0.5) * 3; a.p.z += (r() - 0.5) * 3; a.p.y = heightAt(a.p.x, a.p.z) + this.altitude(def); }
         a.alarm = 0;
       } else if (def.behavior === 'buried') {
         a.p.set(p.x + (r() - 0.5) * 1.2, 0, p.z + (r() - 0.5) * 1.2);
-        a.p.y = heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+        a.p.y = def.anchorHome ? p.y + (r() - 0.5) * 0.2 : heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
         a.retract = 0;
       } else {
         a.p.copy(g.c).add(a.off);
@@ -578,7 +622,7 @@ export class Creatures {
           a.retract += (want - a.retract) * Math.min(1, dt * (want ? 6 : 0.35));
           // face roughly toward the current (gobies hover and slowly turn)
           a.yaw = def.region === 'eelPatch' ? 0.6 + Math.sin(a.ph) * 0.4 : a.ph + Math.sin(this.time * 0.3 + a.ph) * 0.6;
-          if (def.region !== 'eelPatch') a.p.y = heightAt(a.p.x, a.p.z) + 0.1 + a.s * 0.3 + Math.sin(this.time * 1.3 + a.ph) * 0.02;
+          if (def.region !== 'eelPatch' && !def.anchorHome) a.p.y = heightAt(a.p.x, a.p.z) + 0.1 + a.s * 0.3 + Math.sin(this.time * 1.3 + a.ph) * 0.02;
           this.orient(rt, a, 1);
           this.writeInstance(rt, a, i);
           continue;
@@ -654,6 +698,7 @@ export class Creatures {
       rt.mesh.visible = rt.slot > 0;
       if (rt.halo) { rt.halo.visible = rt.slot > 0; rt.halo.geometry.setDrawRange(0, rt.slot); }
       rt.mesh.instanceMatrix.needsUpdate = true;
+      if (rt.mesh.instanceColor) rt.mesh.instanceColor.needsUpdate = true;
       if (rt.halo) rt.halo.geometry.attributes.position.needsUpdate = true;
     }
   }

@@ -3,8 +3,8 @@ import type { FishShape, RayShape } from './models';
 import type { Paint } from './paint';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
-export type Kind = 'fish' | 'ray' | 'jelly' | 'squid' | 'octopus' | 'dumbo' | 'turtle' | 'lobster' | 'isopod' | 'nudi' | 'gardenEel' | 'none';
-export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots';
+export type Kind = 'fish' | 'ray' | 'jelly' | 'squid' | 'octopus' | 'dumbo' | 'turtle' | 'lobster' | 'isopod' | 'nudi' | 'gardenEel' | 'inv' | 'none';
+export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots';
 /** Micro-habitat: where in the 3D reef structure a species lives and how it reacts. */
 export type Habitat = 'coralHover' | 'coralPick' | 'reefRoam' | 'midwater' | 'wall' | 'under' | 'perch' | 'burrow' | 'sandForage' | 'seagrass' | 'surface' | 'cleaner' | 'rockyRoam';
 
@@ -40,6 +40,13 @@ export type SpeciesDef = {
   spread?: number;
   hab?: Habitat;
   habLabel?: string;
+  /** custom geometry builder (kind 'inv') */
+  build?: () => import('three').BufferGeometry;
+  /** per-individual colour variants (multiplied with the texture) */
+  instColors?: string[];
+  /** buried-type animals sit at their home point (e.g. on coral) instead of on the sand */
+  anchorHome?: boolean;
+  rainbow?: boolean;
 };
 
 const fins = (p: Paint, c: string) => p.fill(c);
@@ -422,7 +429,8 @@ export const SPECIES: SpeciesDef[] = [
 ];
 
 import { MORE_SPECIES } from './species2';
-SPECIES.push(...MORE_SPECIES);
+import { INVERTS } from './species3';
+SPECIES.push(...MORE_SPECIES, ...INVERTS);
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
 export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];

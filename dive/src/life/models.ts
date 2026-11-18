@@ -9,7 +9,7 @@ import { mulberry32 } from '../utils/noise';
  * Creatures face +Z, length ~1 (instance scale sets real size).
  */
 
-const ATTRS = ['aBend', 'aFlap', 'aPulse', 'aGlow'] as const;
+const ATTRS = ['aBend', 'aFlap', 'aPulse', 'aGlow', 'aFin'] as const;
 type Part = THREE.BufferGeometry;
 
 export function setAttr(g: Part, name: string, fn: (x: number, y: number, z: number) => number) {
@@ -229,6 +229,7 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
     const c = new THREE.SphereGeometry(1, 16, 6);
     c.scale(s.ceph / 2, H * 0.12, 0.06);
     c.translate(0, H * 0.05, 0.43);
+    c.userData.eye = true;
     parts.push(c);
   }
   if (s.lure) {
@@ -249,6 +250,7 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
       const e = new THREE.SphereGeometry(er, 8, 6);
       e.scale(0.5, 1, 1);
       e.translate((W / 2) * env(et) * 0.92 * side, topAt(et) * 0.22, et - 0.5);
+      e.userData.eye = true;
       parts.push(e);
     }
   }
@@ -266,8 +268,10 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
   yMax *= 1.02;
   const zMax = 0.5 + (s.lure ? 0.08 : 0.01);
   const uvFn = (x: number, y: number, z: number): [number, number] => [(z - zMin) / (zMax - zMin), (y + yMax) / (2 * yMax)];
-  parts.forEach((g) => {
+  parts.forEach((g, i) => {
     if (!g.attributes.aBend) setAttr(g, 'aBend', (_x, _y, z) => bendW(z));
+    // 0 = scaled body, 1 = fin (rays), 2 = eye / smooth parts
+    if (!g.attributes.aFin) setAttr(g, 'aFin', () => (i === 0 ? 0 : g.userData.eye ? 2 : 1));
   });
   const geo = finalize(parts, uvFn);
   return { geo, layout: { zMin, zMax, yMax, env, shape: s } };
@@ -574,7 +578,8 @@ export function buildTurtle(): THREE.BufferGeometry {
 
 // --------------------------------------------------------------------------- crustaceans / slugs / eels
 
-export function buildCrustacean(opts: { lobster?: boolean }): THREE.BufferGeometry {
+export function buildCrustacean(opts: { lobster?: boolean; shrimp?: boolean }): THREE.BufferGeometry {
+  if (opts.shrimp) return buildShrimp();
   const parts: Part[] = [];
   const segs = opts.lobster ? 7 : 8;
   for (let i = 0; i < segs; i++) {
@@ -637,4 +642,304 @@ export function buildNudibranch(): THREE.BufferGeometry {
     parts.push(g);
   }
   return finalize(parts, (x, _y, z) => [x * 1.4 + 0.5, z + 0.5]);
+}
+
+// --------------------------------------------------------------------------- invertebrates
+
+/** Sea cucumber: bumpy flattened sausage along Z. Optional swimming skirt (aFlap). */
+export function buildCucumber(opts: { papillae?: number; skirt?: boolean; legs?: boolean } = {}): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const prof: THREE.Vector2[] = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16;
+    prof.push(new THREE.Vector2(Math.max(0.004, Math.sin(Math.PI * t) ** 0.6 * 0.11), (t - 0.5) * 1.0));
+  }
+  const body = new THREE.LatheGeometry(prof, 14);
+  body.rotateX(Math.PI / 2);
+  const p = body.attributes.position as THREE.BufferAttribute;
+  const pap = opts.papillae ?? 0.25;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const bump = 1 + pap * Math.max(0, Math.sin(z * 37 + Math.atan2(y, x) * 5)) * Math.max(0, Math.sin(z * 23 - Math.atan2(y, x) * 3));
+    p.setXYZ(i, x * bump, (y > 0 ? y * 0.85 * bump : y * 0.35) + 0.06, z);
+  }
+  body.computeVertexNormals();
+  parts.push(body);
+  if (opts.skirt) {
+    for (const side of [-1, 1]) {
+      const sk = flatPoly([[0.0, -0.4], [0.12, -0.3], [0.14, 0.2], [0.0, 0.42]], (a, b) => [side * (0.08 + a), 0.05, b]);
+      setAttr(sk, 'aFlap', (x) => Math.min(1, Math.abs(x) * 6));
+      parts.push(sk);
+    }
+  }
+  if (opts.legs) {
+    for (let i = 0; i < 10; i++) {
+      for (const side of [-1, 1]) {
+        const l = new THREE.CylinderGeometry(0.008, 0.014, 0.07, 4);
+        l.translate(side * 0.09, 0.02, -0.38 + i * 0.08);
+        setAttr(l, 'aBend', () => 0.2);
+        parts.push(l);
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      const l = new THREE.CylinderGeometry(0.006, 0.012, 0.12, 4);
+      l.rotateX(-0.5);
+      l.translate((i - 1.5) * 0.04, 0.18, 0.3);
+      parts.push(l);
+    }
+  }
+  return finalize(parts, (x, _y, z) => [x * 2.2 + 0.5, z + 0.5]);
+}
+
+/** Sea star. arms 5..16; spines adds crown-of-thorns style cones. */
+export function buildStar(opts: { arms: number; arm: number; core: number; thick: number; sharp?: number; spines?: number; curl?: number }): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const A = opts.arms;
+  const R = (t: number) => opts.core + opts.arm * Math.pow(Math.abs(Math.cos((A * t) / 2)), opts.sharp ?? 1.6);
+  const NR = 7, NT = A * 10;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  pos.push(0, opts.thick, 0);
+  for (let i = 1; i <= NR; i++) {
+    for (let j = 0; j < NT; j++) {
+      const t = (j / NT) * Math.PI * 2;
+      const rr = (i / NR) * R(t);
+      const f = i / NR;
+      const y = opts.thick * (1 - f * f) * (0.6 + 0.4 * (R(t) / (opts.core + opts.arm))) + (opts.curl ?? 0) * f * f * (rr / (opts.core + opts.arm));
+      pos.push(Math.cos(t) * rr, y, Math.sin(t) * rr);
+    }
+  }
+  for (let j = 0; j < NT; j++) idx.push(0, 1 + ((j + 1) % NT), 1 + j);
+  for (let i = 1; i < NR; i++)
+    for (let j = 0; j < NT; j++) {
+      const a = 1 + (i - 1) * NT + j, b = 1 + (i - 1) * NT + ((j + 1) % NT);
+      const c = a + NT, d = b + NT;
+      idx.push(a, b, c, b, d, c);
+    }
+  const top = new THREE.BufferGeometry();
+  top.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  top.setIndex(idx);
+  top.computeVertexNormals();
+  parts.push(top);
+  const r = mulberry32(A * 7);
+  for (let k = 0; k < (opts.spines ?? 0); k++) {
+    const t = r() * Math.PI * 2;
+    const rr = Math.sqrt(r()) * R(t) * 0.9;
+    const s = new THREE.ConeGeometry(0.008, 0.06, 4);
+    s.rotateX((r() - 0.5) * 0.8);
+    s.rotateZ((r() - 0.5) * 0.8);
+    s.translate(Math.cos(t) * rr, opts.thick * (1 - (rr / R(t)) ** 2) + 0.025, Math.sin(t) * rr);
+    parts.push(s);
+  }
+  const M = opts.core + opts.arm;
+  return finalize(parts, (x, _y, z) => [x / (2 * M) + 0.5, z / (2 * M) + 0.5]);
+}
+
+/** Sea urchin: squashed test with radiating spines. */
+export function buildUrchin(opts: { spine: number; n: number; thin?: number }): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const body = new THREE.SphereGeometry(0.5, 14, 10);
+  body.scale(1, 0.62, 1);
+  body.translate(0, 0.28, 0);
+  parts.push(body);
+  const r = mulberry32(5);
+  for (let i = 0; i < opts.n; i++) {
+    const u = r() * 2 - 0.35;
+    const th = r() * Math.PI * 2;
+    const dir = new THREE.Vector3(Math.cos(th) * Math.sqrt(1 - Math.min(1, u * u)), u, Math.sin(th) * Math.sqrt(1 - Math.min(1, u * u))).normalize();
+    if (dir.y < -0.2) continue;
+    const len = opts.spine * (0.7 + r() * 0.5);
+    const c = new THREE.ConeGeometry(opts.thin ?? 0.025, len, 3);
+    c.translate(0, len / 2, 0);
+    c.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+    c.translate(dir.x * 0.45, 0.28 + dir.y * 0.28, dir.z * 0.45);
+    setAttr(c, 'aBend', (_x, y) => Math.max(0, y - 0.5) * 0.15);
+    parts.push(c);
+  }
+  return finalize(parts, (x, y, z) => [x * 0.5 + 0.5, Math.min(1, y)]);
+}
+
+/** Giant clam: fluted shell bowl with a zig-zag gape; colourful mantle bulging out of the top. */
+export function buildClam(opts: { mantle: boolean }): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const NZ = 24, NA = 16;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let j = 0; j <= NZ; j++) {
+    const t = j / NZ;
+    const z = (t - 0.5) * 1.0;
+    const half = Math.sin(Math.PI * t) ** 0.6;
+    const rim = 0.36 * half + 0.05 * Math.sin(t * Math.PI * 14) * half; // zig-zag gape
+    for (let i = 0; i <= NA; i++) {
+      const a = (i / NA) * Math.PI; // 0..pi around the bottom
+      const flute = 1 + 0.09 * Math.cos(a * 9);
+      const x = Math.cos(a) * 0.3 * half * flute;
+      const y = rim - Math.sin(a) * 0.36 * half * flute;
+      pos.push(x, y, z);
+    }
+  }
+  for (let j = 0; j < NZ; j++)
+    for (let i = 0; i < NA; i++) {
+      const a = j * (NA + 1) + i, b2 = a + NA + 1;
+      idx.push(a, b2, a + 1, a + 1, b2, b2 + 1);
+    }
+  const shell = new THREE.BufferGeometry();
+  shell.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  shell.setIndex(idx);
+  shell.computeVertexNormals();
+  parts.push(shell);
+  if (opts.mantle) {
+    const m = new THREE.SphereGeometry(0.5, 22, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    m.scale(0.36, 0.1, 0.92);
+    const p = m.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), z = p.getZ(i);
+      p.setX(i, x * (1 + 0.18 * Math.sin(z * 26)));
+    }
+    m.translate(0, 0.3, 0);
+    m.computeVertexNormals();
+    setAttr(m, 'aPulse', () => 0.4);
+    parts.push(m);
+  }
+  return finalize(parts, (x, y, z) => [z + 0.5, y > 0.3 ? 0.62 + x * 1.3 : 0.1 + Math.max(0, y + 0.1) * 0.8]);
+}
+
+/** Christmas tree worm: two spiral plumes. */
+export function buildTreeWorm(): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  for (const side of [-1, 1]) {
+    for (let k = 0; k < 6; k++) {
+      const r0 = 0.3 - k * 0.045;
+      const ring = new THREE.ConeGeometry(r0, 0.16, 10, 1, true);
+      ring.translate(side * 0.28, 0.1 + k * 0.13, 0);
+      setAttr(ring, 'aBend', (_x, y) => y * 0.2);
+      parts.push(ring);
+    }
+  }
+  return finalize(parts, (x, y) => [x * 0.5 + 0.5, y]);
+}
+
+/** Feather star / crinoid / basket star: arms radiating from a cup, optional stalk. */
+export function buildFeather(opts: { arms: number; len: number; stalk?: number; curl?: number; width?: number }): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const st = opts.stalk ?? 0;
+  if (st > 0) {
+    const s = new THREE.CylinderGeometry(0.02, 0.03, st, 6);
+    s.translate(0, st / 2, 0);
+    parts.push(s);
+  }
+  const cup = new THREE.SphereGeometry(0.08, 8, 6);
+  cup.translate(0, st + 0.04, 0);
+  parts.push(cup);
+  const r = mulberry32(opts.arms * 13 + st * 100);
+  for (let i = 0; i < opts.arms; i++) {
+    const a = (i / opts.arms) * Math.PI * 2 + r() * 0.2;
+    const len = opts.len * (0.8 + r() * 0.3);
+    const segs = 8;
+    const pts: [number, number][] = [];
+    const w = opts.width ?? 0.035;
+    for (let k = 0; k <= segs; k++) pts.push([k / segs, w * (1 - (k / segs) * 0.7)]);
+    for (let k = segs; k >= 0; k--) pts.push([k / segs, -w * (1 - (k / segs) * 0.7)]);
+    const arm = flatPoly(pts, (u, v) => {
+      const t = u;
+      const elev = 0.9 - t * (opts.curl ?? 1.6);
+      const d = len * t;
+      return [Math.cos(a) * d * Math.cos(elev * 0.6) + Math.sin(a) * v, st + 0.06 + Math.sin(elev) * d * 0.6, Math.sin(a) * d * Math.cos(elev * 0.6) - Math.cos(a) * v];
+    });
+    setAttr(arm, 'aBend', (x, y, z) => Math.min(1, Math.hypot(x, z) / len) * 0.8);
+    parts.push(arm);
+  }
+  return finalize(parts, (x, y, z) => [Math.hypot(x, z) / (opts.len + 0.1), (Math.atan2(z, x) / (Math.PI * 2) + 0.5)]);
+}
+
+/** Hermit crab in a spiral shell. */
+export function buildHermit(): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const pts: THREE.Vector2[] = [];
+  for (let i = 0; i <= 12; i++) {
+    const t = i / 12;
+    pts.push(new THREE.Vector2(0.28 * Math.sin(Math.PI * Math.min(1, t * 1.1)) * (1 - t * 0.5) + 0.01, t * 0.7));
+  }
+  const shell = new THREE.LatheGeometry(pts, 12);
+  const p = shell.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i);
+    const tw = y * 5;
+    const x = p.getX(i), z = p.getZ(i);
+    p.setXYZ(i, x * Math.cos(tw) - z * Math.sin(tw) * 0.3, y, z * Math.cos(tw) + x * Math.sin(tw) * 0.3);
+  }
+  shell.rotateX(-Math.PI / 2 + 0.3);
+  shell.translate(0, 0.25, -0.15);
+  shell.computeVertexNormals();
+  parts.push(shell);
+  for (const side of [-1, 1]) {
+    const claw = new THREE.SphereGeometry(0.07, 8, 6);
+    claw.scale(0.8, 0.6, 1.4);
+    claw.translate(side * 0.08, 0.08, 0.32);
+    parts.push(claw);
+    for (let k = 0; k < 2; k++) {
+      const leg = new THREE.CylinderGeometry(0.012, 0.018, 0.22, 4);
+      leg.rotateZ(side * 0.9);
+      leg.translate(side * 0.14, 0.06, 0.2 - k * 0.08);
+      setAttr(leg, 'aBend', () => 0.3);
+      parts.push(leg);
+    }
+    const ant = new THREE.CylinderGeometry(0.003, 0.006, 0.25, 3);
+    ant.rotateX(Math.PI / 2 - 0.5);
+    ant.translate(side * 0.03, 0.2, 0.42);
+    parts.push(ant);
+  }
+  return finalize(parts, (x, y, z) => [x + 0.5, y > 0.12 || z < 0.1 ? 0.5 + y * 0.6 : 0.2]);
+}
+
+/** Comb jelly / pyrosome / tunicate: translucent spindle with glow meridians. */
+export function buildSpindle(opts: { len: number; rad: number; rows: number; open?: boolean }): THREE.BufferGeometry {
+  const pts: THREE.Vector2[] = [];
+  for (let i = 0; i <= 14; i++) {
+    const t = i / 14;
+    const r = Math.sin(Math.PI * t) ** 0.7 * opts.rad + (opts.open && t > 0.9 ? opts.rad * 0.5 : 0);
+    pts.push(new THREE.Vector2(Math.max(0.004, r), (t - 0.5) * opts.len));
+  }
+  const g = new THREE.LatheGeometry(pts, Math.max(16, opts.rows * 3));
+  setAttr(g, 'aGlow', (x, _y, z) => {
+    const a = Math.atan2(z, x);
+    return Math.pow(Math.max(0, Math.cos(a * opts.rows)), 12);
+  });
+  setAttr(g, 'aPulse', (x, _y, z) => Math.min(1, Math.hypot(x, z) / opts.rad) * 0.5);
+  return finalize([g], (x, y, z) => [Math.atan2(z, x) / (Math.PI * 2) + 0.5, y / opts.len + 0.5]);
+}
+
+function buildShrimp(): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  for (let i = 0; i < 7; i++) {
+    const t = i / 6;
+    const s = new THREE.SphereGeometry(1, 10, 6);
+    s.scale(0.07 * (1 - t * 0.4), 0.08 * (1 - t * 0.5), 0.09);
+    const arch = Math.sin(t * Math.PI) * 0.06;
+    s.translate(0, 0.1 + arch, 0.3 - t * 0.55);
+    parts.push(s);
+  }
+  const tail = flatPoly([[-0.06, 0], [0.06, 0], [0.09, -0.12], [-0.09, -0.12]], (a, b) => [a, 0.1, -0.28 + b]);
+  parts.push(tail);
+  for (const side of [-1, 1]) {
+    const ant = new THREE.CylinderGeometry(0.002, 0.005, 0.8, 3);
+    ant.rotateX(Math.PI / 2 - 0.35);
+    ant.rotateY(side * 0.3);
+    ant.translate(side * 0.12, 0.28, 0.65);
+    setAttr(ant, 'aBend', () => 0.4);
+    parts.push(ant);
+    const claw = new THREE.CylinderGeometry(0.012, 0.016, 0.3, 4);
+    claw.rotateX(Math.PI / 2 - 0.2);
+    claw.rotateY(side * 0.5);
+    claw.translate(side * 0.1, 0.1, 0.42);
+    parts.push(claw);
+    for (let k = 0; k < 4; k++) {
+      const leg = new THREE.CylinderGeometry(0.005, 0.008, 0.16, 3);
+      leg.rotateZ(side * 1.0);
+      leg.translate(side * 0.08, 0.04, 0.2 - k * 0.07);
+      setAttr(leg, 'aBend', () => 0.2);
+      parts.push(leg);
+    }
+  }
+  return finalize(parts, (x, _y, z) => [x * 2 + 0.5, z + 0.5]);
 }

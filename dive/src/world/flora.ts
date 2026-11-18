@@ -51,54 +51,84 @@ function rockGeometry(seed: number, detail = 2, squash = 0.7): THREE.BufferGeome
   return g;
 }
 
+function tipColors(geo: THREE.BufferGeometry, f: (y: number, i: number) => number) {
+  const n = geo.attributes.position.count;
+  const cols = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const t = Math.min(1, Math.max(0, f(geo.attributes.position.getY(i), i)));
+    const k = t * t;
+    cols[i * 3] = 0.42 + 0.58 * k;
+    cols[i * 3 + 1] = 0.4 + 0.6 * k;
+    cols[i * 3 + 2] = 0.36 + 0.64 * k;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+}
+
+/** Branching (staghorn-like) Acropora: crooked, tapering branches ending in pale growing tips. */
 function branchingCoral(seed: number, levels: number, spread: number, thick: number): THREE.BufferGeometry {
   const r = mulberry32(seed);
   const parts: THREE.BufferGeometry[] = [];
   const up = new THREE.Vector3(0, 1, 0);
-  const grow = (start: THREE.Vector3, dir: THREE.Vector3, len: number, rad: number, lvl: number) => {
-    const end = start.clone().addScaledVector(dir, len);
-    const geo = new THREE.CylinderGeometry(rad * 0.72, rad, len, 5, 1, true);
+  const seg = (start: THREE.Vector3, dir: THREE.Vector3, len: number, r0: number, r1: number, t0: number, t1: number) => {
+    const geo = new THREE.CylinderGeometry(r1, r0, len, 6, 1, true);
     geo.translate(0, len / 2, 0);
-    const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
-    geo.applyQuaternion(q);
+    geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(up, dir));
     geo.translate(start.x, start.y, start.z);
-    const t = 1 - lvl / levels;
-    const cols = new Float32Array(geo.attributes.position.count * 3);
-    for (let i = 0; i < geo.attributes.position.count; i++) {
-      const tip = Math.min(1, t + (geo.attributes.position.getY(i) - start.y) / 3);
-      cols[i * 3] = 0.45 + 0.55 * tip * tip;
-      cols[i * 3 + 1] = 0.42 + 0.58 * tip * tip;
-      cols[i * 3 + 2] = 0.38 + 0.62 * tip * tip;
-    }
-    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    tipColors(geo, (y) => t0 + (t1 - t0) * Math.min(1, Math.max(0, (y - start.y) / Math.max(0.01, len * dir.y))));
+    geo.deleteAttribute('uv');
     parts.push(geo);
-    if (lvl <= 0) {
-      const cap = new THREE.SphereGeometry(rad * 0.75, 5, 3);
-      cap.translate(end.x, end.y, end.z);
-      const cc = new Float32Array(cap.attributes.position.count * 3).fill(1);
-      cap.setAttribute('color', new THREE.BufferAttribute(cc, 3));
-      cap.deleteAttribute('uv');
-      parts.push(cap);
-      return;
-    }
-    const n = 2 + (r() < 0.15 ? 1 : 0);
+    return start.clone().addScaledVector(dir, len);
+  };
+  const grow = (start: THREE.Vector3, dir: THREE.Vector3, len: number, rad: number, lvl: number) => {
+    const t = 1 - lvl / (levels + 1);
+    // two crooked sub-segments per branch
+    const d1 = dir.clone().add(new THREE.Vector3((r() - 0.5) * 0.35, 0, (r() - 0.5) * 0.35)).normalize();
+    const mid = seg(start, d1, len * 0.5, rad, rad * 0.86, t, t + 0.08);
+    const d2 = dir.clone().add(new THREE.Vector3((r() - 0.5) * 0.35, 0.1, (r() - 0.5) * 0.35)).normalize();
+    const end = seg(mid, d2, len * 0.5, rad * 0.86, rad * (lvl <= 0 ? 0.32 : 0.72), t + 0.08, lvl <= 0 ? 1.1 : t + 0.16);
+    if (lvl <= 0) return;
+    const n = 2 + (r() < 0.3 ? 1 : 0);
     for (let i = 0; i < n; i++) {
-      const d = dir.clone();
+      const d = d2.clone();
       d.x += (r() - 0.5) * spread;
       d.z += (r() - 0.5) * spread;
-      d.y += 0.25;
+      d.y += 0.3;
       d.normalize();
-      grow(end, d, len * (0.72 + r() * 0.2), rad * 0.74, lvl - 1);
+      grow(end, d, len * (0.7 + r() * 0.22), rad * 0.72, lvl - 1);
     }
   };
-  const trunks = 3 + Math.floor(r() * 2);
+  const trunks = 3 + Math.floor(r() * 3);
   for (let i = 0; i < trunks; i++) {
     const a = r() * Math.PI * 2;
-    const d = new THREE.Vector3(Math.cos(a) * 0.45, 1, Math.sin(a) * 0.45).normalize();
-    grow(new THREE.Vector3(Math.cos(a) * 0.15, -0.05, Math.sin(a) * 0.15), d, 0.42 + r() * 0.2, thick, levels);
+    const d = new THREE.Vector3(Math.cos(a) * 0.5, 1, Math.sin(a) * 0.5).normalize();
+    grow(new THREE.Vector3(Math.cos(a) * 0.12, -0.05, Math.sin(a) * 0.12), d, 0.36 + r() * 0.18, thick, levels);
   }
-  parts.forEach((p) => p.deleteAttribute('uv'));
   return mergeGeometries(parts)!;
+}
+
+/** Corymbose / digitate Acropora: a low cushion bristling with short upright fingers. */
+function corymboseCoral(seed: number): THREE.BufferGeometry {
+  const r = mulberry32(seed);
+  const parts: THREE.BufferGeometry[] = [];
+  const base = new THREE.SphereGeometry(0.5, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  base.scale(1, 0.32, 1);
+  tipColors(base, () => 0.2);
+  base.deleteAttribute('uv');
+  parts.push(base);
+  for (let i = 0; i < 70; i++) {
+    const a = r() * Math.PI * 2;
+    const d = Math.sqrt(r()) * 0.46;
+    const h = 0.12 + r() * 0.14 - d * 0.1;
+    const c = new THREE.CylinderGeometry(0.007, 0.018, h, 5, 1, true);
+    c.translate(0, h / 2, 0);
+    c.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(a) * d * 0.9, 0, -Math.cos(a) * d * 0.9)));
+    const y0 = 0.16 * Math.sqrt(Math.max(0, 1 - (d / 0.5) ** 2));
+    c.translate(Math.cos(a) * d, y0, Math.sin(a) * d);
+    tipColors(c, (y) => 0.25 + (y - y0) / h);
+    c.deleteAttribute('uv');
+    parts.push(c);
+  }
+  return mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)))!;
 }
 
 function tableCoral(): THREE.BufferGeometry {
@@ -403,13 +433,15 @@ export type Homes = {
   sandSpots: THREE.Vector3[];
   /** seagrass meadow points */
   grassSpots: THREE.Vector3[];
+  /** surfaces of coral colonies on the bommies */
+  bommieSpots: THREE.Vector3[];
 };
 
 export class Flora {
   readonly group = new THREE.Group();
   private sets: ScatterSet[] = [];
   private mats: THREE.Material[] = [];
-  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [] };
+  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [] };
   boat: THREE.Group;
   carpetCount = 0;
   private landmarks: THREE.Object3D[] = [];
@@ -537,7 +569,7 @@ export class Flora {
       const c = [color(0.1, 0.35, 0.55), color(0.28, 0.3, 0.5), color(0.08, 0.45, 0.5), color(0.6, 0.2, 0.55)][Math.floor(r() * 4)];
       return { m: placeMatrix(x, z, 0.5 + r() * 1.1, r, 0.6, 0.15), c };
     }));
-    const stagVariants = [branchingCoral(11, 4, 0.9, 0.026), branchingCoral(12, 3, 0.8, 0.024), branchingCoral(13, 3, 1.4, 0.032)];
+    const stagVariants = [branchingCoral(11, 3, 0.9, 0.03), branchingCoral(12, 3, 0.75, 0.026), corymboseCoral(13)];
     const coralPalette = [
       [0.08, 0.5, 0.42], // brown
       [0.82, 0.5, 0.5], // purple
@@ -553,13 +585,13 @@ export class Flora {
       const pts = sample(200, [-200, 200, 125, 345], reefOk, 30);
       add(g, coralMat, pts.map(([x, z]) => {
         const p = coralPalette[Math.floor(r() * coralPalette.length)];
-        return { m: placeMatrix(x, z, 0.6 + r() * 0.9, r, 0.3, 0.05), c: color(p[0], p[1], p[2]) };
+        return { m: placeMatrix(x, z, vi === 2 ? 0.9 + r() * 1.2 : 0.55 + r() * 0.6, r, 0.3, 0.05), c: color(p[0], p[1], p[2]) };
       }));
       // dense coral heads on bommies (higher points)
       const heads = sample(60, [-200, 200, 130, 340], (x, z) => reefOk(x, z) && bommieAt(x, z) > 2.2 + vi * 0.3, 40);
       add(g, coralMat, heads.map(([x, z]) => {
         const p = coralPalette[Math.floor(r() * coralPalette.length)];
-        const sc = 0.8 + r() * 0.9;
+        const sc = vi === 2 ? 1.0 + r() * 1.2 : 0.7 + r() * 0.6;
         this.homes.coralTops.push(new THREE.Vector3(x, heightAt(x, z) + sc * topY * 0.95, z));
         return { m: placeMatrix(x, z, sc, r, 0.2, 0.05), c: color(p[0], p[1], p[2]) };
       }));
@@ -609,7 +641,12 @@ export class Flora {
           const px = x + (r() - 0.5) * step, pz = z + (r() - 0.5) * step;
           if (zoneAt(px, pz) !== 'reef') continue;
           const bom = bommieAt(px, pz);
-          if (bom < 0.7 || r() > Math.min(0.8, bom * 0.35)) continue;
+          if (bom < 0.7) continue;
+          if (r() > Math.min(0.8, bom * 0.35)) {
+            // a free patch of bommie surface between colonies: anchor for clams, sea stars, tube worms
+            if (r() < 0.15) this.homes.bommieSpots.push(new THREE.Vector3(px, heightAt(px, pz) + 0.02, pz));
+            continue;
+          }
           const pc = coralPalette[Math.floor(r() * coralPalette.length)];
           const c = color(pc[0], pc[1] * 0.95, pc[2] * 0.9);
           const t = r();
@@ -619,10 +656,10 @@ export class Flora {
         }
       }
       const smallBrain = rockGeometry(31, 1, 0.6);
-      const smallStag = branchingCoral(41, 2, 1.0, 0.04);
-      add(bushG, bushMat, carpetBush, 45, 30, rockGeometry(21, 2, 0.8));
-      add(smallBrain, brainMat, carpetBrain, 45, 30, rockGeometry(31, 2, 0.6));
-      add(smallStag, coralMat, carpetStag, 40, 30);
+      const smallStag = corymboseCoral(41);
+      add(bushG, bushMat, carpetBush, 42, 48, rockGeometry(21, 2, 0.8));
+      add(smallBrain, brainMat, carpetBrain, 42, 48, rockGeometry(31, 2, 0.6));
+      add(smallStag, coralMat, carpetStag, 38, 48);
       this.carpetCount = carpetBush.length + carpetBrain.length + carpetStag.length;
     }
     const softMat = underwaterMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: THREE.DoubleSide }), {
