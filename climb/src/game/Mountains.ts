@@ -277,7 +277,7 @@ const EVEREST_STAGES: MountainDef[] = [
         extend(route, [[1000, 120, -90], [800, 90, -30]], [[-200, -10, 140]]),
         ...walls(route, 420, 380, 0),
         // Lhotse face closing the head of the valley
-        [[-300, -500, 520], [-280, 0, 480], [-300, 500, 520]],
+        [[-460, -500, 540], [-440, 0, 500], [-460, 500, 540]],
       ],
       landmarks: [
         { name: 'C1', routeIndex: 0, note: '6,065m' },

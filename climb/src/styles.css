@@ -319,7 +319,7 @@ h1 span { color: transparent; -webkit-text-stroke: 2px var(--ink); }
 #tutorial.dim { background: rgba(4, 6, 10, 0.62); }
 #tut-spot {
   position: absolute; border-radius: 8px; border: 2px solid var(--signal);
-  box-shadow: 0 0 0 9999px rgba(4, 6, 10, 0.62); pointer-events: none; transition: all 0.25s ease;
+  box-shadow: 0 0 0 9999px rgba(4, 6, 10, 0.62); pointer-events: none;
 }
 #tut-card {
   position: absolute; padding: 14px 16px; border-radius: 8px; background: rgba(12, 15, 20, 0.97);
