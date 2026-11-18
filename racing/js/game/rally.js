@@ -179,10 +179,10 @@ export class RallyGame extends GameBase {
     const [x, y] = this.miniP(c.x, c.z);
     m.beginPath();
     m.arc(x, y, 7, 0, Math.PI * 2);
-    m.fillStyle = '#ffb000';
+    m.fillStyle = '#' + this.look.color.toString(16).padStart(6, '0');
     m.fill();
-    m.lineWidth = 2;
-    m.strokeStyle = '#000';
+    m.lineWidth = 2.5;
+    m.strokeStyle = '#fff';
     m.stroke();
     this.tickMessages(dt);
   }

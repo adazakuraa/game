@@ -319,15 +319,16 @@ export class CircuitGame extends GameBase {
     const m = this.mini.getContext('2d');
     m.clearRect(0, 0, 200, 200);
     m.drawImage(this.miniBg, 0, 0);
-    for (const e of r.entries) {
+    // 自分は車のボディ色に白い縁取り。ほかの車より上に描く
+    for (const e of [...r.entries.filter((x) => x !== r.player), r.player]) {
       const p = r.pose(e);
       const [x, y] = this.miniP(p.x, p.z);
       m.beginPath();
       m.arc(x, y, e.kind === 'player' ? 7 : 5, 0, Math.PI * 2);
-      m.fillStyle = e.kind === 'player' ? '#ffb000' : '#' + e.color.toString(16).padStart(6, '0');
+      m.fillStyle = '#' + e.color.toString(16).padStart(6, '0');
       m.fill();
-      m.lineWidth = 2;
-      m.strokeStyle = '#000';
+      m.lineWidth = e.kind === 'player' ? 2.5 : 2;
+      m.strokeStyle = e.kind === 'player' ? '#fff' : '#000';
       m.stroke();
     }
     this.tickMessages(dt);

@@ -152,15 +152,16 @@ export class BikeGame extends GameBase {
     const m = this.mini.getContext('2d');
     m.clearRect(0, 0, 200, 200);
     m.drawImage(this.miniBg, 0, 0);
-    for (const e of r.entries) {
+    // 自分はジャージの色に白い縁取り。ほかの選手より上に描く
+    for (const e of [...r.entries.filter((x) => x !== r.player), r.player]) {
       const p = r.pose(e);
       const [x, y] = this.miniP(p.x, p.z);
       m.beginPath();
       m.arc(x, y, e.kind === 'player' ? 7 : 4, 0, Math.PI * 2);
-      m.fillStyle = e.kind === 'player' ? '#ffb000' : css(e.color);
+      m.fillStyle = css(e.color);
       m.fill();
-      m.lineWidth = 1.5;
-      m.strokeStyle = '#000';
+      m.lineWidth = e.kind === 'player' ? 2.5 : 1.5;
+      m.strokeStyle = e.kind === 'player' ? '#fff' : '#000';
       m.stroke();
     }
     this.tickMessages(dt);
