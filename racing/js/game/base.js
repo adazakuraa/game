@@ -17,7 +17,6 @@ export class GameBase {
     this.camVel = new THREE.Vector3();
     this.reward = null;
     this.latS = 0;
-    this.lonS = 0;
     this.feel = { gear: 1, thr: 0, heat: 0, curbT: 0, flameCd: 0 };
     this.speedCv = $('#speedfx');
     this.speedCtx = this.speedCv ? this.speedCv.getContext('2d') : null;
@@ -98,7 +97,6 @@ export class GameBase {
     $('#hDelta').className = 't-delta';
     $('#hBestL').textContent = 'BEST';
     $('#hNotes').classList.remove('show');
-    $('#hClock').className = 'clock';
     $('#fTcs').textContent = 'TCS';
     $('#fAbs').textContent = 'ABS';
     $('#hGear').style.color = '';
@@ -130,31 +128,30 @@ export class GameBase {
     this.camYaw = snap ? p.psi : this.camYaw + d * Math.min(1, dt * (cfg.follow ?? 5.5));
     const fx = Math.sin(this.camYaw), fz = Math.cos(this.camYaw);
     const sp = p.speed || 0;
-    // 加速で少し引き、ブレーキで寄る。コーナーでは外側へ振られる
+    // コーナーでは少し外側へ振られる（前後の距離は一定に保ち、車の見た目の大きさを変えない）
     const k3 = snap ? 1 : Math.min(1, dt * 3);
     this.latS += (Math.max(-16, Math.min(16, p.latG || 0)) - this.latS) * k3;
-    this.lonS += (Math.max(-16, Math.min(10, p.longG || 0)) - this.lonS) * k3;
-    const dist = cfg.dist * (1 + this.lonS * 0.014);
+    const dist = cfg.dist;
     const side = -this.latS * 0.045;
     const lx = Math.cos(this.camYaw), lz = -Math.sin(this.camYaw);
-    const pos = new THREE.Vector3(p.x - fx * dist + lx * side, p.y + cfg.hgt - this.lonS * 0.012, p.z - fz * dist + lz * side);
+    const pos = new THREE.Vector3(p.x - fx * dist + lx * side, p.y + cfg.hgt, p.z - fz * dist + lz * side);
     const look = new THREE.Vector3(p.x + fx * (cfg.lookAhead ?? 4), p.y + (cfg.lookY ?? 0.95), p.z + fz * (cfg.lookAhead ?? 4));
     let fov = (cfg.fov ?? 58) + sp * (cfg.fovSpeed ?? 0.16);
     if (camera.userData.portrait) fov += 22;
-    if (!snap) {
-      const k = Math.min(1, dt * (cfg.smooth ?? 14));
-      this.camVel.copy(pos).sub(this.camPos).divideScalar(Math.max(dt, 1e-3));
-      this.camPos.lerp(pos, k);
-    } else {
-      this.camPos.copy(pos);
-    }
+    // 車からの相対位置をなめらかにする（絶対位置で後追いすると、速度が変わるたびに車との距離が伸び縮みする）
+    const off = pos.sub(new THREE.Vector3(p.x, p.y, p.z));
+    const prev = this.camPos.clone();
+    if (!snap && this.camOff) this.camOff.lerp(off, Math.min(1, dt * (cfg.smooth ?? 14)));
+    else this.camOff = off.clone();
+    this.camPos.set(p.x, p.y, p.z).add(this.camOff);
+    if (!snap) this.camVel.copy(this.camPos).sub(prev).divideScalar(Math.max(dt, 1e-3));
+    camera.position.copy(this.camPos);
     if (this.shake > 0) {
-      this.camPos.x += (Math.random() - 0.5) * this.shake * 0.3;
-      this.camPos.y += (Math.random() - 0.5) * this.shake * 0.3;
+      camera.position.x += (Math.random() - 0.5) * this.shake * 0.3;
+      camera.position.y += (Math.random() - 0.5) * this.shake * 0.3;
       this.shake = Math.max(0, this.shake - dt * 2.5);
     }
-    if (p.rough) this.camPos.y += (Math.random() - 0.5) * 0.04 * Math.min(1, sp / 20) * p.rough;
-    camera.position.copy(this.camPos);
+    if (p.rough) camera.position.y += (Math.random() - 0.5) * 0.04 * Math.min(1, sp / 20) * p.rough;
     camera.lookAt(look);
     camera.rotateZ(-this.latS * 0.0028); // 横Gで少し傾く
     camera.fov += (fov - camera.fov) * (snap ? 1 : Math.min(1, dt * 3));

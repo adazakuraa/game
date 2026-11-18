@@ -60,7 +60,7 @@ export class AICar {
   }
 
   // others: 他車の配列（{progress, d, v, x, z}）
-  // forceVt: 指定すると目標速度をこの値にする（ボートのスタート前の速度調整など）
+  // forceVt: 指定すると目標速度をこの値にする
   update(dt, others, myProgress, started, forceVt = null) {
     const tr = this.track;
     if (!started) { this.updatePose(dt); return; }

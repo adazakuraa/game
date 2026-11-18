@@ -10,7 +10,6 @@ import { garage, raceReward } from '../garage.js';
 import { store } from '../store.js';
 
 const css = (n) => '#' + n.toString(16).padStart(6, '0');
-const YELLOW = 0xffd200; // 首位の選手のジャージ
 
 export class BikeGame extends GameBase {
   constructor(track, opts) {
@@ -33,7 +32,6 @@ export class BikeGame extends GameBase {
       this.scene.add(m.root);
       this.models.set(e, m);
     }
-    this.leader = null;
     this.incidents = 0;
     this.mini = $('#minimap');
     this.miniBg = document.createElement('canvas');
@@ -111,13 +109,6 @@ export class BikeGame extends GameBase {
   render(dt) {
     const r = this.race;
     const pr = r.player.car;
-    // 首位の選手は黄色いジャージ
-    const st = r.standings();
-    if (st[0] !== this.leader) {
-      if (this.leader) this.models.get(this.leader).setJersey(this.models.get(this.leader).baseColor);
-      this.leader = st[0];
-      this.models.get(this.leader).setJersey(YELLOW);
-    }
     for (const [e, m] of this.models) {
       const rd = r.pose(e);
       rd.dist = (rd.dist || 0) + (dt > 0 ? rd.v * dt : 0);
@@ -130,7 +121,7 @@ export class BikeGame extends GameBase {
     if (dt > 0) this.fx.update(dt, C.camera.position, this.camVel);
     this.speedFx(dt, pr.v * 3.2);
     C.renderer.render(this.scene, C.camera);
-    this.updateHUD(dt, st);
+    this.updateHUD(dt, r.standings());
     this.updateAudio();
   }
 
@@ -156,7 +147,7 @@ export class BikeGame extends GameBase {
     $('#hPos').textContent = st.indexOf(r.player) + 1;
     this._n = (this._n || 0) + 1;
     if (this._n % 10 === 0) {
-      $('#hStand').innerHTML = st.map((e, i) => `<div class="${e === r.player ? 'me' : ''}"><b>${i + 1}</b><span class="dot" style="background:${i === 0 ? '#ffd200' : css(e.color)}"></span>${e.kind === 'player' ? 'YOU' : e.name}</div>`).join('');
+      $('#hStand').innerHTML = st.map((e, i) => `<div class="${e === r.player ? 'me' : ''}"><b>${i + 1}</b><span class="dot" style="background:${css(e.color)}"></span>${e.kind === 'player' ? 'YOU' : e.name}</div>`).join('');
     }
     const m = this.mini.getContext('2d');
     m.clearRect(0, 0, 200, 200);
@@ -196,7 +187,7 @@ export class BikeGame extends GameBase {
     const res = r.results();
     const me = res.find((x) => x.kind === 'player');
     const rw = this.reward;
-    const rows = res.map((x) => `<tr class="${x.kind === 'player' ? 'me' : ''}"><td class="p">${x.pos}</td><td><span class="sw" style="background:${x.pos === 1 ? '#ffd200' : css(x.color)}"></span>${x.kind === 'player' ? 'YOU' : x.name}</td><td class="t">${x.pos === 1 ? fmt(x.time) : '+' + (x.time - res[0].time).toFixed(3)}${x.est ? '*' : ''}</td></tr>`).join('');
+    const rows = res.map((x) => `<tr class="${x.kind === 'player' ? 'me' : ''}"><td class="p">${x.pos}</td><td><span class="sw" style="background:${css(x.color)}"></span>${x.kind === 'player' ? 'YOU' : x.name}</td><td class="t">${x.pos === 1 ? fmt(x.time) : '+' + (x.time - res[0].time).toFixed(3)}${x.est ? '*' : ''}</td></tr>`).join('');
     const coinHtml = rw
       ? `<div class="coin-rows">${rw.rows.map((x) => `<div class="r"><span>${x.label}</span><span><i class="coin"></i>+${x.coins}</span></div>`).join('')}<div class="r total"><span>獲得コイン</span><span><i class="coin"></i>+${rw.total}</span></div></div><div class="res-sub">所持コイン ${garage.coins}。ガレージでパーツを買えます</div>`
       : '';

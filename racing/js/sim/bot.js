@@ -54,11 +54,6 @@ export class BotDriver {
       this.input.throttle = 0;
       this.input.brake = Math.min(1, -err * 0.35);
     }
-    // ボート: 艇尾が滑り始めたらアクセルを緩める（うまい人の操作）
-    if (c.spec.T0) {
-      const sl = Math.abs(c.slipR);
-      this.input.throttle *= Math.max(0.1, 1 - Math.max(0, sl - 0.035) * 9);
-    }
     return this.input;
   }
 }
