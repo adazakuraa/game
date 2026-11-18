@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { MountainDef } from '../game/Mountains';
 import type { MountainField } from './Terrain';
 import type { Route } from './Route';
@@ -108,25 +108,18 @@ export class Props {
       const y1 = this.field.surfaceHeight(bx, bz) + 0.05;
       const g = new THREE.Group();
       g.name = 'ladderBridge';
-      const railGeo = new THREE.BoxGeometry(0.035, 0.07, len);
-      for (const side of [-0.22, 0.22]) {
-        const rail = new THREE.Mesh(railGeo, metal);
-        rail.position.set(side, 0, 0);
-        rail.castShadow = true;
-        g.add(rail);
-      }
-      const rungGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.44, 6).rotateZ(Math.PI / 2);
+      // One merged mesh per ladder keeps draw calls low.
+      const parts: THREE.BufferGeometry[] = [];
+      for (const side of [-0.22, 0.22]) parts.push(new THREE.BoxGeometry(0.035, 0.07, len).translate(side, 0, 0));
       for (let r = -half + 0.15; r < half; r += 0.3) {
-        const rung = new THREE.Mesh(rungGeo, metal);
-        rung.position.set(0, 0.0, r);
-        g.add(rung);
+        parts.push(new THREE.CylinderGeometry(0.014, 0.014, 0.44, 5).rotateZ(Math.PI / 2).translate(0, 0, r));
       }
+      const metalMesh = new THREE.Mesh(mergeGeometries(parts.map((p) => p.toNonIndexed())), metal);
+      metalMesh.castShadow = true;
+      g.add(metalMesh);
       // Lashings where ladder sections are tied together.
-      for (let k = -1; k <= 1; k += 2) {
-        const l = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.09, 0.08), lash);
-        l.position.set(0, 0, k * half * 0.33);
-        g.add(l);
-      }
+      const lashGeo = mergeGeometries([-1, 1].map((k) => new THREE.BoxGeometry(0.5, 0.09, 0.08).translate(0, 0, k * half * 0.33)));
+      g.add(new THREE.Mesh(lashGeo, lash));
       const ry = Math.atan2(c.routeX, c.routeZ);
       g.position.set(c.cx, (y0 + y1) / 2, c.cz);
       g.rotation.order = 'YXZ';
@@ -140,25 +133,32 @@ export class Props {
 
   /** Icefall seracs: tumbled towers of blue ice either side of the route. */
   private buildIceTowers(): void {
-    const geo = new THREE.BoxGeometry(1, 1, 1, 4, 6, 4);
+    // Fractured serac: displaced box with leaning faces, overhanging top and snow cap.
+    const g0 = new THREE.BoxGeometry(1, 1, 1, 7, 10, 7);
+    g0.deleteAttribute('normal');
+    g0.deleteAttribute('uv');
+    const geo = mergeVertices(g0, 1e-4);
     const n = new Noise2D(this.def.seed + 31);
     const pos = geo.getAttribute('position');
     const col = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      const k = 1 + n.noise(x * 2.1 + y * 1.3, z * 2.1) * 0.22;
-      pos.setXYZ(i, x * k, y + (y > 0.4 ? n.noise(x * 3, z * 3) * 0.12 : 0), z * k);
+      const f = n.noise(x * 2.3 + y * 1.7, z * 2.3 - y) * 0.28 + n.noise(x * 6, z * 6 + y * 4) * 0.08;
+      const lean = (y + 0.5) * 0.18;
+      const top = y > 0.35 ? (y - 0.35) * (0.6 + n.noise(x * 3, z * 3) * 0.8) : 0;
+      pos.setXYZ(i, x * (1 + f) + lean, y + top * 0.4 + n.noise(x * 4.1, z * 4.1) * (y > 0.4 ? 0.12 : 0.03), z * (1 + f));
     }
     geo.computeVertexNormals();
     const nrm = geo.getAttribute('normal');
     for (let i = 0; i < pos.count; i++) {
-      const top = nrm.getY(i) > 0.6 ? 1 : 0;
-      col[i * 3] = top ? 0.95 : 0.62;
-      col[i * 3 + 1] = top ? 0.97 : 0.8;
-      col[i * 3 + 2] = top ? 1.0 : 0.92;
+      const top = Math.min(1, Math.max(0, (nrm.getY(i) - 0.45) * 3));
+      const depth = 0.5 + 0.5 * (pos.getY(i) + 0.5);
+      col[i * 3] = top + (1 - top) * (0.42 + 0.25 * depth);
+      col[i * 3 + 1] = top + (1 - top) * (0.66 + 0.2 * depth);
+      col[i * 3 + 2] = top + (1 - top) * (0.84 + 0.12 * depth);
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, emissive: 0x061422 });
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.0, emissive: 0x05121e });
     const count = 120;
     const mesh = new THREE.InstancedMesh(geo, mat, count);
     const m4 = new THREE.Matrix4();
@@ -261,6 +261,8 @@ export class Props {
       pos.setXYZ(i, x * sag * 1.25, y * 0.82, z * sag);
     }
     tentGeo.computeVertexNormals();
+    const poleGeo = mergeGeometries([0, 1].map((p) =>
+      new THREE.TorusGeometry(1.26, 0.018, 4, 24, Math.PI).scale(1.25, 0.82, 1).rotateY(Math.PI / 4 + p * Math.PI / 2)));
     const spread = wide ? 2.2 : 1;
     for (let i = 0; i < count; i++) {
       // Tents line both sides of the track, ahead of and behind the start point.
@@ -276,12 +278,7 @@ export class Props {
       body.castShadow = true;
       body.receiveShadow = true;
       tent.add(body);
-      for (let p = 0; p < 2; p++) {
-        const arc = new THREE.Mesh(new THREE.TorusGeometry(1.26, 0.018, 4, 24, Math.PI), poleMat);
-        arc.rotation.y = Math.PI / 4 + p * Math.PI / 2;
-        arc.scale.set(1.25, 0.82, 1);
-        tent.add(arc);
-      }
+      tent.add(new THREE.Mesh(poleGeo, poleMat));
       const drift = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 6, 0, Math.PI * 2, 0, Math.PI / 2), snowMat);
       drift.scale.set(1.25, 0.12, 1.1);
       drift.position.y = -0.05;

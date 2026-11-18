@@ -60,6 +60,9 @@
           </div>
         </div>
 
+        <button id="map-btn" class="icon-btn" type="button" aria-label="地図を開く">
+          <svg viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z" fill="none" stroke-width="2"/><path d="M9 4v14M15 6v14" fill="none" stroke-width="2"/></svg>
+        </button>
         <button id="pause-btn" class="icon-btn" type="button" aria-label="一時停止">
           <svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
         </button>
@@ -118,7 +121,8 @@
         <div class="panel">
           <h2>一時停止</h2>
           <button id="resume-btn" class="primary" type="button">再開</button>
-          <button id="restart-btn" type="button">C4からやり直す</button>
+          <button id="help-btn" type="button">画面の見かた</button>
+          <button id="restart-btn" type="button">この区間をやり直す</button>
           <button id="quit-btn" type="button">山を選び直す</button>
         </div>
       </section>
@@ -132,6 +136,34 @@
           <button id="result-primary" class="primary" type="button">再挑戦</button>
           <button id="result-rest" class="hidden" type="button">休養して高度順応（+1日）</button>
           <button id="result-secondary" type="button">山を選び直す</button>
+        </div>
+      </section>
+
+      <section id="map-overlay" class="hidden" aria-label="地図">
+        <div class="map-panel">
+          <header class="map-head">
+            <h2 id="map-title">地図</h2>
+            <button id="map-close" type="button" aria-label="地図を閉じる">閉じる</button>
+          </header>
+          <canvas id="map-canvas" width="512" height="512"></canvas>
+          <div class="map-legend">
+            <span><i class="lg route"></i>ルート</span><span><i class="lg rope"></i>フィックスロープ</span>
+            <span><i class="lg ladder"></i>ハシゴ</span><span><i class="lg hazard"></i>落下物の危険帯</span>
+          </div>
+          <canvas id="profile-canvas" width="600" height="120"></canvas>
+        </div>
+      </section>
+
+      <section id="tutorial" class="hidden" aria-live="polite">
+        <div id="tut-spot"></div>
+        <div id="tut-card" role="dialog" aria-labelledby="tut-title">
+          <div class="tut-top"><span id="tut-count">1 / 1</span><button id="tut-skip" type="button">スキップ</button></div>
+          <h3 id="tut-title"></h3>
+          <p id="tut-body"></p>
+          <div class="tut-nav">
+            <button id="tut-prev" type="button">戻る</button>
+            <button id="tut-next" class="primary" type="button">次へ</button>
+          </div>
         </div>
       </section>
 

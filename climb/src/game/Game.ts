@@ -13,6 +13,8 @@ import { Physiology, Weather, BOTTLE_LITERS } from '../systems/Physiology';
 import { PostFX } from '../systems/PostFX';
 import { Audio } from '../systems/Audio';
 import { Hud, formatClock } from '../ui/Hud';
+import { MapView } from '../ui/MapView';
+import { Tutorial } from '../ui/Tutorial';
 import { createSeededRandom } from '../utils/random';
 import { clamp, smoothstep } from '../utils/noise';
 
@@ -91,6 +93,8 @@ export class Game {
   private readonly snow: Snow;
   private readonly viewmodel = new Viewmodel();
   private readonly breath = new Breath();
+  private readonly map = new MapView(() => this.map.show(false));
+  private tutorial!: Tutorial;
   private readonly headlamp = new THREE.SpotLight(0xfff1dc, 0, 70, 0.42, 0.5, 1.2);
   private readonly mobile: boolean;
   private world: World | null = null;
@@ -170,7 +174,9 @@ export class Game {
     this.input.bindButton(document.getElementById('o2-up')!, 'o2Up');
     this.input.bindButton(document.getElementById('o2-down')!, 'o2Down');
     this.input.bindButton(document.getElementById('pause-btn')!, 'pause');
+    this.input.bindButton(document.getElementById('map-btn')!, 'map');
 
+    this.tutorial = new Tutorial(this.mobile);
     this.setupMenus();
     this.buildStage(this.selected, 0);
     this.resize();
@@ -221,6 +227,11 @@ export class Game {
     });
     this.refreshContinue();
     document.getElementById('resume-btn')!.addEventListener('click', () => this.setPaused(false));
+    document.getElementById('help-btn')!.addEventListener('click', () => {
+      this.showScreen(null);
+      this.state = 'play';
+      this.openTutorial();
+    });
     document.getElementById('restart-btn')!.addEventListener('click', () => this.startRun());
     document.getElementById('quit-btn')!.addEventListener('click', () => this.toTitle());
     document.getElementById('result-primary')!.addEventListener('click', () => {
@@ -291,6 +302,7 @@ export class Game {
     this.buildStage(exp, 0);
     this.save();
     this.startRun();
+    if (!Tutorial.seen()) this.openTutorial();
   }
 
   /** Sleep at camp, then set off on the next leg in the morning. */
@@ -315,6 +327,18 @@ export class Game {
     this.save();
     this.audio.zip();
     this.showCamp(true);
+  }
+
+  private openTutorial(): void {
+    if (this.state === 'play' && this.world) this.updatePlay(0.0001); // fill the HUD with live values
+    this.input.enabled = false;
+    this.hud.root.classList.add('tut');
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.tutorial.start(() => {
+      this.hud.root.classList.remove('tut');
+      this.input.enabled = this.state === 'play';
+      if (!this.mobile && this.state === 'play') this.tryPointerLock();
+    });
   }
 
   private toTitle(): void {
@@ -380,6 +404,7 @@ export class Game {
     this.player.reset(0);
     this.weather = new Weather(this.rng, def.baseWind);
     this.env.setCloudY(altitudeToWorldY(def, def.cloudAlt));
+    this.map.build(def, field, route, props, EXPEDITIONS[id], stage, (y) => this.altitudeAt(y));
     const marks = def.landmarks.slice(1, -1).map((l) => route.waypointS[l.routeIndex] / route.length);
     this.hud.setMarks(marks);
     this.renderer.compile(this.scene, this.camera);
@@ -414,6 +439,7 @@ export class Game {
     for (const c of this.chunks) this.scene.remove(c.mesh);
     this.chunks.length = 0;
     for (const c of this.world.props.caches) { c.taken = false; c.mesh.visible = true; }
+    this.map.show(false);
     this.state = 'play';
     this.input.enabled = true;
     this.showScreen(null);
@@ -468,7 +494,11 @@ export class Game {
       if (this.state === 'play') this.setPaused(true);
       else if (this.state === 'paused') this.setPaused(false);
     }
-    if (this.state === 'play') this.updatePlay(dt);
+    if (intents.mapPressed && (this.state === 'play' || this.map.open)) this.map.show(!this.map.open);
+    if (this.state !== 'play' && this.map.open) this.map.show(false);
+    if (this.map.open && this.player) this.map.update(this.player.pos.x, this.player.pos.z, this.player.yaw, this.player.routeS);
+    if (this.state === 'play' && !this.tutorial.open) this.updatePlay(dt);
+    else if (this.tutorial.open && this.player) { this.updateCamera(0); this.updateEnvironment(0, this.weather.state.storm); }
     else if (this.state === 'dead') this.updateDead(dt);
     else if (this.state === 'title') this.updateTitle(dt);
     this.input.consumeEdges();
@@ -1124,6 +1154,18 @@ export class Game {
       case 'k2-bc': set('k2', 0.05, 7, 0, 0); break;
       case 'k2-chimney': set('k2', 0.55, 9, 0, 1); break;
       case 'k2-pyramid': set('k2', 0.5, 9, 0, 2); break;
+      case 'tutorial': {
+        set('everest', 0.0, 5.6, 0, 0);
+        this.player!.reset(0);
+        this.updatePlay(0.016);
+        this.openTutorial();
+        break;
+      }
+      case 'map':
+        set('everest', 0.35, 6.5, 0, 0);
+        this.map.show(true);
+        this.map.update(this.player!.pos.x, this.player!.pos.z, this.player!.yaw, this.player!.routeS);
+        break;
       case 'camp':
         set('everest', 0.995, 13, 0, 1);
         this.updatePlay(0.016);
