@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { bottomMaterial, heightAt, WORLD } from './layout';
 import { underwaterMaterial } from '../render/underwater';
-import { makeGroundDetail } from '../render/textures';
+import { baked } from '../render/baked';
 
 const CHUNK = 40;
 
@@ -14,19 +14,15 @@ export class Terrain {
   readonly radius = 95;
 
   constructor() {
-    const detail = makeGroundDetail();
-    detail.repeat.set(1, 1);
     this.material = underwaterMaterial(
       new THREE.MeshStandardMaterial({
         vertexColors: true,
-        roughness: 0.93,
+        roughness: 0.95,
         metalness: 0,
-        map: detail,
-        bumpMap: detail,
-        bumpScale: 1.4,
         envMapIntensity: 0.25,
       }),
       {
+        tri: { tex: baked().rock, scale: 0.3, strength: 1.4, albedo: 0.85, tex2: baked().sand, scale2: 0.42, mix2: 'smoothstep( 0.4, 0.6, vSand + ( uwNoise( vUwPos * 0.45 ) - 0.5 ) * 0.45 )' },
         key: 'terrain',
         vertexHead: 'attribute float aSand;\nvarying float vSand;',
         vertexBody: 'vSand = aSand;',
@@ -50,10 +46,8 @@ export class Terrain {
         fragDiffuse: `
   {
     // break tiling with a second, larger scale sample of the detail map
-    #ifdef USE_MAP
-      float big = texture2D( map, vUwPos.xz * 0.013 ).r;
-      diffuseColor.rgb *= 0.75 + big * 0.45;
-    #endif
+    float big = uwNoise( vUwPos * 0.06 ) * 0.6 + uwNoise( vUwPos * 0.21 ) * 0.4;
+    diffuseColor.rgb *= 0.8 + big * 0.35;
   }`,
       },
     );

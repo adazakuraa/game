@@ -112,7 +112,23 @@ type InjectOpts = {
   fragDiffuse?: string; // runs after <color_fragment>, may modify diffuseColor
   fragEmissive?: string; // runs after <emissivemap_fragment>, may add to totalEmissiveRadiance
   uniforms?: Record<string, { value: unknown }>;
+  /** Triplanar baked detail (RGB normal + A albedo) in world space. */
+  tri?: { tex: THREE.Texture; scale: number; strength: number; albedo: number; tex2?: THREE.Texture; scale2?: number; mix2?: string };
 };
+
+const TRI_FUNCS = /* glsl */ `
+vec4 uwTri( sampler2D T, vec3 P, vec3 N, float s, float k, out vec3 nW ) {
+  vec3 w = pow( abs( N ), vec3( 4.0 ) ); w /= dot( w, vec3( 1.0 ) );
+  vec4 tx = texture2D( T, P.zy * s ), ty = texture2D( T, P.xz * s ), tz = texture2D( T, P.xy * s );
+  vec3 nx = tx.xyz * 2.0 - 1.0, ny = ty.xyz * 2.0 - 1.0, nz = tz.xyz * 2.0 - 1.0;
+  nx.xy *= k; ny.xy *= k; nz.xy *= k;
+  nx = vec3( nx.xy + N.zy, abs( nx.z ) * N.x );
+  ny = vec3( ny.xy + N.xz, abs( ny.z ) * N.y );
+  nz = vec3( nz.xy + N.xy, abs( nz.z ) * N.z );
+  nW = normalize( nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z );
+  return tx * w.x + ty * w.y + tz * w.z;
+}
+`;
 
 /**
  * Inject underwater lighting into a stock MeshStandardMaterial: projected caustics on up-facing
@@ -121,6 +137,21 @@ type InjectOpts = {
  */
 export function underwaterMaterial<T extends THREE.MeshStandardMaterial>(mat: T, o: InjectOpts): T {
   const strength = o.caustic ?? 1;
+  if (o.tri) {
+    const t = o.tri;
+    o = { ...o };
+    o.uniforms = { ...(o.uniforms ?? {}), uTriTex: { value: t.tex }, uTriS: { value: t.scale }, uTriK: { value: t.strength }, uTriA: { value: t.albedo } };
+    if (t.tex2) Object.assign(o.uniforms, { uTriTex2: { value: t.tex2 }, uTriS2: { value: t.scale2 ?? t.scale } });
+    o.fragHead = `${o.fragHead ?? ''}\nuniform sampler2D uTriTex; uniform float uTriS; uniform float uTriK; uniform float uTriA;${t.tex2 ? ' uniform sampler2D uTriTex2; uniform float uTriS2;' : ''}`;
+    o.fragFuncs = TRI_FUNCS + (o.fragFuncs ?? '');
+    const mix2 = t.tex2 ? `{ vec3 n2; vec4 d2 = uwTri( uTriTex2, vUwPos, uwN0, uTriS2, uTriK, n2 ); float m2 = ${t.mix2 ?? '0.0'}; triD = mix( triD, d2, m2 ); triN = normalize( mix( triN, n2, m2 ) ); }` : '';
+    o.fragDiffuse = `vec3 uwN0 = normalize( vUwNrm ) * ( gl_FrontFacing ? 1.0 : -1.0 );
+      vec3 triN; vec4 triD = uwTri( uTriTex, vUwPos, uwN0, uTriS, uTriK, triN );
+      ${mix2}
+      diffuseColor.rgb *= mix( 1.0, triD.a * 1.45, uTriA );
+      ${o.fragDiffuse ?? ''}`;
+    o.fragBeforeLights = `normal = normalize( mat3( viewMatrix ) * triN );\n${o.fragBeforeLights ?? ''}`;
+  }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = UW.uTime;
     shader.uniforms.uSunDir = UW.uSunDir;

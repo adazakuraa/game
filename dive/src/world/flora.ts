@@ -3,6 +3,7 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { ARCH, bommieAt, heightAt, reefEdgeZ, rockyWeight, VENT, WRECK, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
 import { SWAY_VERTEX, underwaterMaterial } from '../render/underwater';
+import { baked } from '../render/baked';
 import { makeBlade, makeSeaFan } from '../render/textures';
 import { fbm2, mulberry32, simplex2 } from '../utils/noise';
 
@@ -392,14 +393,25 @@ export type Homes = {
   creviceR: number[];
   reefSpots: THREE.Vector3[];
   rockSpots: THREE.Vector3[];
+  /** top surface of branching coral heads (y = coral top) */
+  coralTops: THREE.Vector3[];
+  /** shaded space under table corals (y = mid-height under the plate) */
+  underTables: THREE.Vector3[];
+  /** points just off the drop-off wall face, with outward normal in w-less form */
+  wallSpots: THREE.Vector3[];
+  /** sand patches inside / beside the reef */
+  sandSpots: THREE.Vector3[];
+  /** seagrass meadow points */
+  grassSpots: THREE.Vector3[];
 };
 
 export class Flora {
   readonly group = new THREE.Group();
   private sets: ScatterSet[] = [];
   private mats: THREE.Material[] = [];
-  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [] };
+  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [] };
   boat: THREE.Group;
+  carpetCount = 0;
   private landmarks: THREE.Object3D[] = [];
   private smoke!: THREE.Points;
   private smokeData!: Float32Array;
@@ -412,6 +424,7 @@ export class Flora {
       new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 }),
       {
         key: 'rock',
+        tri: { tex: baked().rock, scale: 0.38, strength: 1.7, albedo: 0.9 },
         vertexHead: 'varying vec3 vObj;',
         vertexBody: 'vObj = position;',
         fragHead: 'varying vec3 vObj;',
@@ -422,30 +435,20 @@ export class Flora {
           // encrusting coralline patches
           float cor = smoothstep( 0.62, 0.7, uwNoise( vUwPos * 1.3 + 9.0 ) ) * smoothstep( -60.0, -4.0, vUwPos.y );
           diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.55, 0.3, 0.38 ), cor * 0.45 ); }`,
-        fragBeforeLights: `normal = uwBump( normal, uwNoise( vObj * 6.0 ) * 0.04 + uwNoise( vObj * 17.0 ) * 0.012 );`,
       },
     );
     const coralMat = underwaterMaterial(
       new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82 }),
       {
         key: 'coral',
-        vertexHead: 'varying vec3 vObj;',
-        vertexBody: 'vObj = position;',
-        fragHead: 'varying vec3 vObj;',
-        fragBeforeLights: `{ float pol = uwNoise( vObj * 38.0 ); normal = uwBump( normal, pol * 0.012 ); }`,
-        fragDiffuse: `{ float pol = uwNoise( vObj * 38.0 ); diffuseColor.rgb *= 0.78 + pol * 0.35; }`,
+        tri: { tex: baked().polyp, scale: 6.0, strength: 1.3, albedo: 0.7 },
       },
     );
     const brainMat = underwaterMaterial(
       new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75 }),
       {
         key: 'brain',
-        vertexHead: 'varying vec3 vObj;',
-        vertexBody: 'vObj = position;',
-        fragHead: 'varying vec3 vObj;',
-        fragFuncs: `float brainH( vec3 p ) { float w = uwNoise( p * 2.2 ) * 5.0 + uwNoise( p * 5.0 ) * 1.6; float s = sin( dot( p, vec3( 8.0, 6.5, 9.5 ) ) + w ); return smoothstep( -0.35, 0.35, s ); }`,
-        fragBeforeLights: `normal = uwBump( normal, brainH( vObj ) * 0.025 );`,
-        fragDiffuse: `diffuseColor.rgb *= 0.62 + 0.45 * brainH( vObj );`,
+        tri: { tex: baked().brain, scale: 1.3, strength: 1.6, albedo: 0.9 },
       },
     );
     const plantMat = (key: string, tex: THREE.Texture, amt: number, rough = 0.7) =>
@@ -477,10 +480,10 @@ export class Flora {
       new THREE.MeshStandardMaterial({ color: 0x3a3029, roughness: 0.97, emissive: 0x220800, emissiveIntensity: 0.2 }),
       {
         key: 'chimney',
+        tri: { tex: baked().rock, scale: 0.6, strength: 2.0, albedo: 0.9 },
         vertexHead: 'varying vec3 vObj;',
         vertexBody: 'vObj = position;',
         fragHead: 'varying vec3 vObj;',
-        fragBeforeLights: `normal = uwBump( normal, uwNoise( vObj * 3.0 ) * 0.08 + uwNoise( vObj * 9.0 ) * 0.03 );`,
         fragDiffuse: `{ float s = uwNoise( vObj * 1.5 ); diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.75, 0.55, 0.25 ), smoothstep( 0.6, 0.8, s ) * 0.6 ); }`,
       },
     );
@@ -488,7 +491,7 @@ export class Flora {
       new THREE.MeshStandardMaterial({ color: 0x6e4a32, roughness: 0.9, metalness: 0.2, side: THREE.DoubleSide }),
       {
         key: 'rust',
-        fragBeforeLights: `normal = uwBump( normal, uwNoise( vUwPos * 2.0 ) * 0.05 + uwNoise( vUwPos * 7.0 ) * 0.02 );`,
+        tri: { tex: baked().rock, scale: 0.5, strength: 1.2, albedo: 0.0 },
         fragDiffuse: `{ float n = uwNoise( vUwPos * 0.9 ); float m = uwNoise( vUwPos * 3.1 );
           diffuseColor.rgb = mix( vec3( 0.42, 0.26, 0.17 ), vec3( 0.25, 0.3, 0.22 ), smoothstep( 0.3, 0.7, n ) ) * ( 0.7 + m * 0.5 );
           float top = smoothstep( 0.3, 0.9, normalize( vUwNrm ).y );
@@ -509,9 +512,9 @@ export class Flora {
       return out;
     };
     const color = (h: number, s: number, l: number) => new THREE.Color().setHSL(h, s, l);
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40) => {
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40, hi?: THREE.BufferGeometry) => {
       if (!items.length) return;
-      const set = new ScatterSet(geo, mat, items, view, cell);
+      const set = new ScatterSet(geo, mat, items, view, cell, hi);
       this.sets.push(set);
       this.group.add(set.group);
     };
@@ -523,6 +526,7 @@ export class Flora {
       if (Math.hypot(x - GARDEN_EEL_PATCH.x, z - GARDEN_EEL_PATCH.z) < GARDEN_EEL_PATCH.r + 6) return false;
       return fbm2(x * 0.025, z * 0.025, 3) > 0.05 && zoneAt(x, z) === 'lagoon';
     });
+    this.homes.grassSpots.push(...grass.filter((_, i) => i % 12 === 0).map(([x, z]) => new THREE.Vector3(x, heightAt(x, z), z)));
     add(tuftG, grassMat, grass.map(([x, z]) => ({ m: placeMatrix(x, z, 0.8 + r() * 0.7, r, 0.5, 0.05), c: color(0.22 + r() * 0.05, 0.4, 0.4 + r() * 0.2) })), 45, 30);
 
     // ---- reef corals
@@ -533,7 +537,7 @@ export class Flora {
       const c = [color(0.1, 0.35, 0.55), color(0.28, 0.3, 0.5), color(0.08, 0.45, 0.5), color(0.6, 0.2, 0.55)][Math.floor(r() * 4)];
       return { m: placeMatrix(x, z, 0.5 + r() * 1.1, r, 0.6, 0.15), c };
     }));
-    const stagVariants = [branchingCoral(11, 4, 0.9, 0.035), branchingCoral(12, 3, 0.8, 0.03), branchingCoral(13, 3, 1.4, 0.045)];
+    const stagVariants = [branchingCoral(11, 4, 0.9, 0.026), branchingCoral(12, 3, 0.8, 0.024), branchingCoral(13, 3, 1.4, 0.032)];
     const coralPalette = [
       [0.08, 0.5, 0.42], // brown
       [0.82, 0.5, 0.5], // purple
@@ -544,6 +548,8 @@ export class Flora {
       [0.03, 0.65, 0.55], // orange-brown
     ];
     stagVariants.forEach((g, vi) => {
+      g.computeBoundingBox();
+      const topY = g.boundingBox!.max.y;
       const pts = sample(200, [-200, 200, 125, 345], reefOk, 30);
       add(g, coralMat, pts.map(([x, z]) => {
         const p = coralPalette[Math.floor(r() * coralPalette.length)];
@@ -553,23 +559,37 @@ export class Flora {
       const heads = sample(60, [-200, 200, 130, 340], (x, z) => reefOk(x, z) && bommieAt(x, z) > 2.2 + vi * 0.3, 40);
       add(g, coralMat, heads.map(([x, z]) => {
         const p = coralPalette[Math.floor(r() * coralPalette.length)];
-        return { m: placeMatrix(x, z, 0.8 + r() * 0.9, r, 0.2, 0.05), c: color(p[0], p[1], p[2]) };
+        const sc = 0.8 + r() * 0.9;
+        this.homes.coralTops.push(new THREE.Vector3(x, heightAt(x, z) + sc * topY * 0.95, z));
+        return { m: placeMatrix(x, z, sc, r, 0.2, 0.05), c: color(p[0], p[1], p[2]) };
       }));
       this.homes.reefSpots.push(...heads.map(([x, z]) => new THREE.Vector3(x, heightAt(x, z), z)));
     });
     const tableG = tableCoral();
     const tables = sample(110, [-200, 200, 140, 340], reefOk, 30);
-    add(tableG, coralMat, tables.map(([x, z]) => ({ m: placeMatrix(x, z, 0.9 + r() * 1.4, r, 0.1, 0), c: color(0.1 + r() * 0.1, 0.35, 0.55 + r() * 0.15) })));
+    add(tableG, coralMat, tables.map(([x, z]) => {
+      const sc = 0.9 + r() * 1.4;
+      this.homes.underTables.push(new THREE.Vector3(x, heightAt(x, z) + sc * 0.45, z));
+      return { m: placeMatrix(x, z, sc, r, 0.1, 0), c: color(0.1 + r() * 0.1, 0.35, 0.55 + r() * 0.15) };
+    }));
+    // habitat anchors: sand patches between bommies, wall face, seagrass
+    for (const [x, z] of sample(160, [-200, 200, 125, 350], (x, z) => (zoneAt(x, z) === 'reef' || zoneAt(x, z) === 'dropoff') && bommieAt(x, z) < 0.4 && slopeAt(x, z) < 0.2, 20))
+      this.homes.sandSpots.push(new THREE.Vector3(x, heightAt(x, z), z));
+    for (let i = 0; i < 140; i++) {
+      const x = -190 + r() * 380;
+      const zE = reefEdgeZ(x);
+      const z = zE + 2 + r() * 12;
+      const n = normalAt(x, z, new THREE.Vector3());
+      const off = new THREE.Vector3(n.x, 0, n.z).normalize().multiplyScalar(1.5 + r() * 2);
+      if (!isFinite(off.x)) off.set(0, 0, 1.5);
+      this.homes.wallSpots.push(new THREE.Vector3(x + off.x, heightAt(x, z) + 1.5, z + off.z));
+    }
 
     // ---- cauliflower (Pocillopora) bushes and leather corals fill the bommies
     const bushMat = underwaterMaterial(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 }), {
       key: 'bush',
-      vertexHead: 'varying vec3 vObj;',
-      vertexBody: 'vObj = position;',
-      fragHead: 'varying vec3 vObj;',
-      fragFuncs: 'float bushH( vec3 p ) { return uwNoise( p * 9.0 ) * 0.7 + uwNoise( p * 23.0 ) * 0.3; }',
-      fragBeforeLights: 'normal = uwBump( normal, bushH( vObj ) * 0.05 );',
-      fragDiffuse: 'diffuseColor.rgb *= 0.55 + 0.6 * bushH( vObj );',
+      tri: { tex: baked().polyp, scale: 9.0, strength: 1.6, albedo: 0.8 },
+      fragDiffuse: '{ float k = uwNoise( vUwPos * 14.0 ); diffuseColor.rgb *= 0.7 + 0.45 * k; }',
     });
     this.mats.push(bushMat);
     const bushG = rockGeometry(21, 1, 0.8);
@@ -578,6 +598,33 @@ export class Flora {
       const p = coralPalette[Math.floor(r() * coralPalette.length)];
       return { m: placeMatrix(x, z, 0.2 + r() * 0.4, r, 0.5, 0.03), c: color(p[0], p[1] * 0.9, p[2] * 0.95) };
     }));
+    // ---- dense coral carpet on the bommies (jittered grid, cheap meshes, culled per 40 m cell)
+    {
+      const carpetBush: ScatterItem[] = [];
+      const carpetBrain: ScatterItem[] = [];
+      const carpetStag: ScatterItem[] = [];
+      const step = 1.5;
+      for (let z = 128; z < 348; z += step) {
+        for (let x = -198; x < 198; x += step) {
+          const px = x + (r() - 0.5) * step, pz = z + (r() - 0.5) * step;
+          if (zoneAt(px, pz) !== 'reef') continue;
+          const bom = bommieAt(px, pz);
+          if (bom < 0.7 || r() > Math.min(0.8, bom * 0.35)) continue;
+          const pc = coralPalette[Math.floor(r() * coralPalette.length)];
+          const c = color(pc[0], pc[1] * 0.95, pc[2] * 0.9);
+          const t = r();
+          if (t < 0.5) carpetBush.push({ m: placeMatrix(px, pz, 0.25 + r() * 0.45, r, 0.7, 0.05), c });
+          else if (t < 0.78) carpetBrain.push({ m: placeMatrix(px, pz, 0.3 + r() * 0.5, r, 0.8, 0.12), c });
+          else carpetStag.push({ m: placeMatrix(px, pz, 0.35 + r() * 0.45, r, 0.4, 0.03), c });
+        }
+      }
+      const smallBrain = rockGeometry(31, 1, 0.6);
+      const smallStag = branchingCoral(41, 2, 1.0, 0.04);
+      add(bushG, bushMat, carpetBush, 45, 30, rockGeometry(21, 2, 0.8));
+      add(smallBrain, brainMat, carpetBrain, 45, 30, rockGeometry(31, 2, 0.6));
+      add(smallStag, coralMat, carpetStag, 40, 30);
+      this.carpetCount = carpetBush.length + carpetBrain.length + carpetStag.length;
+    }
     const softMat = underwaterMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: THREE.DoubleSide }), {
       key: 'soft',
       vertexBody: SWAY_VERTEX.replace('SWAY_AMT', '0.12'),

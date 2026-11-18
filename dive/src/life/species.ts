@@ -4,7 +4,9 @@ import type { Paint } from './paint';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
 export type Kind = 'fish' | 'ray' | 'jelly' | 'squid' | 'octopus' | 'dumbo' | 'turtle' | 'lobster' | 'isopod' | 'nudi' | 'gardenEel' | 'none';
-export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch';
+export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots';
+/** Micro-habitat: where in the 3D reef structure a species lives and how it reacts. */
+export type Habitat = 'coralHover' | 'coralPick' | 'reefRoam' | 'midwater' | 'wall' | 'under' | 'perch' | 'burrow' | 'sandForage' | 'seagrass' | 'surface' | 'cleaner' | 'rockyRoam';
 
 export type SpeciesDef = {
   id: string;
@@ -36,6 +38,8 @@ export type SpeciesDef = {
   mat?: { rough?: number; metal?: number; translucent?: number; glow?: number; emissive?: number; additive?: boolean };
   photoRange?: number;
   spread?: number;
+  hab?: Habitat;
+  habLabel?: string;
 };
 
 const fins = (p: Paint, c: string) => p.fill(c);
@@ -87,7 +91,7 @@ export const SPECIES: SpeciesDef[] = [
     hint: '海草のあいだやサンゴの根元をよたよた泳ぐ。',
     kind: 'fish', fish: { H: 0.5, W: 0.46, peak: 0.55, nose: 0.85, ped: 0.18, tail: 'round', tailL: 0.2, tailH: 0.32, dorsal: [{ a: 0.18, b: 0.3, h: 0.12 }], anal: [{ a: 0.18, b: 0.3, h: 0.1 }], pect: { t: 0.72, len: 0.08, wid: 0.06, down: 0.3 }, eyes: 0.12, eyeT: 0.82, rings: 8 },
     paint: (p) => { fins(p, '#e8c040'); p.shade('#f2d020', '#f6d830', '#f0e080'); p.spots(26, 0.012, 0.016, '#1a1a1a'); p.spots(26, 0.005, 0.007, '#fff'); p.eye(0.12, '#2a3040'); },
-    count: 8, groups: 6, behavior: 'solo', region: [-120, 100, 20, 200], speed: 0.25, flee: 2.5, swim: [3.2, 0.03, 4], photoRange: 7,
+    hab: 'seagrass', count: 8, groups: 6, behavior: 'solo', region: 'grassSpots', speed: 0.25, flee: 2.5, swim: [3.2, 0.03, 4], photoRange: 7,
   },
   {
     id: 'turtle', name: 'アオウミガメ', sci: 'Chelonia mydas', zone: 'lagoon', depth: [2, 20], size: 1.0, rarity: 2,
@@ -131,7 +135,7 @@ export const SPECIES: SpeciesDef[] = [
       p.clipBody(() => { p.g.fillStyle = '#0a0a20'; p.g.beginPath(); p.g.moveTo(p.U(0.38), p.V(0.12)); p.g.quadraticCurveTo(p.U(0.0), p.V(0.26), p.U(-0.3), p.V(0.05)); p.g.quadraticCurveTo(p.U(-0.38), p.V(-0.06), p.U(-0.3), p.V(-0.09)); p.g.quadraticCurveTo(p.U(-0.0), p.V(0.05), p.U(0.2), p.V(0.0)); p.g.quadraticCurveTo(p.U(0.35), p.V(-0.02), p.U(0.38), p.V(0.12)); p.g.fill(); p.g.fillStyle = '#f8d020'; p.g.fillRect(p.U(-0.5), p.V(0.04), p.U(-0.4) - p.U(-0.5), p.V(-0.04) - p.V(0.04)); });
       p.eye(0.11, '#222');
     },
-    count: 30, groups: 5, behavior: 'school', region: 'reefSpots', speed: 0.6, flee: 3, swim: [3.5, 0.05, 5], spread: 2.5,
+    hab: 'coralHover', count: 30, groups: 5, behavior: 'school', region: 'coralTops', speed: 0.6, flee: 3, swim: [3.5, 0.05, 5], spread: 2.5,
   },
   {
     id: 'moorishidol', name: 'ツノダシ', sci: 'Zanclus cornutus', zone: 'reef', depth: [3, 60], size: 0.2, rarity: 2,
@@ -147,7 +151,7 @@ export const SPECIES: SpeciesDef[] = [
       p.g.fillStyle = '#f4f2ea'; p.g.fillRect(p.U(-0.6), p.V(1.2), p.U(-0.1) - p.U(-0.6), p.V(0.5) - p.V(1.2));
       p.eye(0.07, '#333');
     },
-    count: 10, groups: 5, behavior: 'solo', region: 'reefSpots', speed: 0.5, flee: 3, swim: [2.4, 0.04, 4], spread: 1.2,
+    hab: 'coralPick', count: 10, groups: 5, behavior: 'solo', region: 'coralTops', speed: 0.5, flee: 3, swim: [2.4, 0.04, 4], spread: 1.2,
   },
   {
     id: 'butterfly', name: 'トゲチョウチョウウオ', sci: 'Chaetodon auriga', zone: 'reef', depth: [1, 30], size: 0.18, rarity: 1,
@@ -166,7 +170,7 @@ export const SPECIES: SpeciesDef[] = [
       p.g.fillStyle = '#111'; p.g.beginPath(); p.g.arc(p.U(-0.22), p.V(0.4), 4, 0, Math.PI * 2); p.g.fill();
       p.eye(0.08, '#111');
     },
-    count: 14, groups: 7, behavior: 'solo', region: 'reefSpots', speed: 0.4, flee: 2.8, swim: [2.8, 0.04, 4], spread: 1,
+    hab: 'coralPick', count: 14, groups: 7, behavior: 'solo', region: 'coralTops', speed: 0.4, flee: 2.8, swim: [2.8, 0.04, 4], spread: 1,
   },
   {
     id: 'parrotfish', name: 'ナンヨウブダイ', sci: 'Chlorurus microrhinos', zone: 'reef', depth: [2, 30], size: 0.65, rarity: 2,
@@ -179,7 +183,7 @@ export const SPECIES: SpeciesDef[] = [
       p.g.fillStyle = '#e8f0e0'; p.g.beginPath(); p.g.ellipse(p.U(0.49), p.V(-0.01), 5, 4, 0, 0, Math.PI * 2); p.g.fill();
       p.eye(0.1, '#e8a020');
     },
-    count: 6, groups: 3, behavior: 'school', region: [-180, 160, 140, 335], speed: 0.7, flee: 4, swim: [2.2, 0.06, 4], spread: 3,
+    hab: 'reefRoam', count: 6, groups: 3, behavior: 'school', region: [-180, 160, 140, 335], speed: 0.7, flee: 4, swim: [2.2, 0.06, 4], spread: 3,
   },
   {
     id: 'chromis', name: 'デバスズメダイ', sci: 'Chromis viridis', zone: 'reef', depth: [1, 12], size: 0.08, rarity: 1,
@@ -187,7 +191,7 @@ export const SPECIES: SpeciesDef[] = [
     hint: '枝サンゴの真上に雲のように群れている。',
     kind: 'fish', fish: { H: 0.38, W: 0.14, peak: 0.6, nose: 0.5, ped: 0.14, tail: 'fork', tailL: 0.28, tailH: 0.46, dorsal: [{ a: 0.2, b: 0.7, h: 0.1 }], anal: [{ a: 0.18, b: 0.42, h: 0.1 }], pect: { t: 0.7, len: 0.1, wid: 0.05, down: 0.4 }, eyes: 0.13, rings: 8, segs: 12 },
     paint: (p) => { fins(p, 'rgba(140,230,220,1)'); p.shade('#40b8c0', '#78e0d8', '#c8f4ee'); p.eye(0.13, '#2a6060'); },
-    count: 150, groups: 9, behavior: 'school', region: 'reefSpots', speed: 0.5, flee: 2.5, swim: [6, 0.05, 6], spread: 1.6, mat: { metal: 0.3, rough: 0.35 }, photoRange: 8,
+    hab: 'coralHover', count: 200, groups: 16, behavior: 'school', region: 'coralTops', speed: 0.5, flee: 2.5, swim: [6, 0.05, 6], spread: 1.6, mat: { metal: 0.3, rough: 0.35 }, photoRange: 8,
   },
   {
     id: 'lionfish', name: 'ハナミノカサゴ', sci: 'Pterois volitans', zone: 'reef', depth: [2, 50], size: 0.3, rarity: 2,
@@ -202,7 +206,7 @@ export const SPECIES: SpeciesDef[] = [
       p.clipBody(() => { p.g.fillStyle = '#f6eee4'; for (let i = 0; i < 16; i++) p.g.fillRect(p.U(-0.45 + i * 0.06), 0, 2.5, p.H); });
       p.eye(0.1, '#a02010');
     },
-    count: 5, groups: 5, behavior: 'solo', region: 'reefSpots', speed: 0.12, flee: 1.5, swim: [1.5, 0.02, 3], photoRange: 10,
+    hab: 'under', count: 5, groups: 5, behavior: 'solo', region: 'underTables', speed: 0.12, flee: 1.5, swim: [1.5, 0.02, 3], photoRange: 10,
   },
   // ======================================================== 岩礁
   {
@@ -237,7 +241,7 @@ export const SPECIES: SpeciesDef[] = [
     hint: '岩礁の中層を小さな群れで泳ぐ。',
     kind: 'fish', fish: { H: 0.5, W: 0.15, peak: 0.6, nose: 0.6, ped: 0.15, tail: 'truncate', tailL: 0.18, tailH: 0.36, dorsal: [{ a: 0.18, b: 0.72, h: 0.12, jag: 0.3 }], anal: [{ a: 0.15, b: 0.38, h: 0.12 }], pect: { t: 0.7, len: 0.12, wid: 0.07, down: 0.5 }, pelvic: true, eyes: 0.09 },
     paint: (p) => { fins(p, '#3a3a3a'); p.shade('#c8c8c0', '#e0e0d8', '#f0f0e8'); for (let i = 0; i < 7; i++) p.bar(0.38 - i * 0.12, 0.045, '#1c1c1c'); p.scales(0.15, 4); p.eye(0.09, '#d0b040'); },
-    count: 9, groups: 3, behavior: 'school', region: [60, 200, 50, 330], speed: 0.6, flee: 3.5, swim: [2.6, 0.05, 4], spread: 2,
+    hab: 'rockyRoam', count: 9, groups: 3, behavior: 'school', region: [60, 200, 50, 330], speed: 0.6, flee: 3.5, swim: [2.6, 0.05, 4], spread: 2,
   },
   {
     id: 'nudibranch', name: 'アオウミウシ', sci: 'Hypselodoris festiva', zone: 'rocky', depth: [1, 25], size: 0.06, rarity: 2,
@@ -416,6 +420,9 @@ export const SPECIES: SpeciesDef[] = [
     count: 1, groups: 1, behavior: 'static', region: 'vent', speed: 0, flee: 0, photoRange: 18,
   },
 ];
+
+import { MORE_SPECIES } from './species2';
+SPECIES.push(...MORE_SPECIES);
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
 export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];

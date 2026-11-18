@@ -6,6 +6,7 @@ export type ScatterItem = { m: THREE.Matrix4; c?: THREE.Color };
 export class ScatterSet {
   readonly group = new THREE.Group();
   private cells: { mesh: THREE.InstancedMesh; cx: number; cz: number }[] = [];
+  private loGeo!: THREE.BufferGeometry;
 
   constructor(
     geo: THREE.BufferGeometry,
@@ -13,7 +14,10 @@ export class ScatterSet {
     items: ScatterItem[],
     public viewDist = 85,
     cellSize = 70,
+    private hiGeo?: THREE.BufferGeometry,
+    private hiDist = 8,
   ) {
+    this.loGeo = geo;
     const buckets = new Map<string, ScatterItem[]>();
     const v = new THREE.Vector3();
     for (const it of items) {
@@ -45,6 +49,10 @@ export class ScatterSet {
       const s = c.mesh.boundingSphere!;
       const d = Math.hypot(s.center.x - x, s.center.y - y, s.center.z - z) - s.radius;
       c.mesh.visible = d < this.viewDist;
+      if (this.hiGeo) {
+        const want = d < this.hiDist ? this.hiGeo : this.loGeo;
+        if (c.mesh.geometry !== want) c.mesh.geometry = want;
+      }
     }
   }
 

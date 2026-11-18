@@ -16,10 +16,10 @@ type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
 
 const SAVE_KEY = 'blue-depths-save-v1';
 const UNLOCKS = [
-  { id: 'fins', need: 4, name: 'ロングフィン', desc: '泳ぐ速さ +30%', icon: '<path d="M7 3h4l1 8 4 8-3 2-5-7z"/>' },
-  { id: 'tank', need: 8, name: '大型タンク', desc: 'エア容量 1.5倍', icon: '<rect x="8" y="5" width="8" height="16" rx="3"/><rect x="10.5" y="2" width="3" height="3"/>' },
-  { id: 'scooter', need: 12, name: '水中スクーター', desc: '高速移動ボタン', icon: '<path d="M3 12l7-5v3h8l3 2-3 2h-8v3z"/>' },
-  { id: 'ads', need: 16, name: '大気圧潜水服', desc: '深海へ潜れる', icon: '<circle cx="12" cy="7" r="4"/><path d="M6 21v-6a6 6 0 0 1 12 0v6z"/>' },
+  { id: 'fins', need: 5, name: 'ロングフィン', desc: '泳ぐ速さ +30%', icon: '<path d="M7 3h4l1 8 4 8-3 2-5-7z"/>' },
+  { id: 'tank', need: 12, name: '大型タンク', desc: 'エア容量 1.5倍', icon: '<rect x="8" y="5" width="8" height="16" rx="3"/><rect x="10.5" y="2" width="3" height="3"/>' },
+  { id: 'scooter', need: 22, name: '水中スクーター', desc: '高速移動ボタン', icon: '<path d="M3 12l7-5v3h8l3 2-3 2h-8v3z"/>' },
+  { id: 'ads', need: 35, name: '大気圧潜水服', desc: '深海へ潜れる', icon: '<circle cx="12" cy="7" r="4"/><path d="M6 21v-6a6 6 0 0 1 12 0v6z"/>' },
 ] as const;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -66,6 +66,7 @@ export class Game {
   private photoCanvas = document.createElement('canvas');
   private fpsSamples: number[] = [];
   private minimap: Minimap | null = null;
+  private tmpDir = new THREE.Vector3();
 
   constructor(private canvas: HTMLCanvasElement) {
     patchFogChunks();
@@ -353,6 +354,7 @@ export class Game {
       this.ensureMinimap();
       this.flora.boat.visible = !this.ads;
       this.terrain.prime(dp.x, dp.z, 80);
+      this.creatures.primeAround(this.camera.position);
       this.env.lightOn = this.ads;
       this.env.lightPower = this.ads ? 1.6 : 1;
       $('btn-light').classList.toggle('on', this.env.lightOn);
@@ -641,7 +643,7 @@ export class Game {
     const cp = this.camera.position;
     this.terrain.update(cp.x, cp.z, this.terrain.radius, this.state === 'diving' ? 1 : 2);
     if (!this.paused || this.state === 'title') {
-      this.creatures.update(dt, cp, this.vel);
+      this.creatures.update(dt, cp, this.vel, this.camera.getWorldDirection(this.tmpDir));
     }
     this.flora.update(cp, this.time);
     this.env.update(dt, this.camera, this.renderer, this.time);
@@ -754,8 +756,35 @@ export class Game {
         });
         return out;
       },
+      portrait: (id: string) => {
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        if (!rt || !rt.agents.length) return false;
+        const a = rt.agents[0];
+        this.paused = false;
+        const s = rt.def.size;
+        const d = Math.max(0.35, s * 1.6);
+        // side view: camera to the fish's right
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(a.q);
+        const cx = a.p.x + right.x * d, cy = a.p.y + s * 0.15, cz = a.p.z + right.z * d;
+        this.camera.position.set(cx, cy, cz);
+        this.terrain.prime(cx, cz, 40);
+        const dx = a.p.x - cx, dy = a.p.y - cy, dz = a.p.z - cz;
+        this.yaw = Math.atan2(-dx, -dz);
+        this.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+        this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+        this.camera.updateMatrixWorld();
+        this.creatures.update(0, this.camera.position, this.vel, this.camera.getWorldDirection(this.tmpDir));
+        this.paused = true;
+        return true;
+      },
+      nearFish: (r = 25) => {
+        const c = this.camera.position;
+        const out: Record<string, number> = {};
+        for (const rt of this.creatures.list) for (const a of rt.agents) if (a.p.distanceTo(c) < r) out[rt.def.id] = (out[rt.def.id] ?? 0) + 1;
+        return out;
+      },
       unlockAll: () => {
-        for (const s of SPECIES.slice(0, 16)) this.save.found[s.id] = this.save.found[s.id] ?? { photo: '', depth: 0, t: 0 };
+        for (const s of SPECIES.slice(0, 40)) this.save.found[s.id] = this.save.found[s.id] ?? { photo: '', depth: 0, t: 0 };
       },
     };
   }
@@ -766,6 +795,7 @@ export class Game {
     this.pitch = pl.pitch;
     this.vel.set(0, 0, 0);
     this.terrain.prime(pl.x, pl.z, 90);
+    this.creatures.primeAround(this.camera.position);
     if (pl.light) {
       this.env.lightOn = true;
       this.env.lightPower = 1.6;

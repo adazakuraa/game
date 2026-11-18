@@ -60,8 +60,10 @@ export function heightAt(x: number, z: number): number {
     // coral bommies and sand channels
     const reefW = smoothstep(100, 140, z) * (1 - smoothstep(edge - 4, edge + 4, z));
     const r = ridged2(x * 0.035, z * 0.035, 3);
-    const bom = Math.max(0, fbm2(x * 0.045 + 3, z * 0.045 - 2, 3) - 0.05) * 7.5;
-    h += reefW * (bom + r * 1.2 - 0.6 + Math.min(1, bom) * (0.45 * simplex2(x * 0.45, z * 0.45) + 0.2 * simplex2(x * 1.1, z * 1.1)));
+    const bom = Math.max(0, fbm2(x * 0.065 + 3, z * 0.065 - 2, 3) - 0.06) * 6.5;
+    // coral colonies make bommie surfaces lumpy at 1-3 m scale
+    const lumps = Math.max(0, simplex2(x * 0.42, z * 0.42)) * 0.7 + Math.max(0, simplex2(x * 0.9 + 5, z * 0.9)) * 0.35;
+    h += reefW * (bom + r * 1.2 - 0.6 + Math.min(1, bom) * (lumps + 0.15 * simplex2(x * 1.6, z * 1.6)));
   }
   const rw = rockyWeight(x, z);
   if (rw > 0) {
@@ -131,10 +133,16 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     // reef framework: bommies are dead-coral rock with algal turf and coralline crusts
     const bom = bommieAt(x, z);
     const turf = clamp(smoothstep(0.4, 2.2, bom) + 0.35 * smoothstep(0.1, 0.5, fbm2(x * 0.05 + 7, z * 0.05, 3)), 0, 1) * reefW;
-    const pink = smoothstep(0.2, 0.6, simplex2(x * 0.21, z * 0.21));
-    r = lerp(r, lerp(0.42, 0.62, pink * 0.6) + 0.08 * n2, turf);
-    g = lerp(g, lerp(0.42, 0.4, pink * 0.6) + 0.06 * n2, turf);
-    b = lerp(b, lerp(0.3, 0.42, pink * 0.6), turf);
+    // living coral colonies: patchy palette (brown, olive, purple, pink, cream, blue-grey)
+    const pal = [[0.46, 0.36, 0.24], [0.42, 0.44, 0.24], [0.42, 0.28, 0.42], [0.62, 0.4, 0.44], [0.62, 0.56, 0.42], [0.34, 0.4, 0.46]];
+    const ci = Math.floor((simplex2(x * 0.33 + 11, z * 0.33) * 0.5 + 0.5) * 5.99);
+    const ci2 = Math.floor((simplex2(x * 0.71, z * 0.71 + 4) * 0.5 + 0.5) * 5.99);
+    const mixc = smoothstep(-0.1, 0.3, simplex2(x * 0.5, z * 0.5));
+    const cc = pal[Math.max(0, Math.min(5, mixc > 0.5 ? ci : ci2))];
+    const live = smoothstep(0.6, 1.6, bom);
+    r = lerp(r, lerp(0.44, cc[0], live) + 0.06 * n2, turf);
+    g = lerp(g, lerp(0.42, cc[1], live) + 0.05 * n2, turf);
+    b = lerp(b, lerp(0.3, cc[2], live), turf);
     sand *= 1 - turf;
   }
   const rw = rockyWeight(x, z);

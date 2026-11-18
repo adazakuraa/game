@@ -33,6 +33,7 @@ export type SpeciesRuntime = {
   halo?: THREE.Points;
   haloPos?: Float32Array;
   lureOffset?: THREE.Vector3;
+  slot: number;
 };
 
 const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster', 'gardenEel']);
@@ -47,7 +48,8 @@ function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Pai
   const [tw, th] = def.tex ?? [256, 128];
   switch (def.kind) {
     case 'fish': {
-      const { geo, layout } = buildFish(def.fish!);
+      const small = def.size < 0.3;
+      const { geo, layout } = buildFish({ ...def.fish!, rings: def.fish!.rings ?? (small ? 8 : 12), segs: def.fish!.segs ?? (small ? 12 : 18) });
       return { geo, paint: new Paint(tw, th, layout) };
     }
     case 'gardenEel': {
@@ -100,7 +102,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture): THREE.MeshStandardMa
   if (def.fish?.bendY) mat.defines = { BEND_Y: '' };
   if (def.id === 'atolla') mat.defines = { ...(mat.defines ?? {}), GLOW_SPIN: '' };
   return underwaterMaterial(mat, {
-    key: 'cr-' + def.id,
+    key: 'cr-' + def.kind + (translucent ? '-t' : ''),
     caustic: 0.9,
     uniforms: {
       uSwim: { value: new THREE.Vector3(...swim) },
@@ -145,7 +147,9 @@ export class Creatures {
   private haloTex = makeSoftDot('rgba(255,255,255,1)', 'rgba(255,255,255,0.25)');
   time = 0;
 
+  private homes!: Homes;
   constructor(homes: Homes) {
+    this.homes = homes;
     for (const def of SPECIES) this.list.push(this.spawn(def, homes));
   }
 
@@ -158,6 +162,11 @@ export class Creatures {
     else if (reg === 'crevices') p = homes.crevices[(i * 7) % homes.crevices.length].clone();
     else if (reg === 'reefSpots') p = fromList(homes.reefSpots);
     else if (reg === 'rockSpots') p = fromList(homes.rockSpots);
+    else if (reg === 'coralTops') p = fromList(homes.coralTops);
+    else if (reg === 'underTables') p = fromList(homes.underTables);
+    else if (reg === 'wallSpots') p = fromList(homes.wallSpots);
+    else if (reg === 'sandSpots') p = fromList(homes.sandSpots);
+    else if (reg === 'grassSpots') p = fromList(homes.grassSpots);
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;
@@ -169,8 +178,9 @@ export class Creatures {
     } else {
       let x = 0, z = 0, ground = 0, y = 0;
       for (let k = 0; k < 40; k++) {
-        x = reg[0] + r() * (reg[1] - reg[0]);
-        z = reg[2] + r() * (reg[3] - reg[2]);
+        const rg = reg as [number, number, number, number];
+        x = rg[0] + r() * (rg[1] - rg[0]);
+        z = rg[2] + r() * (rg[3] - rg[2]);
         ground = heightAt(x, z);
         y = -(def.depth[0] + r() * (def.depth[1] - def.depth[0]));
         if (y > ground + 1) break;
@@ -178,6 +188,67 @@ export class Creatures {
       p = new THREE.Vector3(x, Math.max(y, ground + 0.8), z);
     }
     return p;
+  }
+
+  /** Altitude band [min,max] and its anchor for a habitat. 'home' = relative to the habitat point (coral top etc.). */
+  private band(def: SpeciesDef): { lo: number; hi: number; anchor: 'home' | 'ground' | 'abs' } | null {
+    switch (def.hab) {
+      case 'coralHover': return { lo: 0.25, hi: 1.0, anchor: 'home' };
+      case 'coralPick': return { lo: 0.05, hi: 0.6, anchor: 'home' };
+      case 'cleaner': return { lo: 0.25, hi: 0.6, anchor: 'home' };
+      case 'under': return { lo: -0.25, hi: 0.05, anchor: 'home' };
+      case 'wall': return { lo: -1.5, hi: 3, anchor: 'home' };
+      case 'reefRoam': case 'rockyRoam': return { lo: 0.6 + def.size, hi: 2.5 + def.size, anchor: 'ground' };
+      case 'midwater': return { lo: 3 + def.size, hi: 10 + def.size * 2, anchor: 'ground' };
+      case 'sandForage': return { lo: 0.12 + def.size * 0.15, hi: 0.4 + def.size * 0.3, anchor: 'ground' };
+      case 'seagrass': return { lo: 0.3, hi: 1.1, anchor: 'ground' };
+      case 'surface': return { lo: -1.8, hi: -0.35, anchor: 'abs' };
+      default: return null;
+    }
+  }
+
+  private nearFrom(list: THREE.Vector3[], c: THREE.Vector3, rad: number): THREE.Vector3 | null {
+    const r = this.rnd;
+    for (let k = 0; k < 24; k++) {
+      const q = list[Math.floor(r() * list.length)];
+      if (q && Math.abs(q.x - c.x) < rad && Math.abs(q.z - c.z) < rad) return q;
+    }
+    return null;
+  }
+
+  private habTarget(def: SpeciesDef, g: Group, out: THREE.Vector3): boolean {
+    const b = this.band(def);
+    if (!b) return false;
+    const r = this.rnd;
+    const H = this.homes;
+    const rnd = (a: number, c: number) => a + r() * (c - a);
+    switch (def.hab) {
+      case 'coralHover': case 'cleaner': out.set(g.home.x + rnd(-0.4, 0.4), 0, g.home.z + rnd(-0.4, 0.4)); break;
+      case 'under': out.set(g.home.x + rnd(-0.3, 0.3), 0, g.home.z + rnd(-0.3, 0.3)); break;
+      case 'wall': out.set(g.home.x + rnd(-2, 2), 0, g.home.z + rnd(-1, 1)); break;
+      case 'coralPick': {
+        const q = this.nearFrom(H.coralTops, g.home, 9) ?? g.home;
+        out.set(q.x + rnd(-0.3, 0.3), 0, q.z + rnd(-0.3, 0.3));
+        out.y = q.y + rnd(b.lo, b.hi);
+        return true;
+      }
+      case 'sandForage': {
+        const q = this.nearFrom(H.sandSpots, g.home, 16);
+        if (q) out.set(q.x + rnd(-2, 2), 0, q.z + rnd(-2, 2));
+        else out.set(g.home.x + rnd(-8, 8), 0, g.home.z + rnd(-8, 8));
+        break;
+      }
+      case 'seagrass': {
+        const q = this.nearFrom(H.grassSpots, g.home, 18) ?? g.home;
+        out.set(q.x + rnd(-2, 2), 0, q.z + rnd(-2, 2));
+        break;
+      }
+      default: out.set(g.home.x + rnd(-1, 1) * g.roam, 0, g.home.z + rnd(-1, 1) * g.roam);
+    }
+    if (b.anchor === 'home') out.y = g.home.y + rnd(b.lo, b.hi);
+    else if (b.anchor === 'abs') out.y = rnd(b.lo, b.hi);
+    else out.y = Math.min(heightAt(out.x, out.z) + rnd(b.lo, b.hi), -0.8);
+    return true;
   }
 
   private altitude(def: SpeciesDef): number {
@@ -194,7 +265,7 @@ export class Creatures {
 
   private spawn(def: SpeciesDef, homes: Homes): SpeciesRuntime {
     const r = this.rnd;
-    const rt: SpeciesRuntime = { def, agents: [], groups: [], active: false, bounds: new THREE.Box3() };
+    const rt: SpeciesRuntime = { def, agents: [], groups: [], active: false, bounds: new THREE.Box3(), slot: 0 };
     for (let gi = 0; gi < def.groups; gi++) {
       const home = this.pickHome(def, homes, gi);
       if (def.behavior !== 'static' && def.behavior !== 'buried' && def.behavior !== 'crevice' && def.behavior !== 'anemone') {
@@ -224,10 +295,16 @@ export class Creatures {
       };
       // fixed placements
       if (def.behavior === 'buried') {
-        const a2 = r() * Math.PI * 2, d = Math.sqrt(r()) * GARDEN_EEL_PATCH.r;
-        a.p.set(GARDEN_EEL_PATCH.x + Math.cos(a2) * d, 0, GARDEN_EEL_PATCH.z + Math.sin(a2) * d);
-        a.p.y = heightAt(a.p.x, a.p.z) - 0.12 * a.s;
-        a.fixed = true;
+        if (def.region === 'eelPatch') {
+          const a2 = r() * Math.PI * 2, d = Math.sqrt(r()) * GARDEN_EEL_PATCH.r;
+          a.p.set(GARDEN_EEL_PATCH.x + Math.cos(a2) * d, 0, GARDEN_EEL_PATCH.z + Math.sin(a2) * d);
+          a.p.y = heightAt(a.p.x, a.p.z) - 0.12 * a.s;
+          a.fixed = true;
+        } else {
+          // goby hovering over its burrow
+          a.p.set(g.home.x + (r() - 0.5) * 1.2, 0, g.home.z + (r() - 0.5) * 1.2);
+          a.p.y = heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+        }
       } else if (def.behavior === 'crevice') {
         const idx = (i * 7 + 3) % homes.crevices.length;
         const c = homes.crevices[idx];
@@ -240,7 +317,7 @@ export class Creatures {
         a.fixed = true;
       } else if (def.behavior === 'static') {
         a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * 3, 0, (r() - 0.5) * 3));
-        if (def.region === 'rockSpots') a.p.copy(g.home);
+        if (def.region === 'rockSpots' || def.region === 'coralTops') a.p.copy(g.home);
         else a.p.y = heightAt(a.p.x, a.p.z) + this.altitude(def);
         if (def.kind === 'none') a.p.set(VENT.x, heightAt(VENT.x, VENT.z) + 1.5, VENT.z);
       }
@@ -269,7 +346,7 @@ export class Creatures {
         const hm = new THREE.PointsMaterial({
           map: this.haloTex,
           color: def.mat.glow,
-          size: def.id === 'atolla' ? def.size * 3.2 : 0.6,
+          size: def.id === 'atolla' ? def.size * 3.2 : Math.max(0.2, Math.min(0.7, def.size * 2)),
           sizeAttenuation: true,
           transparent: true,
           depthWrite: false,
@@ -288,10 +365,12 @@ export class Creatures {
   }
 
   private writeAll(rt: SpeciesRuntime) {
+    rt.slot = 0;
     rt.agents.forEach((a, i) => {
       this.orient(rt, a, 1);
       this.writeInstance(rt, a, i);
     });
+    rt.mesh!.count = rt.slot;
     rt.mesh!.instanceMatrix.needsUpdate = true;
   }
 
@@ -316,8 +395,18 @@ export class Creatures {
     a.q.setFromEuler(_e);
   }
 
-  private writeInstance(rt: SpeciesRuntime, a: Agent, i: number) {
+  private viewPos = new THREE.Vector3(0, -1e5, 0);
+  private viewDir = new THREE.Vector3(0, 0, -1);
+
+  /** Pack only on-screen, nearby agents into the instance buffer (mesh.count trims the draw). */
+  private writeInstance(rt: SpeciesRuntime, a: Agent, _i: number) {
     let s = a.s;
+    const dx = a.p.x - this.viewPos.x, dy = a.p.y - this.viewPos.y, dz = a.p.z - this.viewPos.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const reach = s * 1.5 + 2;
+    if (d > 52 + s * 3) return;
+    if (d > reach && (dx * this.viewDir.x + dy * this.viewDir.y + dz * this.viewDir.z) < -reach) return;
+    const i = rt.slot++;
     if (rt.def.behavior === 'buried') {
       _v.copy(a.p);
       _v.y -= a.retract * s * 1.05;
@@ -336,15 +425,108 @@ export class Creatures {
     }
   }
 
-  update(dt: number, player: THREE.Vector3, playerVel: THREE.Vector3): void {
+  private relocT = 0;
+  private relocIdx = 0;
+
+  private canRelocate(def: SpeciesDef): boolean {
+    if (def.kind === 'none' || def.behavior === 'anemone' || def.behavior === 'crevice') return false;
+    if (def.region === 'eelPatch' || def.region === 'vent' || def.region === 'anemones' || def.region === 'crevices' || def.region === 'reefSpots') return false;
+    return true;
+  }
+
+  /** Move a far-away group into matching habitat 30-75 m from the diver (outside the visible range). */
+  private relocate(rt: SpeciesRuntime, gi: number, player: THREE.Vector3, minD = 32): boolean {
+    const def = rt.def;
+    const r = this.rnd;
+    const reg = def.region;
+    let p: THREE.Vector3 | null = null;
+    const ok = (x: number, z: number) => {
+      const d = Math.hypot(x - player.x, z - player.z);
+      return d > minD && d < 75;
+    };
+    if (typeof reg === 'string') {
+      const list = (this.homes as unknown as Record<string, THREE.Vector3[]>)[reg];
+      if (!list?.length) return false;
+      for (let k = 0; k < 40 && !p; k++) {
+        const q = list[Math.floor(r() * list.length)];
+        if (ok(q.x, q.z)) p = q.clone();
+      }
+    } else {
+      const x0 = Math.max(reg[0], player.x - 75), x1 = Math.min(reg[1], player.x + 75);
+      const z0 = Math.max(reg[2], player.z - 75), z1 = Math.min(reg[3], player.z + 75);
+      if (x0 >= x1 || z0 >= z1) return false;
+      for (let k = 0; k < 30 && !p; k++) {
+        const x = x0 + r() * (x1 - x0), z = z0 + r() * (z1 - z0);
+        if (!ok(x, z)) continue;
+        const ground = heightAt(x, z);
+        const y = -(def.depth[0] + r() * (def.depth[1] - def.depth[0]));
+        if (y < ground + 0.5 && def.behavior !== 'bottom' && def.behavior !== 'static') continue;
+        p = new THREE.Vector3(x, Math.max(y, ground + this.altitude(def)), z);
+      }
+    }
+    if (!p) return false;
+    const g = rt.groups[gi];
+    g.home.copy(p);
+    if (def.hab && def.behavior !== 'static' && def.behavior !== 'buried') this.habTarget(def, g, g.t);
+    else g.t.copy(p);
+    g.c.copy(def.hab ? g.t : p);
+    g.v.set(0, 0, 0);
+    for (const a of rt.agents) {
+      if (a.g !== gi) continue;
+      if (def.behavior === 'static') {
+        a.p.copy(p);
+        if (def.region !== 'rockSpots' && def.region !== 'coralTops') { a.p.x += (r() - 0.5) * 3; a.p.z += (r() - 0.5) * 3; a.p.y = heightAt(a.p.x, a.p.z) + this.altitude(def); }
+        a.alarm = 0;
+      } else if (def.behavior === 'buried') {
+        a.p.set(p.x + (r() - 0.5) * 1.2, 0, p.z + (r() - 0.5) * 1.2);
+        a.p.y = heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+        a.retract = 0;
+      } else {
+        a.p.copy(g.c).add(a.off);
+        const gy = heightAt(a.p.x, a.p.z) + 0.1;
+        if (a.p.y < gy) a.p.y = gy;
+      }
+    }
+    return true;
+  }
+
+  /** After a teleport (dive start): populate the surroundings immediately. */
+  primeAround(player: THREE.Vector3): void {
+    for (const rt of this.list) {
+      if (!this.canRelocate(rt.def)) continue;
+      if (rt.def.rarity >= 3 && this.rnd() > 0.3) continue;
+      rt.groups.forEach((g, gi) => {
+        if (Math.hypot(g.c.x - player.x, g.c.z - player.z) > 100) this.relocate(rt, gi, player, 6);
+      });
+    }
+  }
+
+  update(dt: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir?: THREE.Vector3): void {
+    // re-home far groups (a few species per frame)
+    this.relocT += dt;
+    if (this.relocT > 0.05) {
+      this.relocT = 0;
+      for (let n = 0; n < 4; n++) {
+        const rt = this.list[this.relocIdx++ % this.list.length];
+        if (!this.canRelocate(rt.def)) continue;
+        if (rt.def.rarity >= 3 && this.rnd() > 0.15) continue;
+        rt.groups.forEach((g, gi) => {
+          if (Math.hypot(g.c.x - player.x, g.c.z - player.z) > 100) this.relocate(rt, gi, player);
+        });
+      }
+    }
+    this.viewPos.copy(player);
+    if (viewDir) this.viewDir.copy(viewDir);
     this.time += dt;
     const r = this.rnd;
     for (const rt of this.list) {
-      const near = rt.bounds.distanceToPoint(player) < 130;
+      let near = false;
+      for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
       rt.active = near;
       if (rt.mesh) rt.mesh.visible = near;
       if (rt.halo) rt.halo.visible = near;
       if (!near || !rt.mesh) continue;
+      rt.slot = 0;
       const def = rt.def;
 
       // ---- group centers
@@ -355,15 +537,18 @@ export class Creatures {
         const curiousNear = def.curious && player.distanceTo(g.c) < 32 && player.distanceTo(g.c) > def.size * 1.5 + 3;
         if (curiousNear) {
           g.t.copy(player).add(_v2.set(Math.sin(this.time * 0.2 + g.home.x) * (def.size + 5), -1 + Math.sin(this.time * 0.3) * 2, Math.cos(this.time * 0.2 + g.home.x) * (def.size + 5)));
-        } else if (dist < 1.5 || g.timer <= 0) {
-          g.timer = 8 + r() * 14;
-          const rr = g.roam;
-          g.t.set(g.home.x + (r() - 0.5) * 2 * rr, g.home.y + (r() - 0.5) * Math.min(rr * 0.4, 6), g.home.z + (r() - 0.5) * 2 * rr);
+        } else if (dist < 1.0 || g.timer <= 0) {
+          g.timer = (def.hab === 'coralHover' || def.hab === 'under' ? 3 : 8) + r() * 12;
+          if (!this.habTarget(def, g, g.t)) {
+            const rr = g.roam;
+            g.t.set(g.home.x + (r() - 0.5) * 2 * rr, g.home.y + (r() - 0.5) * Math.min(rr * 0.4, 6), g.home.z + (r() - 0.5) * 2 * rr);
+          }
         }
-        const ground = heightAt(g.t.x, g.t.z);
-        g.t.y = clamp(g.t.y, Math.max(ground + this.altitude(def), -def.depth[1]), Math.min(-def.depth[0], -0.6));
-        if (def.behavior === 'anemone' || def.region === 'reefSpots' && def.behavior !== 'school') g.t.copy(g.home);
-        if (def.region === 'reefSpots' && def.behavior === 'school') g.t.y = Math.max(g.t.y, g.home.y + 1.0);
+        if (!def.hab) {
+          const ground = heightAt(g.t.x, g.t.z);
+          g.t.y = clamp(g.t.y, Math.max(ground + this.altitude(def), -def.depth[1]), Math.min(-def.depth[0], -0.6));
+        } else g.t.y = Math.min(g.t.y, -0.3);
+        if (def.behavior === 'anemone') g.t.copy(g.home);
         const spd = def.speed * (def.behavior === 'pelagic' ? 1 : 0.6);
         _v.copy(g.t).sub(g.c);
         const L = _v.length();
@@ -371,22 +556,25 @@ export class Creatures {
         // flee as a group (schools scatter around player)
         const pd = _v2.copy(g.c).sub(player);
         const pl = pd.length();
-        if (def.flee > 0 && pl < def.flee * 2.5 && def.behavior !== 'anemone') g.v.addScaledVector(pd.normalize(), dt * def.speed * 2);
+        if (def.flee > 0 && pl < def.flee * 2.5 && def.behavior !== 'anemone' && def.hab !== 'coralHover' && def.hab !== 'under' && def.hab !== 'cleaner') g.v.addScaledVector(pd.normalize(), dt * def.speed * 2);
         g.c.addScaledVector(g.v, dt);
         const gg = heightAt(g.c.x, g.c.z);
-        g.c.y = clamp(g.c.y, gg + this.altitude(def) * 0.8, -0.5);
+        const minAlt = def.hab ? (def.hab === 'sandForage' || def.hab === 'under' ? 0.1 : 0.2) : this.altitude(def) * 0.8;
+        g.c.y = clamp(g.c.y, gg + minAlt, -0.3);
       }
 
       // ---- agents
       for (let i = 0; i < rt.agents.length; i++) {
         const a = rt.agents[i];
         const g = rt.groups[a.g];
+        if (Math.abs(g.c.x - player.x) > 100 || Math.abs(g.c.z - player.z) > 100) continue;
         const dPlayer = a.p.distanceTo(player);
         if (def.behavior === 'buried') {
           const want = dPlayer < def.flee + playerVel.length() * 1.5 ? 1 : 0;
           a.retract += (want - a.retract) * Math.min(1, dt * (want ? 6 : 0.35));
-          // face roughly toward the current
-          a.yaw = 0.6 + Math.sin(a.ph) * 0.4;
+          // face roughly toward the current (gobies hover and slowly turn)
+          a.yaw = def.region === 'eelPatch' ? 0.6 + Math.sin(a.ph) * 0.4 : a.ph + Math.sin(this.time * 0.3 + a.ph) * 0.6;
+          if (def.region !== 'eelPatch') a.p.y = heightAt(a.p.x, a.p.z) + 0.1 + a.s * 0.3 + Math.sin(this.time * 1.3 + a.ph) * 0.02;
           this.orient(rt, a, 1);
           this.writeInstance(rt, a, i);
           continue;
@@ -418,7 +606,7 @@ export class Creatures {
         // swimmers
         let tx: number, ty: number, tz: number;
         if (def.behavior === 'anemone') {
-          const t = this.time * 0.9 + a.ph;
+          const t = this.time * (def.hab === 'cleaner' ? 1.6 : 0.9) + a.ph;
           tx = g.home.x + Math.sin(t) * 0.35 + a.off.x * 0.3;
           ty = g.home.y + 0.12 + Math.sin(t * 1.7) * 0.1;
           tz = g.home.z + Math.cos(t * 0.8) * 0.35 + a.off.z * 0.3;
@@ -430,10 +618,16 @@ export class Creatures {
           ty = g.c.y + a.off.y + Math.sin(this.time * 0.5 + a.ph) * 0.2;
           tz = g.c.z + oz;
         }
+        const hiding = (def.hab === 'coralHover' || def.hab === 'under') && dPlayer < def.flee * 1.6;
+        if (hiding) {
+          tx = g.home.x + a.off.x * 0.15;
+          ty = g.home.y - (def.hab === 'coralHover' ? 0.15 : 0.05);
+          tz = g.home.z + a.off.z * 0.15;
+        }
         _v.set(tx - a.p.x, ty - a.p.y, tz - a.p.z);
-        const k = def.behavior === 'anemone' ? 3 : 0.9;
+        const k = def.behavior === 'anemone' || hiding ? 3 : def.hab === 'coralHover' || def.hab === 'under' || def.hab === 'cleaner' ? 1.6 : 0.9;
         const acc = _v.multiplyScalar(k);
-        if (def.flee > 0 && dPlayer < def.flee) {
+        if (def.flee > 0 && dPlayer < def.flee && !hiding) {
           _v2.copy(a.p).sub(player).normalize().multiplyScalar((def.flee - dPlayer) * 4);
           acc.add(_v2);
         }
@@ -446,12 +640,15 @@ export class Creatures {
         if (def.behavior === 'pelagic' && vl < def.speed * 0.4) a.v.add(_v2.set(Math.sin(a.yaw), 0, Math.cos(a.yaw)).multiplyScalar(def.speed * 0.4 * dt * 3));
         a.p.addScaledVector(a.v, dt);
         const gy = heightAt(a.p.x, a.p.z);
-        const minY = gy + Math.max(0.1, def.behavior === 'bottom' ? this.altitude(def) : a.s * 0.3);
+        const minY = gy + Math.max(0.06, def.behavior === 'bottom' ? this.altitude(def) : def.hab === 'sandForage' ? a.s * 0.15 : a.s * 0.3);
         if (a.p.y < minY) { a.p.y = minY; a.v.y = Math.max(a.v.y, 0); }
         if (a.p.y > -0.4) { a.p.y = -0.4; a.v.y = Math.min(a.v.y, 0); }
         this.orient(rt, a, 1 - Math.exp(-dt * (def.size > 3 ? 1.2 : 5)));
         this.writeInstance(rt, a, i);
       }
+      rt.mesh.count = rt.slot;
+      rt.mesh.visible = rt.slot > 0;
+      if (rt.halo) { rt.halo.visible = rt.slot > 0; rt.halo.geometry.setDrawRange(0, rt.slot); }
       rt.mesh.instanceMatrix.needsUpdate = true;
       if (rt.halo) rt.halo.geometry.attributes.position.needsUpdate = true;
     }

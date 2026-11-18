@@ -190,3 +190,94 @@ export class Paint {
     else doit();
   }
 }
+
+/** Declarative fish livery, painted over the side-projection texture. y values are fractions of body height H. */
+export type Look = {
+  c: [string, string, string]; // back, flank, belly
+  mid?: number; // where the flank colour sits (0..1, top->belly)
+  fin?: string; // all fins
+  tail?: string; // caudal fin colour
+  dorsal?: string; // tint for everything above the body (dorsal fins)
+  anal?: string; // tint for everything below the body
+  front?: [number, string]; // head region (z > value) colour
+  rear?: [number, string]; // body behind z
+  bars?: [number, number, string, string?][]; // vertical bands: z, width, colour, edge
+  hl?: [number, number, string, number?, number?][]; // horizontal stripes: y, height, colour, z0, z1
+  lines?: { n: number; color: string; w?: number; ang?: number; y0?: number; y1?: number };
+  spots?: [number, number, number, string, [number, number, number, number]?][]; // n, r0, r1 (fraction of W), colour, region
+  ocel?: [number, number, number, string, string?][]; // eye-spots: z, y, radius(px), colour, ring
+  eyeBar?: string;
+  net?: string; // reticulated network
+  saddle?: [number, number, string][]; // dorsal saddles z, w, colour
+  scales?: number;
+  noise?: number;
+  iris?: string;
+  snout?: string;
+  blotch?: [number, string[]];
+};
+
+export function paintLook(p: Paint, L: Look): void {
+  const f = p.fish!;
+  const H = f.shape.H;
+  const g = p.g;
+  p.fill(L.fin ?? L.c[1]);
+  if (L.dorsal) { g.fillStyle = L.dorsal; g.fillRect(0, 0, p.W, p.V(H * 0.3)); }
+  if (L.anal) { g.fillStyle = L.anal; g.fillRect(0, p.V(-H * 0.3), p.W, p.H); }
+  if (L.tail) { g.fillStyle = L.tail; g.fillRect(0, 0, p.U(-0.47), p.H); }
+  p.shade(L.c[0], L.c[1], L.c[2], L.mid ?? 0.5);
+  p.clipBody(() => {
+    if (L.front) { g.fillStyle = L.front[1]; g.fillRect(p.U(L.front[0]), 0, p.W, p.H); }
+    if (L.rear) {
+      const gr = g.createLinearGradient(p.U(L.rear[0] + 0.04), 0, p.U(L.rear[0] - 0.04), 0);
+      gr.addColorStop(0, 'rgba(0,0,0,0)');
+      gr.addColorStop(1, L.rear[1]);
+      g.fillStyle = gr;
+      g.fillRect(0, 0, p.U(L.rear[0] + 0.04), p.H);
+    }
+    if (L.net) {
+      g.strokeStyle = L.net; g.lineWidth = 1.6;
+      for (let i = 0; i < 120; i++) {
+        const x = p.rnd() * p.W, y = p.rnd() * p.H, r = 4 + p.rnd() * 5;
+        g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke();
+      }
+    }
+    if (L.lines) {
+      const l = L.lines;
+      g.strokeStyle = l.color; g.lineWidth = l.w ?? 1.6;
+      const ang = ((l.ang ?? 0) * Math.PI) / 180;
+      const y0 = l.y0 ?? 0.45, y1 = l.y1 ?? -0.45;
+      for (let i = 0; i < l.n; i++) {
+        const y = p.V(H * (y0 + ((y1 - y0) * (i + 0.5)) / l.n));
+        g.beginPath();
+        g.moveTo(-20, y + Math.tan(ang) * (p.W / 2 + 20));
+        g.lineTo(p.W + 20, y - Math.tan(ang) * (p.W / 2 + 20));
+        g.stroke();
+      }
+    }
+    for (const [y, h, col, z0, z1] of L.hl ?? []) {
+      g.fillStyle = col;
+      const a = p.U(z0 ?? -0.55), b = p.U(z1 ?? 0.55);
+      g.fillRect(a, p.V(H * (y + h / 2)), b - a, p.V(H * (y - h / 2)) - p.V(H * (y + h / 2)));
+    }
+  });
+  for (const [z, w, col, edge] of L.bars ?? []) p.bar(z, w, col, edge);
+  for (const [z, w, col] of L.saddle ?? []) {
+    p.clipBody(() => { g.fillStyle = col; g.beginPath(); g.ellipse(p.U(z), p.V(H * 0.5), (p.U(w) - p.U(0)), p.V(0) - p.V(H * 0.32), 0, 0, Math.PI * 2); g.fill(); });
+  }
+  for (const [n, r0, r1, col, reg] of L.spots ?? []) {
+    p.spots(n, r0, r1, col, reg ? [reg[0], reg[1], reg[2] * H, reg[3] * H] : [-0.5, 0.5, -H * 0.5, H * 0.5]);
+  }
+  if (L.blotch) p.blotch(L.blotch[0], 2, 7, L.blotch[1], true);
+  for (const [z, y, r, col, ring] of L.ocel ?? []) {
+    if (ring) { g.fillStyle = ring; g.beginPath(); g.arc(p.U(z), p.V(H * y), r * 1.45, 0, Math.PI * 2); g.fill(); }
+    g.fillStyle = col; g.beginPath(); g.arc(p.U(z), p.V(H * y), r, 0, Math.PI * 2); g.fill();
+  }
+  if (L.eyeBar) {
+    const t = f.shape.eyeT ?? 0.86;
+    p.bar(t - 0.5, 0.05, L.eyeBar, undefined, 0.01);
+  }
+  if (L.snout) p.clipBody(() => { g.fillStyle = L.snout!; g.fillRect(p.U(0.42), 0, p.W, p.H); });
+  p.scales(L.scales ?? 0.1, 4);
+  p.noise(L.noise ?? 0.06);
+  p.eye(f.shape.eyes ?? 0.1, L.iris ?? '#2a2a20');
+}
