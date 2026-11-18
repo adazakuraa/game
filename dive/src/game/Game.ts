@@ -507,8 +507,13 @@ export class Game {
     }
 
     // photo target & shutter
-    const vis = 1.75 / this.env.fog.density * 0.85 + (this.env.lightOn ? 8 : 0);
-    this.target = this.creatures.findTarget(cam, vis);
+    // sharp-photo distance: where water haze stays under ~50 % (FogExp2), shortened by narcosis
+    const clear = (0.83 / this.env.fog.density) * (1 - this.narc * 0.3);
+    const src = this.renderer.domElement;
+    const aspect = src.width / src.height;
+    const cropX = Math.min(0.62, (0.8 * 4) / (3 * aspect));
+    const cropY = Math.min(0.8, (cropX * aspect * 3) / 4);
+    this.target = this.creatures.findTarget(cam, { clear, dark: d > 140, lightOn: this.env.lightOn, cropX, cropY });
     if (inp.consume('shutter')) {
       this.captureReq = this.target;
       this.audio.shutter();
@@ -544,7 +549,8 @@ export class Game {
     }
     const def = t.rt.def;
     if (!t.inRange) {
-      this.toast(`遠すぎる — ${def.size < 0.3 ? 'もっと近づこう' : '少し近づこう'}`, 'warn');
+      const msg: Record<string, string> = { small: '小さすぎて写っていない — もっと近づこう', murky: '濁りで霞んでしまった — もっと近づこう', dark: '暗くて写らなかった — ライトで照らそう', hidden: '岩陰に隠れて写らなかった', ok: '' };
+      this.toast(msg[t.reason], 'warn');
       return;
     }
     const known = !!this.save.found[def.id];
@@ -614,7 +620,8 @@ export class Game {
     $('btn-shutter').classList.toggle('ready', !!t && t.inRange && !this.save.found[t.rt.def.id] && !this.pending.has(t.rt.def.id));
     if (t) {
       const known = this.save.found[t.rt.def.id] || this.pending.has(t.rt.def.id);
-      lab.innerHTML = `${known ? t.rt.def.name : '？？？'}<small>${t.inRange ? (known ? '撮影済み' : '撮影できる！') : `${t.dist.toFixed(0)}m・もっと近づく`}</small>`;
+      const why: Record<string, string> = { small: '小さすぎる・もっと近づく', murky: '濁って霞んでいる・近づく', dark: '暗くて写らない・ライトで照らす', hidden: '岩陰に隠れている', ok: known ? '撮影済み' : '撮影できる！' };
+      lab.innerHTML = `${known ? t.rt.def.name : '？？？'}<small>${why[t.reason]}</small>`;
     } else lab.textContent = '';
 
     if (this.toastTimer > 0) {
@@ -653,6 +660,8 @@ export class Game {
     }
     this.flora.update(cp, this.time);
     this.env.update(dt, this.camera, this.renderer, this.time);
+    // image-based fill only adds sheen near the surface; it must not flatten the sun/shade contrast
+    this.scene.environmentIntensity = 0.22 * Math.exp(Math.min(0, this.camera.position.y) / 25) + 0.01;
     if (this.state === 'diving' && !this.paused) this.updateHud(dt);
 
     // ambience
@@ -797,6 +806,23 @@ export class Game {
       shadowInfo: () => {
         const sh = this.env.sun.shadow;
         return { map: !!sh.map, size: sh.mapSize.x, int: sh.intensity, en: this.renderer.shadowMap.enabled, pos: this.env.sun.position.toArray().map((v) => Math.round(v)), tgt: this.env.sun.target.position.toArray().map((v) => Math.round(v)), sunI: this.env.sun.intensity, hemi: this.env.hemi.intensity };
+      },
+      probe: (id: string, dist: number) => {
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        const a = rt?.agents[0];
+        if (!a) return null;
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(a.q);
+        this.camera.position.set(a.p.x + right.x * dist, a.p.y + 0.05, a.p.z + right.z * dist);
+        this.yaw = Math.atan2(right.x, right.z);
+        this.pitch = 0;
+        this.camera.rotation.set(0, this.yaw, 0, 'YXZ');
+        this.camera.updateMatrixWorld();
+        this.creatures.update(0, this.camera.position, this.vel, this.camera.getWorldDirection(this.tmpDir));
+        const d = Math.max(0, -this.camera.position.y);
+        const clear = (0.83 / this.env.fog.density);
+        const t = this.creatures.findTarget(this.camera, { clear, dark: d > 140, lightOn: this.env.lightOn, cropX: 0.6, cropY: 0.8 });
+        this.paused = true;
+        return t ? { id: t.rt.def.id, reason: t.reason, frac: +t.frac.toFixed(3), dist: +t.dist.toFixed(1), clear: +clear.toFixed(1) } : null;
       },
       nearFish: (r = 25) => {
         const c = this.camera.position;

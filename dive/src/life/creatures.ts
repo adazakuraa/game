@@ -46,7 +46,7 @@ const _qt = new THREE.Quaternion();
 const _sc = new THREE.Vector3();
 
 function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Paint } {
-  const [tw, th] = def.tex ?? [256, 128];
+  const [tw, th] = def.tex ?? (def.kind === 'fish' && def.size >= 0.4 ? [512, 256] : [256, 128]);
   switch (def.kind) {
     case 'fish': {
       const small = def.size < 0.3;
@@ -106,7 +106,12 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THRE
   if (def.id === 'atolla') mat.defines = { ...(mat.defines ?? {}), GLOW_SPIN: '' };
   if (def.rainbow) mat.defines = { ...(mat.defines ?? {}), RAINBOW: '' };
   const scaly = def.kind === 'fish' || def.kind === 'gardenEel';
-  if (scaly) mat.defines = { ...(mat.defines ?? {}), FISH_SCALES: '' };
+  if (scaly) {
+    mat.defines = { ...(mat.defines ?? {}), FISH_SCALES: '' };
+    // wet, glossy skin; silver species keep their metal value
+    mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
+    mat.alphaHash = true;
+  }
   return underwaterMaterial(mat, {
     key: 'cr-' + def.kind + (translucent ? '-t' : ''),
     caustic: 0.9,
@@ -154,18 +159,30 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THRE
       }
       #endif`,
     fragDiffuse: `
+      #if defined( FISH_SCALES ) && defined( USE_ALPHAHASH )
+        if ( vFin > 0.5 && vFin < 1.5 ) diffuseColor.a = 0.86;
+      #endif
       #if defined( FISH_SCALES ) && defined( USE_MAP )
-      if ( vFin < 0.5 ) diffuseColor.rgb *= 0.96 + 0.06 * fishScale( vMapUv );
+      if ( vFin < 0.5 ) diffuseColor.rgb *= 0.985 + 0.02 * fishScale( vMapUv );
       else if ( vFin < 1.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * ( 0.88 + 0.18 * abs( sin( vMapUv.y * 150.0 ) ) ), 0.7 );
       #endif`,
     fragBeforeLights: `
       #if defined( FISH_SCALES ) && defined( USE_MAP )
       {
-        float hb = vFin < 0.5 ? fishScale( vMapUv ) * uFishSize * 0.0012 : vFin < 1.5 ? abs( sin( vMapUv.y * 150.0 ) ) * uFishSize * 0.0015 : 0.0;
+        float hb = vFin < 0.5 ? fishScale( vMapUv ) * uFishSize * 0.0006 : vFin < 1.5 ? abs( sin( vMapUv.y * 150.0 ) ) * uFishSize * 0.0012 : 0.0;
         normal = uwBump( normal, hb );
       }
       #endif`,
+    fragRough: `
+      #ifdef FISH_SCALES
+        roughnessFactor = vFin > 1.5 ? 0.06 : vFin > 0.5 ? 0.55 : roughnessFactor;
+      #endif`,
     fragEmissive: `
+      {
+        // water back-scatter rim: silhouettes glow faintly against the blue, like in real underwater photos
+        float rim = pow( 1.0 - clamp( dot( normalize( normal ), normalize( vViewPosition ) ), 0.0, 1.0 ), 3.0 );
+        totalEmissiveRadiance += uSunCol * rim * 0.22 * exp( min( vUwPos.y, 0.0 ) / 30.0 ) * ( 1.0 - step( 1.5, vFin ) );
+      }
       #ifdef RAINBOW
         vec3 hue = 0.5 + 0.5 * cos( 6.2831 * ( vUwPos.y * 4.0 - uTime * 0.9 + vec3( 0.0, 0.33, 0.67 ) ) );
         totalEmissiveRadiance += hue * vGlow * 1.4;
@@ -175,7 +192,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THRE
   });
 }
 
-export type PhotoTarget = { rt: SpeciesRuntime; agent: Agent; dist: number; angle: number; inRange: boolean };
+export type PhotoTarget = { rt: SpeciesRuntime; agent: Agent; dist: number; angle: number; inRange: boolean; reason: 'ok' | 'small' | 'murky' | 'dark' | 'hidden'; frac: number };
 
 export class Creatures {
   readonly group = new THREE.Group();
@@ -705,33 +722,62 @@ export class Creatures {
     }
   }
 
-  /** Best photographable creature under the reticle. */
-  findTarget(cam: THREE.Camera, visibility: number): PhotoTarget | null {
+  /**
+   * Best photographable creature. A shot counts only if the animal is inside the photo crop,
+   * large enough in frame, close enough to be sharp through the water, not hidden by terrain,
+   * and lit (in the dark deep: inside the dive light's beam or bioluminescent).
+   */
+  findTarget(cam: THREE.PerspectiveCamera, o: { clear: number; dark: boolean; lightOn: boolean; cropX: number; cropY: number }): PhotoTarget | null {
     const fwd = _v.set(0, 0, -1).applyQuaternion(cam.quaternion);
     const cp = cam.position;
+    const fovV = (cam.fov * Math.PI) / 180;
     let best: PhotoTarget | null = null;
     let bestScore = -Infinity;
+    const ndc = new THREE.Vector3();
     for (const rt of this.list) {
       if (!rt.active) continue;
       const def = rt.def;
-      const range = Math.min(def.photoRange ?? Math.max(4, def.size * 8 + 4), visibility);
       for (const a of rt.agents) {
-        if (def.behavior === 'buried' && a.retract > 0.6) continue;
+        if (def.behavior === 'buried' && a.retract > 0.5) continue;
         _v2.copy(a.p).sub(cp);
         const dist = _v2.length();
-        if (dist > range * 1.6) continue;
-        const ang = _v2.angleTo(fwd);
-        const lim = 0.2 + Math.atan((def.size * 0.6) / Math.max(dist, 0.1));
-        if (ang > lim) continue;
-        const inRange = dist <= range;
-        const score = (inRange ? 2 : 0) - ang / lim - dist / range * 0.5 + (def.rarity - 1) * 0.15;
+        if (dist > 60 || _v2.dot(fwd) <= 0) continue;
+        // inside the photo crop?
+        ndc.copy(a.p).project(cam);
+        if (Math.abs(ndc.x) > o.cropX || Math.abs(ndc.y) > o.cropY) continue;
+        // how big is it in the frame?
+        const span = a.s * (def.kind === 'jelly' || def.kind === 'inv' ? 1.0 : 0.8);
+        const frac = (2 * Math.atan(span / 2 / Math.max(dist, 0.05))) / fovV;
+        if (frac < 0.025) continue;
+        let reason: PhotoTarget['reason'] = 'ok';
+        if (frac < 0.06) reason = 'small';
+        if (dist > o.clear) reason = 'murky';
+        if (o.dark) {
+          const glows = !!def.mat?.glow;
+          const inBeam = o.lightOn && _v2.angleTo(fwd) < 0.5 && dist < 14;
+          if (!inBeam && !(glows && dist < 9)) reason = 'dark';
+        }
+        if (reason === 'ok' && this.occluded(cp, a.p)) reason = 'hidden';
+        const centred = 1 - Math.min(1, Math.hypot(ndc.x / o.cropX, ndc.y / o.cropY));
+        const score = (reason === 'ok' ? 3 : 0) + Math.min(frac, 0.5) * 4 + centred + (def.rarity - 1) * 0.1;
         if (score > bestScore) {
           bestScore = score;
-          best = { rt, agent: a, dist, angle: ang, inRange };
+          best = { rt, agent: a, dist, angle: _v2.angleTo(fwd), inRange: reason === 'ok', reason, frac };
         }
       }
     }
     return best;
+  }
+
+  /** Terrain between camera and subject? (coarse ray march against the height field) */
+  private occluded(from: THREE.Vector3, to: THREE.Vector3): boolean {
+    const n = 10;
+    for (let i = 1; i < n; i++) {
+      const t = i / n;
+      const x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t, z = from.z + (to.z - from.z) * t;
+      if (heightAt(x, z) > y + 0.15) return true;
+    }
+    return false;
   }
 
   nearestOf(id: string, from: THREE.Vector3): number {

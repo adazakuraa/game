@@ -15,7 +15,7 @@ export class ScatterSet {
     public viewDist = 85,
     cellSize = 70,
     private hiGeo?: THREE.BufferGeometry,
-    private hiDist = 8,
+    private hiDist = 3,
   ) {
     this.loGeo = geo;
     const buckets = new Map<string, ScatterItem[]>();

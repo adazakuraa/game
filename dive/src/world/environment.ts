@@ -6,11 +6,11 @@ import { clamp, lerp, mulberry32 } from '../utils/noise';
 
 const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
   // horizontal water color at ~5 m (linear RGB) and visibility in meters
-  lagoon: [0.07, 0.36, 0.42, 38],
-  reef: [0.04, 0.27, 0.4, 46],
-  rocky: [0.04, 0.24, 0.33, 40],
-  dropoff: [0.02, 0.17, 0.36, 56],
-  offshore: [0.012, 0.13, 0.34, 64],
+  lagoon: [0.035, 0.27, 0.36, 38],
+  reef: [0.02, 0.19, 0.34, 46],
+  rocky: [0.02, 0.17, 0.28, 40],
+  dropoff: [0.01, 0.12, 0.32, 56],
+  offshore: [0.006, 0.09, 0.3, 64],
   deep: [0.004, 0.06, 0.2, 60],
 };
 
@@ -294,7 +294,7 @@ export class Environment {
 
     // daylight
     const day = Math.exp(-depth / 24);
-    this.sun.intensity = 2.1 * day;
+    this.sun.intensity = 3.0 * day;
     // sun shadows: crisp in the shallows, softer and weaker with depth, off in the deep
     const sh = this.sun.shadow;
     sh.intensity = clamp(Math.exp(-depth / 22) * 1.05, 0, 0.92);
@@ -314,10 +314,11 @@ export class Environment {
     this.tmpCol.setRGB(0.45 + 0.55 * Math.exp(-depth / 6), 0.82 + 0.18 * Math.exp(-depth / 25), 1);
     this.sun.color.copy(this.tmpCol);
     UW.uSunCol.value.copy(this.tmpCol);
-    this.hemi.intensity = 0.85 * Math.exp(-depth / 34) + 0.015;
+    // ambient fill is low in the shallows so sunlit vs. shaded reads clearly; it takes over with depth
+    this.hemi.intensity = (0.38 + 0.25 * clamp(depth / 25, 0, 1)) * Math.exp(-depth / 40) + 0.015;
     this.hemi.color.setRGB(0.42 + 0.3 * attR, 0.78, 0.95);
     this.hemi.groundColor.setRGB(0.16 * attR + 0.03, 0.14 * att + 0.03, 0.1 * att + 0.04);
-    UW.uCaustic.value = clamp(Math.exp(-depth / 18) * 1.4, 0, 1.3);
+    UW.uCaustic.value = clamp(Math.exp(-depth / 18) * 1.1, 0, 1.0);
 
     // diver light
     const target = this.lightOn ? (depth > 120 ? 1.0 : 0.75) * this.lightPower : 0;
@@ -325,7 +326,7 @@ export class Environment {
     this.diverLight.distance = 30 + 14 * this.lightPower;
 
     // exposure: eyes adapt somewhat to darkness
-    this.exposure = lerp(this.exposure, 1.0 + clamp(depth / 60, 0, 1) * 0.55, 1 - Math.exp(-dt * 0.5));
+    this.exposure = lerp(this.exposure, 0.92 + clamp(depth / 60, 0, 1) * 0.6, 1 - Math.exp(-dt * 0.5));
     renderer.toneMappingExposure = this.exposure;
 
     // surface follows camera

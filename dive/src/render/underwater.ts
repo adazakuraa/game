@@ -111,6 +111,7 @@ type InjectOpts = {
   fragBeforeLights?: string; // runs after <normal_fragment_maps>
   fragDiffuse?: string; // runs after <color_fragment>, may modify diffuseColor
   fragEmissive?: string; // runs after <emissivemap_fragment>, may add to totalEmissiveRadiance
+  fragRough?: string; // runs after <roughnessmap_fragment>, may set roughnessFactor
   uniforms?: Record<string, { value: unknown }>;
   /** Triplanar baked detail (RGB normal + A albedo) in world space. */
   tri?: { tex: THREE.Texture; scale: number; strength: number; albedo: number; tex2?: THREE.Texture; scale2?: number; mix2?: string };
@@ -222,6 +223,7 @@ export function underwaterMaterial<T extends THREE.MeshStandardMaterial>(mat: T,
       shader.fragmentShader
         .replace('void main() {', `${UW_BUMP}\n${o.fragFuncs ?? ''}\nvoid main() {`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${o.fragEmissive ?? ''}`)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n${o.fragRough ?? ''}`)
         .replace('#include <color_fragment>', `#include <color_fragment>\n${o.fragDiffuse ?? ''}`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${o.fragBeforeLights ?? ''}`)
         .replace(

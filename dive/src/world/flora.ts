@@ -51,6 +51,78 @@ function rockGeometry(seed: number, detail = 2, squash = 0.7): THREE.BufferGeome
   return g;
 }
 
+/** Dome-shaped colony (brain / massive Porites): flat base sunk into the reef, lumpy top. */
+function domeColony(seed: number, segs: number, lump: number, freq: number, squash = 0.7): THREE.BufferGeometry {
+  let g: THREE.BufferGeometry = new THREE.SphereGeometry(1, segs, Math.max(4, segs >> 1), 0, Math.PI * 2, 0, Math.PI * 0.56);
+  g.deleteAttribute('uv');
+  g.deleteAttribute('normal');
+  g = mergeVertices(g);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const n = 1 + lump * (simplex2(x * freq + seed, z * freq + y * freq) * 0.7 + simplex2(x * freq * 2.3 - seed, z * freq * 2.3) * 0.3);
+    p.setXYZ(i, x * n, Math.max(-0.12, y * n * squash - 0.08), z * n);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Cauliflower coral (Pocillopora): a cushion of stubby, round-tipped branches. */
+function cauliflowerColony(seed: number): THREE.BufferGeometry {
+  const r = mulberry32(seed);
+  const parts: THREE.BufferGeometry[] = [];
+  const base = new THREE.SphereGeometry(0.55, 12, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  base.scale(1, 0.45, 1);
+  parts.push(base);
+  for (let i = 0; i < 16; i++) {
+    const a = r() * Math.PI * 2;
+    const d = Math.sqrt(r()) * 0.5;
+    const h = 0.22 + r() * 0.2 - d * 0.15;
+    const rad = 0.08 + r() * 0.035;
+    const c = new THREE.CylinderGeometry(rad * 1.1, rad * 0.9, h, 6, 1, true);
+    c.translate(0, h / 2, 0);
+    const cap = new THREE.SphereGeometry(rad * 1.15, 6, 4);
+    cap.translate(0, h, 0);
+    const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(a) * d * 1.1, 0, -Math.cos(a) * d * 1.1));
+    const y0 = 0.25 * Math.sqrt(Math.max(0, 1 - (d / 0.55) ** 2)) - 0.04;
+    for (const q of [c, cap]) {
+      q.applyQuaternion(tilt);
+      q.translate(Math.cos(a) * d, y0, Math.sin(a) * d);
+      parts.push(q);
+    }
+  }
+  const g = mergeGeometries(parts.map((q) => { q.deleteAttribute('uv'); return q.index ? q.toNonIndexed() : q; }))!;
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Foliose / plating coral: overlapping thin plates with upturned edges. */
+function plateColony(seed: number): THREE.BufferGeometry {
+  const r = mulberry32(seed);
+  const parts: THREE.BufferGeometry[] = [];
+  for (let k = 0; k < 5; k++) {
+    const rad = 0.35 + r() * 0.3;
+    const plate = new THREE.CylinderGeometry(rad, rad * 0.95, 0.025, 22, 3);
+    const p = plate.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), z = p.getZ(i);
+      const rr = Math.hypot(x, z) / rad;
+      const ang = Math.atan2(z, x);
+      const w = 1 + 0.18 * Math.sin(ang * 3 + k) ;
+      p.setXYZ(i, x * w, p.getY(i) + rr * rr * 0.16 + 0.03 * Math.sin(ang * 7), z * w);
+    }
+    plate.rotateX((r() - 0.5) * 0.6);
+    plate.rotateZ((r() - 0.5) * 0.6);
+    plate.translate((r() - 0.5) * 0.5, 0.06 + k * 0.09, (r() - 0.5) * 0.5);
+    tipColors(plate, (y) => 0.3 + y * 1.5);
+    plate.deleteAttribute('uv');
+    parts.push(plate.toNonIndexed());
+  }
+  const g = mergeGeometries(parts)!;
+  g.computeVertexNormals();
+  return g;
+}
+
 function tipColors(geo: THREE.BufferGeometry, f: (y: number, i: number) => number) {
   const n = geo.attributes.position.count;
   const cols = new Float32Array(n * 3);
@@ -563,7 +635,7 @@ export class Flora {
 
     // ---- reef corals
     const reefOk = (x: number, z: number) => zoneAt(x, z) === 'reef' && slopeAt(x, z) < 0.55 && (bommieAt(x, z) > 0.9 || r() < 0.18);
-    const brainG = rockGeometry(3, 2, 0.62);
+    const brainG = domeColony(3, 12, 0.12, 1.4, 0.75);
     const brains = sample(420, [-200, 200, 120, 345], reefOk, 30);
     add(brainG, brainMat, brains.map(([x, z]) => {
       const c = [color(0.1, 0.35, 0.55), color(0.28, 0.3, 0.5), color(0.08, 0.45, 0.5), color(0.6, 0.2, 0.55)][Math.floor(r() * 4)];
@@ -624,7 +696,7 @@ export class Flora {
       fragDiffuse: '{ float k = uwNoise( vUwPos * 14.0 ); diffuseColor.rgb *= 0.7 + 0.45 * k; }',
     });
     this.mats.push(bushMat);
-    const bushG = rockGeometry(21, 1, 0.8);
+    const bushG = domeColony(21, 9, 0.35, 3.2, 0.7);
     const bushes = sample(900, [-200, 200, 125, 345], reefOk, 30);
     add(bushG, bushMat, bushes.map(([x, z]) => {
       const p = coralPalette[Math.floor(r() * coralPalette.length)];
@@ -655,11 +727,13 @@ export class Flora {
           else carpetStag.push({ m: placeMatrix(px, pz, 0.35 + r() * 0.45, r, 0.4, 0.03), c });
         }
       }
-      const smallBrain = rockGeometry(31, 1, 0.6);
+      const smallBrain = domeColony(31, 9, 0.12, 1.4, 0.7);
       const smallStag = corymboseCoral(41);
-      add(bushG, bushMat, carpetBush, 42, 48, rockGeometry(21, 2, 0.8));
-      add(smallBrain, brainMat, carpetBrain, 42, 48, rockGeometry(31, 2, 0.6));
-      add(smallStag, coralMat, carpetStag, 38, 48);
+      add(bushG, bushMat, carpetBush, 42, 32, cauliflowerColony(21));
+      add(smallBrain, brainMat, carpetBrain, 42, 32, domeColony(31, 16, 0.1, 1.4, 0.7));
+      // split the branching carpet: half digitate cushions, half foliose plates
+      add(smallStag, coralMat, carpetStag.filter((_, i) => i % 2 === 0), 38, 48);
+      add(plateColony(51), coralMat, carpetStag.filter((_, i) => i % 2 === 1), 38, 48);
       this.carpetCount = carpetBush.length + carpetBrain.length + carpetStag.length;
     }
     const softMat = underwaterMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: THREE.DoubleSide }), {
