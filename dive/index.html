@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#021624" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap" rel="stylesheet" />
+    <title>BLUE DEPTHS</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="game-canvas" aria-label="水中ゲーム画面"></canvas>
+      <div id="mask" aria-hidden="true"></div>
+      <div id="narc" aria-hidden="true"></div>
+      <div id="flash" aria-hidden="true"></div>
+      <div id="fade" aria-hidden="true"></div>
+      <div id="touch-surface"></div>
+      <div id="stick" aria-hidden="true"><div id="knob"></div></div>
+
+      <!-- ===================== HUD ===================== -->
+      <section id="hud" class="hidden" aria-live="polite">
+        <div id="hud-depth" class="glass">
+          <div class="depth-row"><b id="depth-value">0.0</b><span class="unit">m</span></div>
+          <div class="sub-row"><span id="zone-name">サンゴ礁</span></div>
+          <div class="sub-row dim"><span id="heading">N</span><span class="sep"></span><span>最大 <span id="max-depth">0</span>m</span></div>
+          <div id="depth-warn" class="hidden">深度注意</div>
+        </div>
+        <div id="hud-right">
+          <div id="air" class="glass">
+            <svg viewBox="0 0 64 64" class="ring">
+              <circle cx="32" cy="32" r="27" class="track" />
+              <circle cx="32" cy="32" r="27" class="fill" id="air-ring" />
+            </svg>
+            <div class="air-text"><b id="air-value">200</b><small>bar</small></div>
+            <div class="air-label">エア</div>
+            <div class="air-time" id="air-time">--:--</div>
+          </div>
+          <button id="dex-chip" class="glass chip" type="button" aria-label="図鑑">
+            <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-4.5A2.5 2.5 0 0 0 13 6.5V20a2.5 2.5 0 0 1 2.5-2.5H20z"/></svg>
+            <span><b id="dex-count">0</b>/<span id="dex-total">33</span></span>
+            <i id="dex-new" class="hidden">+0</i>
+          </button>
+        </div>
+        <div id="reticle"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div id="ret-label"></div></div>
+        <div id="toast"></div>
+        <button id="surface-btn" class="hidden" type="button">
+          <svg viewBox="0 0 24 24"><path d="M12 4l-7 7h4v9h6v-9h4z"/></svg><span id="surface-text">浮上してボートに戻る</span>
+        </button>
+        <div id="controls">
+          <button id="btn-light" class="ctl" type="button" aria-label="ライト">
+            <svg viewBox="0 0 24 24"><path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/></svg>
+          </button>
+          <button id="btn-boost" class="ctl hidden" type="button" aria-label="スクーター">
+            <svg viewBox="0 0 24 24"><path d="M3 12l7-5v3h8l3 2-3 2h-8v3z"/></svg>
+          </button>
+          <div class="updown">
+            <button id="btn-up" class="ctl" type="button" aria-label="上昇"><svg viewBox="0 0 24 24"><path d="M12 6l7 9H5z"/></svg></button>
+            <button id="btn-down" class="ctl" type="button" aria-label="下降"><svg viewBox="0 0 24 24"><path d="M12 18L5 9h14z"/></svg></button>
+          </div>
+          <button id="btn-shutter" type="button" aria-label="シャッター">
+            <svg viewBox="0 0 24 24"><path d="M9 4h6l1.5 2H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5z"/><circle cx="12" cy="12.5" r="3.6" fill="#0b2a3a"/></svg>
+          </button>
+        </div>
+        <button id="btn-pause" class="glass icon" type="button" aria-label="メニュー">
+          <svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+        </button>
+        <div id="discover" class="hidden">
+          <img id="disc-photo" alt="" />
+          <div class="disc-body">
+            <div class="disc-tag" id="disc-tag">新種発見</div>
+            <div class="disc-name" id="disc-name"></div>
+            <div class="disc-sci" id="disc-sci"></div>
+          </div>
+        </div>
+        <div id="help" class="hidden">
+          <div><b>左側をドラッグ</b> 移動（見ている方向へ泳ぐ）</div>
+          <div><b>右側をドラッグ</b> 見回す</div>
+          <div><b>▲▼</b> 浮上・潜降　<b>📷</b> 撮影</div>
+        </div>
+      </section>
+
+      <!-- ===================== BOAT / TITLE ===================== -->
+      <section id="title" class="screen">
+        <div class="title-wrap">
+          <header class="brand">
+            <div class="brand-kicker">DIVE LOG</div>
+            <h1>BLUE<span>DEPTHS</span></h1>
+            <p>海へ潜り、出会った生き物を写真に収めよう</p>
+          </header>
+          <div class="panel" id="points"></div>
+          <div class="row-actions">
+            <button id="open-dex" type="button" class="btn sec">
+              <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-4.5A2.5 2.5 0 0 0 13 6.5V20a2.5 2.5 0 0 1 2.5-2.5H20z"/></svg>
+              図鑑 <b id="t-dex">0/33</b>
+            </button>
+            <button id="toggle-sound" type="button" class="btn sec icon-only" aria-label="サウンド">
+              <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="snd-wave" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+            </button>
+          </div>
+          <div class="panel gear" id="gear"></div>
+        </div>
+      </section>
+
+      <!-- ===================== PAUSE ===================== -->
+      <section id="pause" class="screen hidden">
+        <div class="modal">
+          <h2>一時停止</h2>
+          <button id="resume" type="button" class="btn pri">潜水に戻る</button>
+          <button id="pause-dex" type="button" class="btn sec">図鑑を見る</button>
+          <button id="abort" type="button" class="btn sec">浮上して終了</button>
+          <p class="note">途中で終了しても、浮上するので写真は保存されます。</p>
+        </div>
+      </section>
+
+      <!-- ===================== RESULT ===================== -->
+      <section id="result" class="screen hidden">
+        <div class="modal wide">
+          <div class="res-kicker" id="res-kicker">ダイブ終了</div>
+          <h2 id="res-title">お疲れさまでした</h2>
+          <div class="res-stats" id="res-stats"></div>
+          <div class="res-list" id="res-list"></div>
+          <div class="res-unlock" id="res-unlock"></div>
+          <button id="res-ok" type="button" class="btn pri">ボートへ戻る</button>
+        </div>
+      </section>
+
+      <!-- ===================== DEX ===================== -->
+      <section id="dex" class="screen hidden">
+        <div class="dex-wrap">
+          <header class="dex-head">
+            <h2>海の生き物図鑑</h2>
+            <span class="dex-prog"><b id="dx-count">0</b> / <span id="dx-total">33</span></span>
+            <button id="dex-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" fill="none"/></svg></button>
+          </header>
+          <div id="dex-grid"></div>
+        </div>
+        <div id="dex-detail" class="hidden">
+          <div class="modal wide">
+            <img id="dd-photo" alt="" />
+            <div class="dd-zone" id="dd-zone"></div>
+            <h3 id="dd-name"></h3>
+            <div class="dd-sci" id="dd-sci"></div>
+            <div class="dd-meta" id="dd-meta"></div>
+            <p id="dd-desc"></p>
+            <button id="dd-close" type="button" class="btn sec">閉じる</button>
+          </div>
+        </div>
+      </section>
+
+      <div id="loading" class="screen"><div class="spinner"></div><p>海を生成しています…</p></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
