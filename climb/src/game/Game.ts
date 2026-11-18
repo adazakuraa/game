@@ -294,6 +294,12 @@ export class Game {
     writeSave({ exp: this.selected, stage: this.stageIndex, day: this.day, acclim: this.acclim, frost: this.frostCarry, spares: this.spares });
   }
 
+  /** Save as standing at the camp this leg ended at (i.e. the start of the next leg). */
+  private saveAtCamp(): void {
+    const last = EXPEDITIONS[this.selected].stages.length - 1;
+    writeSave({ exp: this.selected, stage: Math.min(last, this.stageIndex + 1), day: this.day, acclim: this.acclim, frost: this.frostCarry, spares: this.spares });
+  }
+
   private newExpedition(exp: 'everest' | 'k2'): void {
     this.selected = exp;
     this.day = 1;
@@ -323,8 +329,9 @@ export class Game {
     const campAlt = this.world!.def.summitAltitude;
     this.acclim = Math.max(this.acclim, campAlt + 300) + 350;
     this.physio.frostbite = Math.max(0, this.physio.frostbite - 15);
+    this.frostCarry = Math.max(0, this.frostCarry - 15);
     this.day += 1;
-    this.save();
+    this.saveAtCamp();
     this.audio.zip();
     this.showCamp(true);
   }
@@ -840,9 +847,7 @@ export class Game {
         const campAlt = w.def.summitAltitude;
         this.acclim = Math.max(this.acclim, campAlt + 300);
         this.frostCarry = Math.max(0, this.physio.frostbite * 0.8 - 5);
-        this.stageIndex += 1; // progress is saved at the new camp
-        this.save();
-        this.stageIndex -= 1;
+        this.saveAtCamp();
         setTimeout(() => this.showCamp(false), 1200);
       }
       return;
@@ -881,8 +886,8 @@ export class Game {
     const rows: [string, string][] = [
       ['最高到達点', `${Math.round(this.maxAltitude).toLocaleString('en-US')}m`],
       ['時刻', formatClock(this.hours)],
-      ['行動時間', `${Math.floor((this.hours - START_HOURS))}時間${Math.floor(((this.hours - START_HOURS) % 1) * 60)}分`],
-      ['残り酸素', `${Math.round((this.physio.bottle / BOTTLE_LITERS) * 100)}% +${this.physio.spares}本`],
+      ['行動時間', (() => { const h = Math.max(0, this.hours - w.def.startHours); return `${Math.floor(h)}時間${Math.floor((h % 1) * 60)}分`; })()],
+      ['残り酸素', this.physio.hasO2 ? `${Math.round((this.physio.bottle / BOTTLE_LITERS) * 100)}% +${this.physio.spares}本` : '使用なし'],
       ['凍傷', this.physio.frostbite > 5 ? `${Math.round(this.physio.frostbite)}` : 'なし'],
       ['ルート', w.def.routeName],
       ...extra,
