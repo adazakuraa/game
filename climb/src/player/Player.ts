@@ -239,6 +239,13 @@ export class Player {
       else if (this.descending && d.t < 0.03) this.atAnchor = -1;
     }
     if (input.clipPressed) this.handleClipAction();
+    if (this.mode !== 'walk') {
+      // rope work started this frame: stand still for it
+      this.speed = 0;
+      this.pos.y = this.groundAt(this.pos.x, this.pos.z).y;
+      this.updateRoute();
+      return;
+    }
 
     this.resting = input.rest || ctx.collapsed;
     const wantMove = !this.resting && (Math.abs(input.moveX) > 0.05 || Math.abs(input.moveY) > 0.05);
