@@ -838,7 +838,8 @@ export class Game {
       }
       this.seracTimer -= dt;
       if (this.seracTimer <= 0 && this.seracWarn < 0) {
-        this.seracWarn = 4.5;
+        // the warning stays up until the debris has come through (~5 s to arrive, ~2 s to pass)
+        this.seracWarn = 7;
         const isRock = hz.kind === 'rock';
         const offset = (this.rng() - 0.5) * (isRock ? 6 : 10);
         const sLane = clamp(p.routeS + offset, hz.s0, hz.s1);
@@ -861,7 +862,7 @@ export class Game {
         const toLane = this.tmpV.copy(this.seracLane).sub(hz.origin).setY(0).normalize();
         const rock = hz.kind === 'rock';
         // Falling ice/rock reaches the lane ~5 s after the warning: enough to step clear if you react.
-        const dist = hz.kind === 'icefall' ? 32 : 55;
+        const dist = hz.kind === 'icefall' ? 32 : 28;
         const n = rock ? 9 : 7;
         for (let i = 0; i < n; i++) {
           const mesh = new THREE.Mesh(this.chunkGeo, rock ? this.rockChunkMat : this.chunkMat);
@@ -869,10 +870,10 @@ export class Game {
           mesh.scale.setScalar(sc);
           mesh.castShadow = true;
           const start = this.seracLane.clone().addScaledVector(toLane, -dist - this.rng() * 10);
-          start.y = w.field.height(start.x, start.z) + (rock ? 10 : 18) + this.rng() * 8;
+          start.y = Math.max(w.field.height(start.x, start.z), this.seracLane.y) + (rock ? 9 : 14) + this.rng() * 5;
           start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 1.6 : 3));
           this.scene.add(mesh);
-          const speed = hz.kind === 'icefall' ? 6 + this.rng() * 1 : 4 + this.rng() * 3;
+          const speed = hz.kind === 'icefall' ? 6 + this.rng() * 1 : 5 + this.rng() * 1.2;
           this.chunks.push({ mesh, pos: start, vel: toLane.clone().multiplyScalar(speed), life: 9 });
         }
       }
