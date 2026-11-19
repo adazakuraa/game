@@ -860,6 +860,15 @@ export class Game {
         this.hud.banner(TEXT[hz.kind].warn[0], warnSub, 'danger', 4000);
         this.chunkKind = hz.kind;
         const toLane = this.tmpV.copy(this.seracLane).sub(hz.origin).setY(0).normalize();
+        const laneDir = w.route.directionAt(sLane);
+        if (hz.kind !== 'rock') {
+          // Ice comes straight across the route at the lane (from the serac's side), so the
+          // danger is the lane the warning refers to, not a long diagonal sweep.
+          const rd = w.route.directionAt(sLane);
+          const nrm = new THREE.Vector3(-rd.z, 0, rd.x);
+          if (nrm.dot(toLane) < 0) nrm.multiplyScalar(-1);
+          toLane.copy(nrm);
+        }
         const rock = hz.kind === 'rock';
         // Falling ice/rock reaches the lane ~5 s after the warning: enough to step clear if you react.
         const dist = hz.kind === 'icefall' ? 32 : 28;
@@ -871,7 +880,7 @@ export class Game {
           mesh.castShadow = true;
           const start = this.seracLane.clone().addScaledVector(toLane, -dist - this.rng() * 10);
           start.y = Math.max(w.field.height(start.x, start.z), this.seracLane.y) + (rock ? 9 : 14) + this.rng() * 5;
-          start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 1.6 : 3));
+          start.addScaledVector(rock ? hz.along : laneDir, (this.rng() - 0.5) * (rock ? 1.6 : 3));
           this.scene.add(mesh);
           const speed = hz.kind === 'icefall' ? 6 + this.rng() * 1 : 5 + this.rng() * 1.2;
           this.chunks.push({ mesh, pos: start, vel: toLane.clone().multiplyScalar(speed), life: 9 });
