@@ -9,10 +9,17 @@ export class Viewmodel {
   private readonly axe = new THREE.Group();
   private readonly jumar = new THREE.Group();
   private readonly ropeBit: THREE.Mesh;
+  /** Locking carabiner on a sling clipped to the harness. */
+  private readonly biner = new THREE.Group();
+  private readonly gate: THREE.Mesh;
+  private readonly sling: THREE.Mesh;
+  private readonly tmpA = new THREE.Vector3();
+  private readonly tmpB = new THREE.Vector3();
   readonly sun = new THREE.DirectionalLight(0xffffff, 2);
   readonly hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6);
   readonly lamp = new THREE.PointLight(0xfff2dd, 0, 3, 1.5);
   private t = 0;
+  private reachK = 0;
   /** 0 = arm lowered out of view, 1 = raised into view */
   private rPres = 0;
   private lPres = 0;
@@ -122,6 +129,31 @@ export class Viewmodel {
     this.jumar.add(this.ropeBit);
     this.left.add(this.jumar);
 
+    // Carabiner: D-shaped aluminium body with a spring gate, held in the left mitten.
+    const alu = new THREE.MeshStandardMaterial({ color: 0xd8a02a, roughness: 0.35, metalness: 0.85 });
+    // D path: straight spine on the left, big curve on the right; the gap on the right side is the gate.
+    const dPts = [
+      new THREE.Vector3(-0.022, -0.045, 0), new THREE.Vector3(-0.024, 0.0, 0), new THREE.Vector3(-0.022, 0.045, 0),
+      new THREE.Vector3(-0.005, 0.062, 0), new THREE.Vector3(0.018, 0.058, 0), new THREE.Vector3(0.03, 0.035, 0),
+      new THREE.Vector3(0.032, 0.022, 0),
+    ];
+    const dTail = [new THREE.Vector3(0.03, -0.03, 0), new THREE.Vector3(0.016, -0.055, 0), new THREE.Vector3(-0.004, -0.06, 0), new THREE.Vector3(-0.022, -0.045, 0)];
+    const body = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(dPts), 24, 0.0058, 6, false), alu);
+    const tail = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(dTail), 12, 0.0058, 6, false), alu);
+    this.biner.add(body, tail);
+    // Gate hinges at the bottom right and swings inward when opened.
+    this.gate = new THREE.Mesh(new THREE.CylinderGeometry(0.0045, 0.0045, 0.052, 6).translate(0, 0.026, 0), new THREE.MeshStandardMaterial({ color: 0xc9d0d6, metalness: 0.95, roughness: 0.25 }));
+    this.gate.position.set(0.03, -0.03, 0);
+    this.biner.add(this.gate);
+    // Held by the spine just beyond the mitten's fingertips, facing the eye.
+    this.biner.position.set(0.02, 0.085, -0.2);
+    this.biner.rotation.set(0.25, 0.0, -0.2);
+    this.biner.scale.setScalar(1.25);
+    this.left.add(this.biner);
+    // Sling (cow's tail) from the harness up to the carabiner; oriented every frame.
+    this.sling = new THREE.Mesh(new THREE.CylinderGeometry(0.0045, 0.0045, 1, 6).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ color: 0x2a5bd1, roughness: 0.8 }));
+    this.rig.add(this.sling);
+
     this.rig.add(this.right, this.left);
     this.rig.traverse((o) => { o.frustumCulled = false; });
   }
@@ -132,11 +164,13 @@ export class Viewmodel {
     s: {
       stepPhase: number; speed: number; resting: boolean; clipped: boolean; mode: string; actionT: number;
       arresting: boolean; breath: number; shake: number; shiver: number; aspect: number; slope: number;
+      actionKind: 'clip' | 'unclip' | 'transfer' | null; actionProgress: number; target: THREE.Vector3; anchor: THREE.Vector3;
     },
   ): void {
     this.t += dt;
     this.rig.position.copy(camera.position);
     this.rig.quaternion.copy(camera.quaternion);
+    this.rig.updateMatrixWorld(true);
     const walk = Math.min(1, s.speed / 0.8);
     const ph = s.stepPhase * Math.PI;
     const breathe = Math.sin(s.breath * Math.PI * 2) * 0.008;
@@ -172,18 +206,86 @@ export class Viewmodel {
     let lRotX = 0.2;
     // Jumar: slid up the rope with each step.
     if (s.clipped) { lx = -0.2; ly = -0.36 + Math.sin(ph) * 0.03 * walk; lz = -0.58 - Math.max(0, Math.sin(ph)) * 0.05 * walk; lRotX = 0.5; }
-    if (s.mode === 'transfer' || s.mode === 'clipping') {
-      const k = Math.sin(Math.min(1, s.actionT / 1.5) * Math.PI);
-      lx = -0.12; ly = -0.24 + k * 0.05; lz = -0.62 - k * 0.08; lRotX = 0.9;
+    // Rope work: reach the carabiner out to the rope, open the gate, snap it shut, bring the hand back.
+    let gateOpen = 0;
+    let binerInHand = s.clipped;
+    if (s.actionKind) {
+      const p = s.actionProgress;
+      // target point in camera space, kept within arm's reach
+      const local = (pt: THREE.Vector3) => {
+        // Put the hand on the line of sight to the rope point, at arm's length, so on
+        // screen it lands exactly on the rope.
+        const v = this.tmpA.copy(pt);
+        this.rig.worldToLocal(v);
+        v.normalize().multiplyScalar(0.5);
+        if (v.z > -0.3) v.z = -0.3;
+        return v.clone();
+      };
+      const rest = new THREE.Vector3(lx, ly, lz);
+      const ease = (t: number) => t * t * (3 - 2 * t);
+      let reach = 0;
+      let tgt = local(s.target);
+      if (s.actionKind === 'transfer') {
+        // 1) clip the safety carabiner past the anchor, 2) slide the hand back via the anchor to move the jumar
+        if (p < 0.5) {
+          reach = ease(Math.min(1, p / 0.25)) * (p < 0.4 ? 1 : 1 - (p - 0.4) / 0.1 * 0.3);
+          gateOpen = p > 0.22 && p < 0.36 ? Math.sin(((p - 0.22) / 0.14) * Math.PI) : 0;
+        } else {
+          tgt = local(s.anchor);
+          reach = Math.sin(((p - 0.5) / 0.5) * Math.PI) * 0.9;
+        }
+        binerInHand = true;
+      } else {
+        reach = p < 0.45 ? ease(p / 0.45) : p < 0.7 ? 1 : 1 - ease((p - 0.7) / 0.3);
+        gateOpen = p > 0.42 && p < 0.66 ? Math.sin(((p - 0.42) / 0.24) * Math.PI) : 0;
+        binerInHand = s.actionKind === 'clip' ? true : p < 0.7;
+      }
+      // offset so the carabiner's gate (not the mitten) meets the rope on screen
+      const pos = rest.lerp(tgt.add(new THREE.Vector3(-0.07, -0.05, 0.17)), reach);
+      lx = pos.x; ly = pos.y; lz = pos.z;
+      lRotX = 0.4 + reach * 0.35;
+      this.reachK = reach;
     }
+    this.gate.rotation.z = -gateOpen * 0.9;
+    this.biner.visible = binerInHand;
+    this.lPres = s.actionKind ? 1 : this.lPres;
     if (s.resting) { ly -= 0.06; }
     ly -= (1 - this.lPres) * 0.5;
     this.left.visible = this.lPres > 0.02;
     this.right.visible = this.rPres > 0.02;
     this.left.position.set((lx - shiver) * ax, ly, lz);
     this.left.rotation.set(lRotX, 0.1, 0);
-    this.jumar.visible = s.clipped || s.mode === 'transfer';
-    this.ropeBit.visible = s.clipped;
+    if (s.actionKind) {
+      // Aim the forearm from the left shoulder to the hand so the arm enters from the lower left.
+      this.left.updateMatrixWorld();
+      const handW = this.left.getWorldPosition(this.tmpB.set(0, 0, 0));
+      const back = this.tmpA.set(-0.42, -0.62, 0.25);
+      this.rig.localToWorld(back);
+      const dir = back.sub(handW).normalize();
+      // +Z of the arm group points back toward the shoulder
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+      const rigQ = this.rig.getWorldQuaternion(new THREE.Quaternion());
+      this.left.quaternion.copy(rigQ.invert().multiply(q));
+      this.left.rotateZ(-0.5 * this.reachK);
+    } else {
+      this.reachK = 0;
+    }
+    this.jumar.visible = s.clipped && !s.actionKind;
+    this.ropeBit.visible = s.clipped && !s.actionKind;
+    // Sling from the harness (below, slightly left of view) to the carabiner in hand.
+    this.rig.updateMatrixWorld(true);
+    this.sling.visible = this.biner.visible && this.left.visible;
+    if (this.sling.visible) {
+      const from = this.tmpA.set(-0.22, -0.85, 0.05);
+      // attach to the bottom of the carabiner's D
+      this.biner.localToWorld(this.tmpB.set(0.0, -0.055, 0));
+      this.rig.worldToLocal(this.tmpB);
+      const d = this.tmpB.clone().sub(from);
+      const len = d.length();
+      this.sling.position.copy(from);
+      this.sling.scale.set(1, len, 1);
+      this.sling.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.divideScalar(len || 1));
+    }
 
     if (s.shake > 0) {
       this.rig.position.x += (Math.random() - 0.5) * 0.01 * s.shake;

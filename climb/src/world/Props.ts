@@ -190,7 +190,8 @@ export class Props {
       g.setAttribute('color', new THREE.BufferAttribute(col, 3));
       return g;
     };
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0, flatShading: true });
+    // Blocks carry flat facet normals, caps smooth ones; no flatShading so the caps stay soft.
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0 });
     // Thin-edge glow: light scattering through ice shows as blue at grazing angles.
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
@@ -239,11 +240,53 @@ export class Props {
     };
     mat.customProgramCacheKey = () => 'serac-ice-v4';
 
-    const variants = [makeBlock(1.0, 0.8), makeBlock(1.4, 1.2), makeBlock(0.7, 0.5), makeBlock(1.8, 1.4)];
+    // Rounded wind-packed snow cap that softens a block's crown.
+    const makeCap = (w: number): THREE.BufferGeometry => {
+      const c0 = new THREE.IcosahedronGeometry(0.5, 2);
+      c0.deleteAttribute('normal');
+      c0.deleteAttribute('uv');
+      const c = mergeVertices(c0, 1e-4);
+      const cp = c.getAttribute('position');
+      for (let i = 0; i < cp.count; i++) {
+        const y = cp.getY(i);
+        const lump = 1 + (rnd() - 0.5) * 0.12;
+        // domed, sunk into the crown: no rim sticking out past the walls
+        cp.setXYZ(i, cp.getX(i) * w * lump, Math.max(-0.25, y) * 0.55, cp.getZ(i) * w * lump);
+      }
+      c.computeVertexNormals();
+      const cc = c.toNonIndexed();
+      const col = new Float32Array(cc.getAttribute('position').count * 3).fill(0.95);
+      for (let i = 2; i < col.length; i += 3) col[i] = 0.985;
+      cc.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      return cc;
+    };
+    /** A serac: a main block with leaning, broken neighbours, each under a snow cap. */
+    const makeCluster = (parts: number): THREE.BufferGeometry => {
+      const pieces: THREE.BufferGeometry[] = [];
+      for (let k = 0; k < parts; k++) {
+        const tall = k === 0 ? 1 : 0.45 + rnd() * 0.45;
+        const g = makeBlock(tall, 0.6 + rnd() * 0.8);
+        const sc = k === 0 ? 1 : 0.45 + rnd() * 0.35;
+        const ang = rnd() * Math.PI * 2;
+        const off = k === 0 ? 0 : 0.32 + rnd() * 0.2;
+        const m = new THREE.Matrix4().compose(
+          new THREE.Vector3(Math.cos(ang) * off, k === 0 ? 0 : -0.05, Math.sin(ang) * off),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.35, rnd() * 6, (rnd() - 0.5) * 0.35)),
+          new THREE.Vector3(sc, sc, sc),
+        );
+        g.applyMatrix4(m);
+        pieces.push(g);
+        const cap = makeCap(0.62);
+        cap.applyMatrix4(new THREE.Matrix4().makeTranslation(0, tall * 0.82, 0).premultiply(m));
+        pieces.push(cap);
+      }
+      return mergeGeometries(pieces);
+    };
+    const variants = [makeCluster(3), makeCluster(4), makeCluster(2), makeCluster(5), makeCluster(3)];
     const debris = [makeBlock(0.6, 1.5), makeBlock(0.45, 2.0)];
-    const perVariant = 26;
+    const perVariant = 10;
     const meshes = variants.map((g) => new THREE.InstancedMesh(g, mat, perVariant));
-    const debrisMeshes = debris.map((g) => new THREE.InstancedMesh(g, mat, 70));
+    const debrisMeshes = debris.map((g) => new THREE.InstancedMesh(g, mat, 40));
     const used = new Array(variants.length).fill(0);
     const dUsed = [0, 0];
     const m4 = new THREE.Matrix4();
@@ -256,7 +299,7 @@ export class Props {
       if (this.route.crevasseS.some((cs) => Math.abs(cs - sAt) < 10)) continue;
       const p = this.route.pointAt(sAt);
       const dir = this.route.directionAt(sAt);
-      const lat = (this.rng() < 0.5 ? -1 : 1) * (8 + Math.pow(this.rng(), 1.3) * 55);
+      const lat = (this.rng() < 0.5 ? -1 : 1) * (12 + Math.pow(this.rng(), 1.3) * 55);
       const x = p.x - dir.z * lat, z = p.z + dir.x * lat;
       // Seracs are broad blocks rather than pillars: width usually exceeds height.
       const size = 7 + this.rng() * 9;
@@ -268,7 +311,7 @@ export class Props {
       const n = 1 + Math.floor(this.rng() * 3);
       for (let k = 0; k < n; k++) {
         const dv = k % 2;
-        if (dUsed[dv] >= 70) continue;
+        if (dUsed[dv] >= 40) continue;
         const a = this.rng() * Math.PI * 2;
         const r = size * (0.6 + this.rng() * 0.6);
         const dx = x + Math.cos(a) * r, dz = z + Math.sin(a) * r;

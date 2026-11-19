@@ -78,6 +78,37 @@ export class Body {
     this.group.add(this.shadowRig);
   }
 
+  private tether: THREE.Mesh | null = null;
+
+  /** Cow's-tail sling from the harness to the carabiner on the fixed rope (null hides it). */
+  setTether(attach: THREE.Vector3 | null, pos: THREE.Vector3, yaw: number): void {
+    if (!this.tether) {
+      this.tether = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.009, 0.009, 1, 6).translate(0, 0.5, 0),
+        new THREE.MeshStandardMaterial({ color: 0x2a5bd1, roughness: 0.8 }),
+      );
+      this.tether.castShadow = true;
+      this.tether.frustumCulled = false;
+      const biner = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.006, 6, 14), new THREE.MeshStandardMaterial({ color: 0xd8a02a, metalness: 0.85, roughness: 0.35 }));
+      biner.name = 'tetherBiner';
+      this.group.add(this.tether, biner);
+      this.tether.userData.biner = biner;
+    }
+    const biner = this.tether.userData.biner as THREE.Mesh;
+    if (!attach) { this.tether.visible = false; biner.visible = false; return; }
+    const fwd = this.fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const harness = new THREE.Vector3(pos.x + fwd.x * 0.12, pos.y + 0.98, pos.z + fwd.z * 0.12);
+    const d = attach.clone().sub(harness);
+    const len = Math.min(d.length(), 1.4);
+    d.normalize();
+    // the sling hangs: shorten the visible straight part and let the carabiner sit on the rope
+    this.orient(this.tether, harness, harness.clone().addScaledVector(d, len));
+    this.tether.visible = true;
+    biner.visible = true;
+    biner.position.copy(harness).addScaledVector(d, len);
+    biner.lookAt(attach.clone().add(new THREE.Vector3(0, 1, 0)));
+  }
+
   /**
    * pos: point on the ground under the player; yaw: facing; stepPhase: stride counter;
    * ground: height lookup (includes ladders).

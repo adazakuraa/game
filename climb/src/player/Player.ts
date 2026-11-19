@@ -55,6 +55,13 @@ export class Player {
   slideStartY = 0;
   arresting = false;
   actionT = 0;
+  /** total length of the current clip/transfer/unclip action (s) */
+  actionDur = 1;
+  actionKind: 'clip' | 'unclip' | 'transfer' | null = null;
+  /** where on the rope the hand is working (world) */
+  readonly actionTarget = new THREE.Vector3();
+  /** for transfers: the anchor being passed */
+  readonly actionAnchor = new THREE.Vector3();
   private pendingClip: RopeSegment | null = null;
   private pendingUnclip = false;
   shake = 0;
@@ -135,6 +142,17 @@ export class Player {
     return { dist: Math.hypot(this.pos.x - px, this.pos.z - pz), t, px, pz };
   }
 
+  /** Point where the carabiner rides on the rope (world). */
+  attachPoint(out: THREE.Vector3): THREE.Vector3 | null {
+    if (!this.clip) return null;
+    return this.route.ropePoint(this.clip, this.ropeT(), out);
+  }
+
+  /** 0..1 progress through the current rope action. */
+  get actionProgress(): number {
+    return this.actionKind ? 1 - Math.max(0, this.actionT) / this.actionDur : 0;
+  }
+
   ropeT(): number {
     if (!this.clip) return 0;
     return clamp(this.distToSegment(this.clip).t, 0, 1);
@@ -181,6 +199,7 @@ export class Player {
         }
         this.pendingClip = null;
         this.pendingUnclip = false;
+        this.actionKind = null;
         this.mode = 'walk';
       }
       return;
@@ -336,22 +355,31 @@ export class Player {
         const nextIndex = this.clip.index + this.atAnchor;
         const next = this.route.ropes[nextIndex];
         if (next && next.sectionId === this.clip.sectionId) {
+          // Real technique: clip the safety carabiner beyond the anchor first, then move the jumar.
           this.mode = 'transfer';
-          this.actionT = 1.5;
+          this.actionKind = 'transfer';
+          this.actionT = this.actionDur = 2.6;
           this.pendingClip = next;
+          this.actionAnchor.copy(this.atAnchor > 0 ? this.clip.b : this.clip.a);
+          this.route.ropePoint(next, this.atAnchor > 0 ? 0.06 : 0.94, this.actionTarget);
           return;
         }
       }
       this.mode = 'clipping';
-      this.actionT = 0.6;
+      this.actionKind = 'unclip';
+      this.actionT = this.actionDur = 1.2;
       this.pendingUnclip = true;
+      this.attachPoint(this.actionTarget);
       return;
     }
     const r = this.nearestRope();
     if (r) {
       this.mode = 'clipping';
-      this.actionT = 0.9;
+      this.actionKind = 'clip';
+      this.actionT = this.actionDur = 1.7;
       this.pendingClip = r;
+      const d = this.distToSegment(r);
+      this.route.ropePoint(r, Math.min(1, Math.max(0, d.t)), this.actionTarget);
     }
   }
 

@@ -104,6 +104,8 @@ export class Game {
   private readonly plume = new Plume();
   private near!: NearGround;
   private paceChecked = false;
+  private lastActionP = -1;
+  private readonly attachTmp = new THREE.Vector3();
   private readonly map = new MapView(() => this.map.show(false));
   private tutorial!: Tutorial;
   private readonly headlamp = new THREE.SpotLight(0xfff1dc, 0, 70, 0.42, 0.5, 1.2);
@@ -1029,14 +1031,31 @@ export class Game {
     const roll = (p.mode === 'slide' ? Math.sin(t * 7) * 0.25 : 0) + this.weather.state.gust * Math.sin(t * 2.3) * 0.012 + Math.sin(p.stepPhase * Math.PI) * 0.006;
     this.camera.rotation.set(0, 0, 0);
     this.camera.rotation.order = 'YXZ';
-    this.camera.rotation.y = p.yaw + (Math.random() - 0.5) * shake * 0.03;
-    this.camera.rotation.x = p.pitch + breath + (Math.random() - 0.5) * (shake * 0.03 + shiver);
+    // While working the rope, the head turns toward the hands (then back).
+    let lookYaw = 0, lookPitch = 0;
+    if (p.actionKind) {
+      const eye = this.camera.position;
+      const tgt = p.actionKind === 'transfer' && p.actionProgress > 0.5 ? p.actionAnchor : p.actionTarget;
+      const dx = tgt.x - eye.x, dy = tgt.y - eye.y, dz = tgt.z - eye.z;
+      const wantYaw = Math.atan2(-dx, -dz);
+      const wantPitch = Math.atan2(dy, Math.hypot(dx, dz));
+      let dyaw = wantYaw - p.yaw;
+      dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+      // ease in quickly, hold while the hands work, ease back at the end
+      const ap = p.actionProgress;
+      const w = Math.min(1, ap / 0.18, (1 - ap) / 0.18) * 0.92;
+      lookYaw = dyaw * w;
+      lookPitch = (wantPitch - p.pitch) * w;
+    }
+    this.camera.rotation.y = p.yaw + lookYaw + (Math.random() - 0.5) * shake * 0.03;
+    this.camera.rotation.x = p.pitch + lookPitch + breath + (Math.random() - 0.5) * (shake * 0.03 + shiver);
     this.camera.rotation.z = roll;
     this.camera.position.y += Math.sin(t * 9) * shiver * 0.5;
     this.camera.updateMatrixWorld();
     const crouch = p.mode === 'slide' ? 1 : p.resting ? 0.6 : 0;
     this.body.group.visible = p.mode !== 'dead';
     this.body.update(p.pos, p.yaw, p.stepPhase, p.speed, crouch, (x, z) => p.groundAt(x, z).y);
+    this.body.setTether(p.actionKind ? null : p.attachPoint(this.attachTmp), p.pos, p.yaw);
     this.viewmodel.update(dt, this.camera, {
       stepPhase: p.stepPhase,
       speed: p.speed,
@@ -1050,7 +1069,16 @@ export class Game {
       shiver: shiver * 100,
       aspect: this.camera.aspect,
       slope: p.onLadder ? 0 : p.slopeDeg,
+      actionKind: p.actionKind,
+      actionProgress: p.actionProgress,
+      target: p.actionTarget,
+      anchor: p.actionAnchor,
     });
+    // Gate snap sound when the carabiner closes on the rope.
+    const ap = p.actionKind ? p.actionProgress : -1;
+    const snapAt = p.actionKind === 'transfer' ? 0.36 : 0.6;
+    if (this.lastActionP < snapAt && ap >= snapAt) this.audio.clink();
+    this.lastActionP = ap;
   }
 
   private updateEnvironment(dt: number, storm: number): void {
@@ -1115,8 +1143,12 @@ export class Game {
     let clipBtn: 'ready' | 'urgent' | 'normal' = 'normal';
     let clipLabel = 'クリップ';
     let prompt = '';
-    if (p.mode === 'transfer') { prompt = 'カラビナを付け替えている…'; clipText = '付け替え中'; clipState = 'need'; }
-    else if (p.mode === 'clipping') prompt = '…';
+    if (p.mode === 'transfer') {
+      prompt = p.actionProgress < 0.5 ? 'アンカーの先のロープに安全環付きカラビナを掛けている…' : 'ユマール（登高器）をアンカーの先へ移している…';
+      clipText = '付け替え中'; clipState = 'need';
+    } else if (p.mode === 'clipping') {
+      prompt = p.actionKind === 'unclip' ? 'ロープからカラビナを外している…' : 'スリングのカラビナをフィックスロープに掛けている…';
+    }
     else if (p.clip && p.atAnchor !== 0) {
       const next = w.route.ropes[p.clip.index + p.atAnchor];
       if (next && next.sectionId === p.clip.sectionId) {
