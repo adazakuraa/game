@@ -134,7 +134,7 @@ export class Props {
   /** Icefall seracs: tumbled towers of blue ice either side of the route. */
   private buildIceTowers(): void {
     // Fractured serac: displaced box with leaning faces, overhanging top and snow cap.
-    const g0 = new THREE.BoxGeometry(1, 1, 1, 7, 10, 7);
+    const g0 = new THREE.BoxGeometry(1, 1, 1, 4, 7, 4);
     g0.deleteAttribute('normal');
     g0.deleteAttribute('uv');
     const geo = mergeVertices(g0, 1e-4);
@@ -159,7 +159,7 @@ export class Props {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.0, emissive: 0x05121e });
-    const count = 120;
+    const count = 95;
     const mesh = new THREE.InstancedMesh(geo, mat, count);
     const m4 = new THREE.Matrix4();
     const q = new THREE.Quaternion();

@@ -16,6 +16,7 @@ uniform vec3 uSunDir;
 uniform vec3 uMoonDir;
 uniform float uTime;
 uniform float uStorm;
+uniform float uCirrus;
 float h31(vec3 p){ p = fract(p*vec3(443.897,441.423,437.195)); p += dot(p, p.yzx+19.19); return fract((p.x+p.y)*p.z); }
 float vnoise(vec3 p){ vec3 i=floor(p); vec3 f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(mix(h31(i),h31(i+vec3(1,0,0)),f.x),mix(h31(i+vec3(0,1,0)),h31(i+vec3(1,1,0)),f.x),f.y),
@@ -27,7 +28,7 @@ void main() {
   float up = max(d.y, 0.0);
   float hz = pow(1.0 - up, 5.0);
   // Thin, dark high-altitude sky.
-  vec3 zenithDay = vec3(0.035, 0.11, 0.34);
+  vec3 zenithDay = vec3(0.012, 0.06, 0.30); // thin air: deep, almost navy zenith
   vec3 horizonDay = vec3(0.42, 0.56, 0.74);
   vec3 zenithNight = vec3(0.0025, 0.004, 0.012);
   vec3 horizonNight = vec3(0.012, 0.018, 0.035);
@@ -59,6 +60,14 @@ void main() {
     // Moon
     float cm = dot(d, uMoonDir);
     col += night * vec3(0.9, 0.92, 1.0) * (smoothstep(0.99975, 0.9999, cm) * 6.0 + pow(max(cm,0.0), 80.0) * 0.08);
+  }
+  // High cirrus: thin wind-combed streaks, pink at dawn, silver by day.
+  if (d.y > 0.0 && uCirrus > 0.01) {
+    vec2 cp = d.xz / (d.y + 0.12) * 1.3 + vec2(uTime * 0.0035, uTime * 0.0012);
+    float c = vnoise(vec3(cp * vec2(0.8, 9.0), 0.0)) * 0.55 + vnoise(vec3(cp * vec2(2.0, 22.0), 1.7)) * 0.3 + vnoise(vec3(cp * vec2(6.0, 30.0), 3.1)) * 0.15;
+    float cir = smoothstep(0.6, 0.86, c) * smoothstep(0.0, 0.18, d.y) * uCirrus;
+    vec3 lit = mix(vec3(0.03, 0.035, 0.05), vec3(0.95, 0.96, 1.0), day) + vec3(1.0, 0.4, 0.22) * tw * 1.6;
+    col = mix(col, lit * (0.75 + 0.6 * sunward), cir * 0.42);
   }
   // Storm: flat grey overcast.
   vec3 stormCol = mix(vec3(0.02,0.025,0.03), vec3(0.42,0.45,0.5), day);
@@ -141,6 +150,8 @@ export class Environment {
   private readonly moonDir = new THREE.Vector3(-0.55, 0.45, 0.35).normalize();
   private readonly lightDir = new THREE.Vector3();
   cloudY: number;
+  /** cirrus cover 0..1, varies by day */
+  cirrus = 0.6;
   private readonly baseCloudY: number;
   private cloudMesh!: THREE.Mesh;
   private distant!: THREE.Mesh;
@@ -157,6 +168,7 @@ export class Environment {
         uMoonDir: { value: this.moonDir },
         uTime: { value: 0 },
         uStorm: { value: 0 },
+        uCirrus: { value: 0.6 },
       },
       side: THREE.BackSide,
       depthWrite: false,
@@ -266,10 +278,18 @@ export class Environment {
       col[k * 3 + 2] = rock * 1.05 + (0.96 - rock * 1.05) * snow;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    // Attributes the shared terrain shader expects (no cavities or crevasses this far away).
+    geo.setAttribute('aAO', new THREE.BufferAttribute(new Float32Array(nrm.count).fill(1), 1));
+    geo.setAttribute('aCrev', new THREE.BufferAttribute(new Float32Array(nrm.count), 1));
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.name = 'distantRange';
     return mesh;
+  }
+
+  /** Share the stage's rock/snow terrain material with the distant skyline. */
+  setDistantMaterial(m: THREE.Material): void {
+    this.distant.material = m;
   }
 
   /** Move the cloud sea (and the distant skyline that rises out of it) for a new stage. */
@@ -328,6 +348,7 @@ export class Environment {
     su.uSunDir.value.copy(s);
     su.uTime.value = elapsed;
     su.uStorm.value = storm;
+    su.uCirrus.value = this.cirrus;
     const cu = this.cloudMat.uniforms;
     cu.uSunDir.value.copy(s);
     (cu.uSunCol.value as THREE.Color).copy(this.state.sunColor).multiplyScalar(sunUp * (1 - storm * 0.7));

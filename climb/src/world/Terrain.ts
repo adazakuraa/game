@@ -217,6 +217,11 @@ function patchInsideFactor(f: PatchFrame, x: number, z: number): number {
 
 export interface TerrainUniforms {
   uSunDir: { value: THREE.Vector3 };
+  uSunCol: { value: THREE.Color };
+  uTime: { value: number };
+  uCloudShadow: { value: number };
+  uHazeBase: { value: number };
+  uNear: { value: THREE.Vector3 };
   uSparkle: { value: number };
   uBandLow: { value: number };
   uBandHigh: { value: number };
@@ -234,6 +239,11 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
   }
   const uniforms: TerrainUniforms = {
     uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+    uSunCol: { value: new THREE.Color(1, 1, 1) },
+    uTime: { value: 0 },
+    uCloudShadow: { value: 0 },
+    uHazeBase: { value: -300 },
+    uNear: { value: new THREE.Vector3(0, 0, -1) },
     uSparkle: { value: 1 },
     uBandLow: { value: altitudeToWorldY(def, def.rockBand[0]) },
     uBandHigh: { value: altitudeToWorldY(def, def.rockBand[1]) },
@@ -260,13 +270,16 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
          attribute float aCrev;
          varying float vCrev;
          attribute float aAO;
-         varying float vAO;`,
+         varying float vAO;
+         attribute float aNear;
+         varying float vNear;`,
       )
       .replace(
         '#include <worldpos_vertex>',
         `#include <worldpos_vertex>
          vCrev = aCrev;
          vAO = aAO;
+         vNear = aNear;
          vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
          vWNrm = normalize(mat3(modelMatrix) * objectNormal);`,
       );
@@ -284,6 +297,13 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
          uniform float uBandHigh;
          uniform float uSnowCover;
          uniform vec3 uBandCol;
+         uniform vec3 uSunDir;
+         uniform vec3 uSunCol;
+         uniform float uTime;
+         uniform float uCloudShadow;
+         uniform float uHazeBase;
+         uniform vec3 uNear;
+         varying float vNear;
          varying float vCrev;
          varying float vAO;
          float tHash(vec3 p){ p = fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
@@ -297,6 +317,8 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
       .replace(
         '#include <map_fragment>',
         `
+        // The high-res ground patch replaces the coarse terrain around the player.
+        if (vNear < 0.5 && uNear.z > 0.0 && abs(vWPos.x - uNear.x) < uNear.z && abs(vWPos.z - uNear.y) < uNear.z) discard;
         vec3 wn = normalize(vWNrm);
         float slopeY = wn.y;
         float camDist = length(vWPos - cameraPosition);
@@ -383,6 +405,37 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         }`,
       )
       .replace(
+        '#include <lights_fragment_end>',
+        `{
+          // Cloud shadows drifting across the slopes (direct sun only).
+          vec2 cp = vWPos.xz*0.0022 + uTime*vec2(0.006, 0.0025);
+          float cl = tNoise(cp)*0.6 + tNoise(cp*2.3 + 5.0)*0.4;
+          float cs = 1.0 - smoothstep(0.5, 0.72, cl) * uCloudShadow;
+          reflectedLight.directDiffuse *= cs;
+          reflectedLight.directSpecular *= cs;
+        }
+        #include <lights_fragment_end>`,
+      )
+      .replace(
+        '#include <fog_fragment>',
+        `#ifdef USE_FOG
+        {
+          // Aerial perspective: blue light scatters more, haze thickens toward the
+          // valleys and glows toward the sun.
+          vec3 vd = vWPos - cameraPosition;
+          float dist = length(vd);
+          vec3 vdir = vd / max(dist, 0.001);
+          float lowest = min(vWPos.y, cameraPosition.y);
+          float hf = exp(-max(0.0, lowest - uHazeBase) * 0.004);
+          float dens = fogDensity * (0.55 + 1.6 * hf);
+          vec3 ext = exp(-dist * dens * vec3(0.72, 0.9, 1.18));
+          float sunAmt = pow(max(dot(vdir, uSunDir), 0.0), 6.0);
+          vec3 inscatter = mix(fogColor, fogColor * 0.5 + uSunCol * 0.9, sunAmt * 0.7);
+          gl_FragColor.rgb = gl_FragColor.rgb * ext + inscatter * (1.0 - ext);
+        }
+        #endif`,
+      )
+      .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
         {
@@ -394,7 +447,7 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         }`,
       );
   };
-  material.customProgramCacheKey = () => 'terrain-v5';
+  material.customProgramCacheKey = () => 'terrain-v7';
   return { material, uniforms };
 }
 

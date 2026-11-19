@@ -18,6 +18,8 @@ import { MapView } from '../ui/MapView';
 import { Tutorial } from '../ui/Tutorial';
 import { Radio } from '../ui/Radio';
 import { Ambient } from '../world/Ambient';
+import { Plume } from '../world/Plume';
+import { NearGround } from '../world/NearGround';
 import { createSeededRandom } from '../utils/random';
 import { clamp, smoothstep } from '../utils/noise';
 
@@ -99,6 +101,8 @@ export class Game {
   private readonly body = new Body();
   private readonly radio = new Radio();
   private readonly ambient = new Ambient();
+  private readonly plume = new Plume();
+  private near!: NearGround;
   private paceChecked = false;
   private readonly map = new MapView(() => this.map.show(false));
   private tutorial!: Tutorial;
@@ -171,6 +175,7 @@ export class Game {
     this.scene.add(this.breath.group);
     this.scene.add(this.body.group);
     this.scene.add(this.ambient.group);
+    this.scene.add(this.plume.group);
     this.radio.onTransmit = () => this.audio.radio();
     this.ambient.onAvalanche = (dist, delay) => {
       setTimeout(() => this.audio.avalanche(dist), delay * 1000);
@@ -444,6 +449,16 @@ export class Game {
     this.player.reset(0);
     this.weather = new Weather(this.rng, def.baseWind);
     this.env.setCloudY(altitudeToWorldY(def, def.cloudAlt));
+    this.plume.setStage(def);
+    this.env.setDistantMaterial(material);
+    if (!this.near) {
+      this.near = new NearGround(material, this.mobile);
+      this.scene.add(this.near.mesh);
+    }
+    this.near.setField(field, material);
+    uniforms.uNear.value.set(0, 0, -1);
+    this.near.onSwap = (cx, cz, half) => this.world?.terrainUniforms.uNear.value.set(cx, cz, half);
+    this.env.cirrus = 0.25 + ((def.seed * 7) % 10) / 14;
     this.map.build(def, field, route, props, EXPEDITIONS[id], stage, (y) => this.altitudeAt(y));
     const marks = def.landmarks.slice(1, -1).map((l) => route.waypointS[l.routeIndex] / route.length);
     this.hud.setMarks(marks);
@@ -1063,6 +1078,17 @@ export class Game {
     this.post.params.exposure = es.exposure;
     w.terrainUniforms.uSparkle.value = es.dayFactor * (1 - storm);
     w.terrainUniforms.uSunDir.value.copy(es.sunDir);
+    w.terrainUniforms.uTime.value = this.realTime;
+    if (this.state === 'title') {
+      this.near.mesh.visible = false;
+      w.terrainUniforms.uNear.value.z = -1;
+    } else if (this.player) {
+      this.near.update(this.player.pos);
+    }
+    this.plume.update(dt, this.windDir, this.state === 'title' ? 45 : this.weather.state.windKmh, this.state === 'title' ? 0 : storm, es.sunColor, es.dayFactor);
+    w.terrainUniforms.uSunCol.value.copy(es.sunColor).multiplyScalar(Math.min(1, es.sunIntensity / 3));
+    w.terrainUniforms.uCloudShadow.value = es.dayFactor * (0.45 + storm * 0.35) * (1 - this.weather.state.storm * 0.5);
+    w.terrainUniforms.uHazeBase.value = this.env.cloudY;
     w.props.update(this.realTime, this.weather.state.windKmh);
     const night = 1 - es.dayFactor;
     // Headlamp
@@ -1252,6 +1278,16 @@ export class Game {
         this.player!.speed = 1.1;
         this.updateCamera(0.016);
         break;
+      case 'vista': {
+        set('everest', 0.55, 6.7, 0, 3);
+        const pk = this.world!.def.ridges.flat().reduce((a, b) => (b[2] > a[2] ? b : a));
+        const p = this.player!;
+        p.yaw = Math.atan2(-(pk[0] - p.pos.x), -(pk[1] - p.pos.z));
+        p.pitch = 0.22;
+        this.weather.state.windKmh = 60;
+        this.updateCamera(0.016);
+        break;
+      }
       case 'camp':
         set('everest', 0.995, 13, 0, 1);
         this.updatePlay(0.016);
