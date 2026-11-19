@@ -24,6 +24,8 @@ type Agent = {
   yaw: number;
   fixed?: boolean;
   col?: THREE.Color;
+  /** 0..1: wary of a slow diver nearby -> turns broadside to keep an eye on it */
+  watch?: number;
 };
 
 export type SpeciesRuntime = {
@@ -169,11 +171,16 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
     fragDiffuse: `
       #ifdef FISH_SCALES
         // fins are thin membranes: lighter and a little desaturated where light passes through
-        if ( vFin > 0.5 && vFin < 1.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, vec3( dot( diffuseColor.rgb, vec3( 0.33 ) ) ), 0.15 ) * 1.12;
+        if ( vFin > 0.5 && vFin < 1.5 ) {
+          float fe = clamp( ( vFin - 1.0 ) / 0.49, 0.0, 1.0 );
+          diffuseColor.rgb = mix( diffuseColor.rgb, vec3( dot( diffuseColor.rgb, vec3( 0.33 ) ) ), 0.15 ) * 1.12;
+          // thin margins: paler, light passes through
+          diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * 1.3 + 0.035, fe * 0.55 );
+        }
       #endif
       #if defined( FISH_SCALES ) && defined( USE_MAP )
       if ( vFin < 0.5 ) diffuseColor.rgb *= 0.985 + 0.02 * fishScale( vMapUv );
-      else if ( vFin < 1.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * ( 0.88 + 0.18 * abs( sin( vMapUv.y * 150.0 ) ) ), 0.7 );
+      else if ( vFin < 1.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * ( 0.9 + 0.14 * abs( sin( vMapUv.y * 150.0 ) ) ), 0.7 * ( 1.0 - smoothstep( 0.8, 2.5, uFishSize ) ) );
       #endif`,
     fragBeforeLights: `
       #if defined( PHOTO_FISH ) && defined( USE_MAP )
@@ -182,7 +189,9 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       #endif
       #if defined( FISH_SCALES ) && defined( USE_MAP )
       {
-        float hb = vFin < 0.5 ? fishScale( vMapUv ) * uFishSize * 0.0006 : vFin < 1.5 ? abs( sin( vMapUv.y * 150.0 ) ) * uFishSize * 0.0012 : 0.0;
+        // relief fades with size: on big animals a texture-space pattern turns into coarse banding
+        float big = 1.0 - smoothstep( 0.6, 2.0, uFishSize );
+        float hb = vFin < 0.5 ? fishScale( vMapUv ) * uFishSize * 0.0006 * ( 0.3 + 0.7 * big ) : vFin < 1.5 ? abs( sin( vMapUv.y * 150.0 ) ) * uFishSize * 0.00035 * big : 0.0;
         normal = uwBump( normal, hb );
       }
       #endif`,
@@ -195,6 +204,8 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
         // water back-scatter rim: silhouettes glow faintly against the blue, like in real underwater photos
         float rim = pow( 1.0 - clamp( dot( normalize( normal ), normalize( vViewPosition ) ), 0.0, 1.0 ), 3.0 );
         totalEmissiveRadiance += uSunCol * rim * 0.22 * exp( min( vUwPos.y, 0.0 ) / 30.0 ) * ( 1.0 - step( 1.5, vFin ) );
+        // fin translucency: sunlight scattering through the membrane, strongest at the thin margin
+        if ( vFin > 0.5 && vFin < 1.5 ) totalEmissiveRadiance += diffuseColor.rgb * uSunCol * clamp( ( vFin - 1.0 ) / 0.49, 0.0, 1.0 ) * 0.3 * exp( min( vUwPos.y, 0.0 ) / 30.0 );
       }
       #ifdef RAINBOW
         vec3 hue = 0.5 + 0.5 * cos( 6.2831 * ( vUwPos.y * 4.0 - uTime * 0.9 + vec3( 0.0, 0.33, 0.67 ) ) );
@@ -206,6 +217,20 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
 }
 
 export type PhotoTarget = { rt: SpeciesRuntime; agent: Agent; dist: number; angle: number; inRange: boolean; reason: 'ok' | 'small' | 'murky' | 'dark' | 'hidden'; frac: number };
+
+/**
+ * Escape direction from away-vector `away` (player -> fish): a mix of a horizontal tangent (on the side the fish
+ * is already moving) and the radial direction weighted by `radialW`. Writes a unit vector into `out`.
+ */
+function fleeDir(away: THREE.Vector3, vel: THREE.Vector3, radialW: number, out: THREE.Vector3): THREE.Vector3 {
+  const L = away.length() || 1;
+  const rx = away.x / L, ry = away.y / L, rz = away.z / L;
+  const h = Math.hypot(rx, rz) || 1;
+  let tx = -rz / h, tz = rx / h;
+  if (tx * vel.x + tz * vel.z < 0) { tx = -tx; tz = -tz; }
+  out.set(tx + rx * radialW * 1.4, ry * radialW, tz + rz * radialW * 1.4);
+  return out.normalize();
+}
 
 export class Creatures {
   /** test-only: pin agent 0 of a species */
@@ -408,7 +433,7 @@ export class Creatures {
       let geo: THREE.BufferGeometry;
       let mat: THREE.MeshStandardMaterial;
       if (photo) {
-        geo = buildPhotoFish(photo.prof, photo.aspect, def.photoWidth ?? (def.fish ? Math.min(0.9, def.fish.W / def.fish.H) : 0.42));
+        geo = buildPhotoFish(photo.prof, photo.aspect, def.photoWidth ?? (def.fish ? Math.min(0.7, def.fish.W / def.fish.H) : 0.42));
         mat = makeMaterial(def, loadPhotoTex(photo.url), 1 / photo.aspect, true);
       } else {
         const b = buildGeometry(def);
@@ -473,6 +498,16 @@ export class Creatures {
       while (dy > Math.PI) dy -= Math.PI * 2;
       while (dy < -Math.PI) dy += Math.PI * 2;
       a.yaw += dy * k;
+    }
+    if (a.watch && a.watch > 0) {
+      // broadside to the diver: steer toward the nearer of the two tangent headings
+      const ty = Math.atan2(-(a.p.z - this.viewPos.z), a.p.x - this.viewPos.x);
+      let best = ty - a.yaw;
+      while (best > Math.PI) best -= Math.PI * 2;
+      while (best < -Math.PI) best += Math.PI * 2;
+      if (best > Math.PI / 2) best -= Math.PI;
+      else if (best < -Math.PI / 2) best += Math.PI;
+      a.yaw += best * k * a.watch * 0.7;
     }
     let pitch = 0;
     let roll = 0;
@@ -638,6 +673,7 @@ export class Creatures {
     if (viewDir) this.viewDir.copy(viewDir);
     this.time += dt;
     const r = this.rnd;
+    const pFast = Math.min(1, playerVel.length() / 1.4); // 0 = drifting / slow, 1 = finning hard
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
@@ -649,6 +685,10 @@ export class Creatures {
       rt.slot = 0;
       rt.minD = 1e9;
       const def = rt.def;
+      // Flight distance shrinks for a slow diver (fish tolerate a gentle approach), and a slow diver
+      // mostly makes them swim across the view (side-on) instead of turning tail.
+      const fleeR = def.flee * (0.4 + 0.6 * pFast);
+      const radialW = 0.25 + 0.75 * pFast;
 
       // ---- group centers
       for (const g of rt.groups) {
@@ -677,7 +717,11 @@ export class Creatures {
         // flee as a group (schools scatter around player)
         const pd = _v2.copy(g.c).sub(player);
         const pl = pd.length();
-        if (def.flee > 0 && pl < def.flee * 2.5 && def.behavior !== 'anemone' && def.hab !== 'coralHover' && def.hab !== 'under' && def.hab !== 'cleaner') g.v.addScaledVector(pd.normalize(), dt * def.speed * 2);
+        if (def.flee > 0 && pl < fleeR * 2.5 && def.behavior !== 'anemone' && def.hab !== 'coralHover' && def.hab !== 'under' && def.hab !== 'cleaner') {
+          // schools veer off sideways (keeping their distance) rather than bolting straight away
+          fleeDir(pd, g.v, radialW, _v);
+          g.v.addScaledVector(_v, dt * def.speed * 2);
+        }
         g.c.addScaledVector(g.v, dt);
         const gg = heightAt(g.c.x, g.c.z);
         const minAlt = def.hab ? (def.hab === 'sandForage' || def.hab === 'under' ? 0.1 : 0.2) : this.altitude(def) * 0.8;
@@ -750,7 +794,7 @@ export class Creatures {
           ty = g.c.y + a.off.y + Math.sin(this.time * 0.5 + a.ph) * 0.2;
           tz = g.c.z + oz;
         }
-        const hiding = (def.hab === 'coralHover' || def.hab === 'under') && dPlayer < def.flee * 1.6;
+        const hiding = (def.hab === 'coralHover' || def.hab === 'under') && dPlayer < fleeR * 1.6;
         if (hiding) {
           tx = g.home.x + a.off.x * 0.15;
           // nestle just above the coral surface (still visible) instead of disappearing inside it
@@ -760,13 +804,22 @@ export class Creatures {
         _v.set(tx - a.p.x, ty - a.p.y, tz - a.p.z);
         const k = def.behavior === 'anemone' || hiding ? 3 : def.hab === 'coralHover' || def.hab === 'under' || def.hab === 'cleaner' ? 1.6 : 0.9;
         const acc = _v.multiplyScalar(k);
-        if (def.flee > 0 && dPlayer < def.flee && !hiding) {
-          _v2.copy(a.p).sub(player).normalize().multiplyScalar((def.flee - dPlayer) * 4);
-          acc.add(_v2);
+        const watchR = Math.max(fleeR * 2.6, 2.6);
+        a.watch = def.flee > 0 && !hiding && dPlayer < watchR && dPlayer > def.size * 0.6 && pFast < 0.6 ? (1 - pFast / 0.6) * Math.min(1, (watchR - dPlayer) / (watchR * 0.4)) : 0;
+        if (def.flee > 0 && dPlayer < watchR && !hiding) {
+          if (dPlayer < fleeR) {
+            fleeDir(_v2.copy(a.p).sub(player), a.v, radialW, _v2);
+            acc.addScaledVector(_v2, (fleeR - dPlayer) * 4);
+          } else if (pFast < 0.6) {
+            // wary but not frightened: drift sideways round the diver, keeping one eye on it (broadside view)
+            fleeDir(_v2.copy(a.p).sub(player), a.v, 0, _v2);
+            acc.addScaledVector(_v2, (watchR - dPlayer) * 1.2 * (1 - pFast));
+            acc.addScaledVector(_v, -0.35 * (1 - pFast)); // linger rather than rejoin the school's heading
+          }
         }
         a.v.addScaledVector(acc, dt);
         a.v.multiplyScalar(1 - Math.min(0.9, dt * 1.2));
-        const maxV = def.speed * (dPlayer < def.flee ? 2.8 : 1.6) + 0.15;
+        const maxV = def.speed * (dPlayer < fleeR ? 1.6 + 1.2 * radialW : 1.6) + 0.15;
         const vl = a.v.length();
         if (vl > maxV) a.v.multiplyScalar(maxV / vl);
         // keep a minimum cruising speed for pelagics so they never hover

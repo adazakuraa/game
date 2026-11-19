@@ -31,7 +31,7 @@ export class Paint {
     const n = 40;
     for (let i = 0; i <= n; i++) {
       const t = i / n;
-      const y = (H / 2) * f.env(t) * pad;
+      const y = (H / 2) * f.env(t) * f.top(t) * pad;
       const x = this.U(t - 0.5);
       if (i === 0) p.moveTo(x, this.V(y));
       else p.lineTo(x, this.V(y));

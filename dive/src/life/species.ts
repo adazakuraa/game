@@ -315,7 +315,7 @@ export const SPECIES: SpeciesDef[] = [
     id: 'whaleshark', name: 'ジンベエザメ', sci: 'Rhincodon typus', zone: 'offshore', depth: [3, 40], size: 9, rarity: 3,
     desc: '全長10mを超える世界最大の魚。大きな口で海水ごとプランクトンを吸い込む、おだやかな巨人。',
     hint: '沖の浅い中層。大きな影を探そう。',
-    kind: 'fish', fish: { H: 0.17, W: 0.2, peak: 0.62, nose: 0.95, ped: 0.08, belly: 0.02, tail: 'hetero', tailL: 0.22, tailH: 0.36, dorsal: [{ a: 0.42, b: 0.6, h: 0.1, sweep: 0.5 }, { a: 0.18, b: 0.24, h: 0.04 }], anal: [{ a: 0.18, b: 0.24, h: 0.035 }], pect: { t: 0.66, len: 0.2, wid: 0.08, down: 0.25, out: 0.7 }, eyes: 0.04, eyeT: 0.93 },
+    kind: 'fish', fish: { H: 0.17, W: 0.2, headW: 1.45, peak: 0.62, nose: 0.95, ped: 0.08, belly: 0.02, tail: 'hetero', tailL: 0.22, tailH: 0.36, dorsal: [{ a: 0.42, b: 0.6, h: 0.1, sweep: 0.5 }, { a: 0.18, b: 0.24, h: 0.04 }], anal: [{ a: 0.18, b: 0.24, h: 0.035 }], pect: { t: 0.66, len: 0.2, wid: 0.08, down: 0.25, out: 0.7 }, eyes: 0.04, eyeT: 0.93 },
     paint: (p) => {
       fins(p, '#2c3a48'); p.shade('#243444', '#3a4c5c', '#d8dcdc', 0.58);
       p.clipBody(() => {

@@ -57,6 +57,37 @@ function flatPoly(pts: [number, number][], map: (a: number, b: number) => [numbe
   return g;
 }
 
+/**
+ * Give a flat fin real substance: two sheets pushed apart by `half(x,y,z)` along `axis` (thick at the root,
+ * paper-thin at the margin) and an aFin value of 1..1.49 that grows towards the margin (used for translucency).
+ */
+function thickFin(g0: Part, axis: 'x' | 'y', half: (x: number, y: number, z: number) => number, edge: (x: number, y: number, z: number) => number): Part {
+  const g = g0.index ? g0.toNonIndexed() : g0;
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const n = p.count;
+  const pos = new Float32Array(n * 6);
+  const fin = new Float32Array(n * 2);
+  for (let side = 0; side < 2; side++) {
+    const sg = side === 0 ? 1 : -1;
+    for (let i = 0; i < n; i++) {
+      // second sheet: reverse each triangle's winding
+      const src = side === 0 ? i : i - (i % 3) + [0, 2, 1][i % 3];
+      const x = p.getX(src), y = p.getY(src), z = p.getZ(src);
+      const t = half(x, y, z) * sg;
+      const o = (side * n + i) * 3;
+      pos[o] = axis === 'x' ? x + t : x;
+      pos[o + 1] = axis === 'y' ? y + t : y;
+      pos[o + 2] = z;
+      fin[side * n + i] = 1 + 0.49 * Math.min(1, Math.max(0, edge(x, y, z)));
+    }
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('aFin', new THREE.BufferAttribute(fin, 1));
+  out.computeVertexNormals();
+  return out;
+}
+
 // --------------------------------------------------------------------------- fish
 
 export type TailType = 'fork' | 'round' | 'lunate' | 'hetero' | 'flukes' | 'none' | 'truncate';
@@ -80,11 +111,22 @@ export type FishShape = {
   eyes?: number; // eye radius relative to H
   eyeT?: number;
   bendY?: boolean;
+  /** lateral width multiplier at the head (broad-headed sharks, whale shark) */
+  headW?: number;
+  /** raises the dorsal profile over the forehead / nape (wrasses, jacks, parrotfish) */
+  hump?: number;
   rings?: number;
   segs?: number;
 };
 
-export type FishLayout = { zMin: number; zMax: number; yMax: number; env: (t: number) => number; shape: FishShape };
+export type FishLayout = { zMin: number; zMax: number; yMax: number; env: (t: number) => number; top: (t: number) => number; shape: FishShape };
+
+/** Dorsal-profile multiplier for FishShape.hump (1 = symmetric). */
+export function fishTop(s: FishShape): (t: number) => number {
+  const h = s.hump ?? 0;
+  if (!h) return () => 1;
+  return (t: number) => 1 + h * Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, (t - 0.38) / 0.58))), 1.4);
+}
 
 export function fishEnvelope(s: FishShape) {
   const peak = s.peak ?? 0.62;
@@ -102,6 +144,7 @@ export function fishEnvelope(s: FishShape) {
 
 export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: FishLayout } {
   const env = fishEnvelope(s);
+  const topK = fishTop(s);
   const R = s.rings ?? 14;
   const S = s.segs ?? 22;
   const H = s.H, W = s.W;
@@ -120,8 +163,9 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
       const a = (j / R) * Math.PI * 2;
       const cy = Math.cos(a);
       const sy = Math.sin(a);
-      const y = (H / 2) * e * cy - (cy < 0 ? belly * H * e * -cy * 0.4 : 0);
-      const x = (W / 2) * e * sy * (1 - 0.15 * cy);
+      const y = (H / 2) * e * cy * (cy > 0 ? topK(t) : 1) - (cy < 0 ? belly * H * e * -cy * 0.4 : 0);
+      const hw = s.headW ? 1 + (s.headW - 1) * Math.min(1, Math.max(0, (t - 0.55) / 0.35)) ** 2 : 1;
+      const x = (W / 2) * e * sy * (1 - 0.15 * cy) * hw;
       pos.push(x, y, z);
     }
   }
@@ -137,11 +181,13 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
   parts.push(body);
 
   const z0 = -0.5;
-  const topAt = (t: number) => (H / 2) * env(t);
+  const topAt = (t: number) => (H / 2) * env(t) * topK(t);
+  const botAt = (t: number) => (H / 2) * env(t);
   const tl = s.tailL ?? 0.22;
   const th = s.tailH ?? H * 1.1;
   const pedH = Math.max(0.02, topAt(0.02));
   const vert = (a: number, b: number): [number, number, number] => [0, b, a];
+  const tailStart = parts.length;
   switch (s.tail) {
     case 'fork':
       parts.push(flatPoly([[z0 + 0.03, pedH], [z0 - tl, th / 2], [z0 - tl * 0.78, th / 2 - 0.02], [z0 - tl * 0.42, 0], [z0 - tl * 0.78, -th / 2 + 0.02], [z0 - tl, -th / 2], [z0 + 0.03, -pedH]], vert));
@@ -171,6 +217,19 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
     case 'none':
       break;
   }
+  {
+    const rootZ = z0 + 0.03;
+    const rootT = (W / 2) * env(0.03) * 0.85;
+    for (let k = tailStart; k < parts.length; k++) {
+      if (s.tail === 'flukes') {
+        const e = (_x: number, _y: number, z: number) => Math.min(1, Math.max(0, (rootZ - z) / (tl + 0.03)));
+        parts[k] = thickFin(parts[k], 'y', (x, y, z) => H * 0.05 * Math.pow(1 - e(x, y, z), 1.6), e);
+      } else {
+        const e = (_x: number, y: number, z: number) => Math.min(1, Math.max((rootZ - z) / (tl + 0.03), (Math.abs(y) - pedH) / Math.max(0.01, th / 2)));
+        parts[k] = thickFin(parts[k], 'x', (x, y, z) => rootT * Math.pow(1 - Math.max(0, e(x, y, z)), 1.6), e);
+      }
+    }
+  }
 
   // dorsal / anal fin strips
   const strip = (a: number, b: number, h: number, top: boolean, jag = 0, sweep = 0.3) => {
@@ -178,7 +237,7 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
     const pts: [number, number][] = [];
     for (let k = 0; k <= n; k++) {
       const t = a + (b - a) * (k / n);
-      const y = topAt(t) * (top ? 1 : -1) * 0.9;
+      const y = (top ? topAt(t) : -botAt(t)) * 0.9;
       pts.push([t - 0.5, y]);
     }
     for (let k = n; k >= 0; k--) {
@@ -186,10 +245,14 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
       const prof = Math.sin(Math.pow(k / n, 0.7) * Math.PI) * 0.75 + 0.25;
       const jj = jag > 0 ? (k % 2 === 0 ? 1 : 1 - jag) : 1;
       const hh = h * (b - a < 0.25 ? Math.sin((k / n) * Math.PI) : prof) * jj;
-      const y = topAt(t) * (top ? 1 : -1) * 0.9 + hh * (top ? 1 : -1);
+      const y = (top ? topAt(t) : -botAt(t)) * 0.9 + hh * (top ? 1 : -1);
       pts.push([t - 0.5 - sweep * hh, y]);
     }
-    parts.push(flatPoly(pts, vert));
+    const e = (_x: number, y: number, z: number) => {
+      const tt = Math.min(1, Math.max(0, z + 0.5));
+      return (Math.abs(y) - (y > 0 ? topAt(tt) : botAt(tt)) * 0.9) / Math.max(0.01, h);
+    };
+    parts.push(thickFin(flatPoly(pts, vert), 'x', (x, y, z) => (W / 2) * env(Math.min(1, Math.max(0, z + 0.5))) * 0.3 * Math.pow(1 - Math.min(1, Math.max(0, e(x, y, z))), 1.5), e));
   };
   for (const d of s.dorsal ?? []) strip(d.a, d.b, d.h, true, d.jag ?? 0, d.sweep ?? 0.3);
   for (const d of s.anal ?? []) strip(d.a, d.b, d.h, false);
@@ -274,7 +337,7 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
     if (!g.attributes.aFin) setAttr(g, 'aFin', () => (i === 0 ? 0 : g.userData.eye ? 2 : 1));
   });
   const geo = finalize(parts, uvFn);
-  return { geo, layout: { zMin, zMax, yMax, env, shape: s } };
+  return { geo, layout: { zMin, zMax, yMax, env, top: topK, shape: s } };
 }
 
 // --------------------------------------------------------------------------- ray / flatfish
@@ -954,6 +1017,12 @@ function buildShrimp(): THREE.BufferGeometry {
 export function buildPhotoFish(prof: number[][], aspect: number, widthRatio = 0.42, len = 1.12): THREE.BufferGeometry {
   const N = prof.length - 1;
   const M = 14;
+  // smooth the fin-less core outline so the lateral bulge has no kinks (photo masks are noisy)
+  const core = prof.map((r) => [r[2], r[3]]);
+  for (let pass = 0; pass < 3; pass++) {
+    const c0 = core.map((r) => [...r]);
+    for (let i = 1; i < N; i++) for (const k of [0, 1]) core[i][k] = (c0[i - 1][k] + 2 * c0[i][k] + c0[i + 1][k]) / 4;
+  }
   const Hh = len / aspect;
   const pos: number[] = [];
   const uv: number[] = [];
@@ -964,7 +1033,8 @@ export function buildPhotoFish(prof: number[][], aspect: number, widthRatio = 0.
   for (const side of [-1, 1]) {
     const base = pos.length / 3;
     for (let i = 0; i <= N; i++) {
-      const [top, bot, ct, cb] = prof[i];
+      const [top, bot] = prof[i];
+      const ct = Math.min(top, core[i][0]), cb = Math.max(bot, core[i][1]);
       const u = i / N;
       const z = 0.5 - len + u * len;
       const cm = (ct + cb) / 2;
@@ -976,7 +1046,7 @@ export function buildPhotoFish(prof: number[][], aspect: number, widthRatio = 0.
         const v = b2 + ((t2 - b2) * j) / M;
         const q = (v - cm) / cr;
         const inCore = Math.abs(q) < 1;
-        const bulge = inCore ? halfW * Math.pow(1 - q * q, 0.6) : 0;
+        const bulge = inCore ? halfW * Math.pow(1 - q * q, 0.5) : 0;
         pos.push(side * (bulge + 0.002), (v - 0.5) * Hh, z);
         uv.push(u, v);
         fin.push(inCore ? 0 : 1);

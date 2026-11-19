@@ -132,23 +132,24 @@ def process(cfg, src_img):
     a = cv2.resize(m, (TW, TH), interpolation=cv2.INTER_AREA)
     a = cv2.GaussianBlur(a, (3, 3), 0)
     rgba = np.dstack([tex, a])
-    # profiles: silhouette and fin-less core
-    k = max(3, int(min(h, w) * cfg.get('core', 0.12)) | 1)
-    core = cv2.morphologyEx(m, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    # profiles: silhouette and fin-less core. The core comes from the distance transform: in each column the
+    # largest inscribed circle sits in the body, while fins (thin membranes) never hold a big circle.
+    dt = cv2.distanceTransform((m > 0).astype(np.uint8), cv2.DIST_L2, 5)
+    dt = cv2.GaussianBlur(dt, (0, 0), max(1.0, w / 200))
     prof = []
+    kc = cfg.get('core', 1.15)
     for i in range(N + 1):
         cx = min(w - 1, int(i / N * (w - 1)))
         sl = slice(max(0, cx - 1), min(w, cx + 2))
         col = m[:, sl].max(1) > 0
-        cc = core[:, sl].max(1) > 0
-        def ext(c):
-            idx = np.nonzero(c)[0]
-            if len(idx) == 0:
-                return None
-            return [round(1 - idx.min() / h, 3), round(1 - (idx.max() + 1) / h, 3)]
-        s = ext(col) or [0.5, 0.5]
-        c = ext(cc)
-        prof.append([s[0], s[1], *(c if c else [(s[0] + s[1]) / 2] * 2)])
+        idx = np.nonzero(col)[0]
+        if len(idx) == 0:
+            prof.append([0.5, 0.5, 0.5, 0.5]); continue
+        top, bot = 1 - idx.min() / h, 1 - (idx.max() + 1) / h
+        d = dt[:, cx]
+        yc = int(np.argmax(d)); r = min(float(d[yc]), cfg.get('rmax', 1.0) * h) * kc
+        ct = min(top, 1 - (yc - r) / h); cb = max(bot, 1 - (yc + r) / h)
+        prof.append([round(top, 3), round(bot, 3), round(ct, 3), round(cb, 3)])
     return rgba, prof, w / h
 
 
