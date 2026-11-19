@@ -554,7 +554,8 @@ export class Props {
       if (used[k] >= count) continue;
       const scale = 0.35 + Math.pow(this.rng(), 2.2) * 2.6;
       q.setFromEuler(new THREE.Euler(this.rng() * 0.5, this.rng() * Math.PI * 2, this.rng() * 0.5));
-      m4.compose(new THREE.Vector3(x, this.ground(x, z) - scale * 0.25, z), q, new THREE.Vector3(scale, scale, scale));
+      // sink boulders well into the slope so none float on steep ground
+      m4.compose(new THREE.Vector3(x, this.ground(x, z) - scale * (0.35 + (1 - n.y) * 0.6), z), q, new THREE.Vector3(scale, scale, scale));
       meshes[k].setMatrixAt(used[k]++, m4);
     }
     meshes.forEach((m, i) => {
@@ -574,13 +575,14 @@ export class Props {
         const s = this.route.waypointS[9] - 6 + k * 1.6;
         const p = this.route.pointAt(s);
         const d = this.route.directionAt(s);
-        const lat = (k % 2 ? 1 : -1) * (2.2 + this.rng() * 1.5);
+        // Low outcrops either side of the step, set into the ridge rather than piled on it.
+        const lat = (k % 2 ? 1 : -1) * (2.8 + this.rng() * 1.6);
         const x = p.x - d.z * lat;
         const z = p.z + d.x * lat;
         const rock = new THREE.Mesh(g, mat);
-        const sc = 1.6 + this.rng() * 1.6;
-        rock.scale.set(sc, sc * 1.6, sc);
-        rock.position.set(x, this.ground(x, z) + sc * 0.3, z);
+        const sc = 1.2 + this.rng() * 1.1;
+        rock.scale.set(sc, sc * 1.1, sc);
+        rock.position.set(x, this.ground(x, z) - sc * 0.35, z);
         rock.rotation.y = this.rng() * 6;
         rock.castShadow = true;
         rock.receiveShadow = true;

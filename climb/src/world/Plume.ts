@@ -73,10 +73,11 @@ export class Plume {
       const pos = this.peak.clone().addScaledVector(dir, t * len).add(p.off.clone().multiplyScalar(0.4 + t * 2.2));
       pos.y += Math.sin(t * Math.PI) * 25 - t * 50;
       p.s.position.copy(pos);
-      p.s.scale.setScalar(30 + t * 150);
+      p.s.scale.set(40 + t * 220, 18 + t * 60, 1);
       const mat = p.s.material as THREE.SpriteMaterial;
-      mat.opacity = Math.min(1, t * 10) * Math.pow(1 - t, 1.4) * 0.55 * strength;
-      mat.rotation = p.spin + t * 0.8;
+      // a thin spindrift banner, barely there at night
+      mat.opacity = Math.min(1, t * 6) * Math.pow(1 - t, 1.2) * 0.3 * strength * (0.15 + 0.85 * light);
+      mat.rotation = (p.spin - 3) * 0.05; // keep the stretched puffs streaming along the wind
       mat.color.copy(col);
     }
   }

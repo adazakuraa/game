@@ -376,7 +376,8 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         diffuseColor.rgb *= mix(vec3(1.0), vec3(0.78,0.86,1.0), (1.0-min(cav,1.0))*gSnow*1.2);
         diffuseColor.rgb *= mix(1.0, cav, 0.85);
         // Crevasse walls: blue ice darkening with depth.
-        float crev = smoothstep(0.01, 0.2, vCrev);
+        // even the shallow lip of a crack is glacier ice, never rock
+        float crev = smoothstep(0.002, 0.05, vCrev);
         // Bright blue ice at the lip, darkening only deep inside the crack.
         diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.62,0.82,0.93), vec3(0.02,0.08,0.18), smoothstep(0.3, 1.0, vCrev)), crev);
         gSnow = mix(gSnow, 1.0, crev); gIce = mix(gIce, 1.0, crev);

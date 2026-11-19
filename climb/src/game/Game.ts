@@ -105,6 +105,7 @@ export class Game {
   private near!: NearGround;
   private paceChecked = false;
   private lastActionP = -1;
+  private lookUp = 0;
   private readonly attachTmp = new THREE.Vector3();
   private readonly gripTmp = new THREE.Vector3();
   private readonly map = new MapView(() => this.map.show(false));
@@ -1049,7 +1050,12 @@ export class Game {
       lookPitch = (wantPitch - p.pitch) * w;
     }
     this.camera.rotation.y = p.yaw + lookYaw + (Math.random() - 0.5) * shake * 0.03;
-    this.camera.rotation.x = p.pitch + lookPitch + breath + (Math.random() - 0.5) * (shake * 0.03 + shiver);
+    // On steep ground facing uphill, the eyes lift to the route instead of the wall in front.
+    const fwdX = -Math.sin(p.yaw), fwdZ = -Math.cos(p.yaw);
+    const upH = p.groundAt(p.pos.x + fwdX * 1.5, p.pos.z + fwdZ * 1.5).y - p.groundAt(p.pos.x, p.pos.z).y;
+    const steepUp = THREE.MathUtils.clamp((Math.atan2(upH, 1.5) - 0.6) / 0.5, 0, 1);
+    this.lookUp += (steepUp * 0.4 - this.lookUp) * Math.min(1, dt * 2);
+    this.camera.rotation.x = p.pitch + this.lookUp + lookPitch + breath + (Math.random() - 0.5) * (shake * 0.03 + shiver);
     this.camera.rotation.z = roll;
     this.camera.position.y += Math.sin(t * 9) * shiver * 0.5;
     this.camera.updateMatrixWorld();
