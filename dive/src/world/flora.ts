@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ARCH, bommieAt, heightAt, reefEdgeZ, rockyWeight, VENT, WRECK, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
+import { addSurfaceItem } from './surface';
 import { addCollider, addSphere, resolveCapsule } from './colliders';
 import { SWAY_VERTEX, underwaterMaterial } from '../render/underwater';
 import { baked, pbr } from '../render/baked';
@@ -634,6 +635,7 @@ export class Flora {
         for (const it of items) {
           it.m.decompose(_cp, _cq, _cs);
           addCollider({ x: _cp.x, z: _cp.z, r: gr * Math.max(_cs.x, _cs.z), y0: _cp.y + bb.min.y * _cs.y, y1: _cp.y + bb.max.y * _cs.y * 0.92 });
+          addSurfaceItem(geo, it.m, _cp.x, _cp.z, (gr / 0.8) * Math.max(_cs.x, _cs.z), _cp.y + bb.max.y * _cs.y);
         }
       }
       const set = new ScatterSet(geo, mat, items, view, cell, hi);

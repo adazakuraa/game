@@ -11,7 +11,7 @@ Each was cut out (rembg IS-Net), colour-normalised and resized by `scripts/photo
 | yogore | [Carcharhinus longimanus on deck.jpg](https://commons.wikimedia.org/wiki/File:Carcharhinus_longimanus_on_deck.jpg) | Allen Shimada, NOAA NMFS OST | Public domain |
 | basyou | [Fastest-fish.jpg](https://commons.wikimedia.org/wiki/File:Fastest-fish.jpg) | NOAA's National Ocean Service | Public domain |
 | manbou | [Ichthyologie; ou, Histoire naturelle des poissons (Plate 128) (6918388440).jpg](https://commons.wikimedia.org/wiki/File:Ichthyologie;_ou,_Histoire_naturelle_des_poissons_(Plate_128)_(6918388440).jpg) | Bloch, Marcus Elieser | Public domain |
-| tsumajiro | [Carcharhinus albimarginatus-shark.jpg](https://commons.wikimedia.org/wiki/File:Carcharhinus_albimarginatus-shark.jpg) | Unknown authorUnknown author | Public domain |
+| silvertip | [Carcharhinus albimarginatus-shark.jpg](https://commons.wikimedia.org/wiki/File:Carcharhinus_albimarginatus-shark.jpg) | Unknown authorUnknown author | Public domain |
 | onikamasu | [Barracuda laban.jpg](https://commons.wikimedia.org/wiki/File:Barracuda_laban.jpg) | unknown | Public domain |
 | shiira | [Coryphaena hippurus.jpg](https://commons.wikimedia.org/wiki/File:Coryphaena_hippurus.jpg) | Joris Joostensz. Laerle, Wolfert Harmensz. | Public domain |
 | kasumiaji | [Caranx melampygus 1.jpg](https://commons.wikimedia.org/wiki/File:Caranx_melampygus_1.jpg) | Dr. Dwayne Meadows, NOAA/NMFS/OPR | Public domain |

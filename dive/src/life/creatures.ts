@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SPECIES, type SpeciesDef } from './species';
 import { loadPhotoTex, photoFor } from './photoFish';
+import { surfaceAt } from '../world/surface';
 import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr } from './models';
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
@@ -26,6 +27,10 @@ type Agent = {
   col?: THREE.Color;
   /** 0..1: wary of a slow diver nearby -> turns broadside to keep an eye on it */
   watch?: number;
+  /** aggressive individual (see SpeciesDef.aggro): 0 idle, 1 circling, 2 charging, 3 retreating */
+  aggro?: boolean; mode?: number; modeT?: number;
+  /** cached surface under a crawler: x, z, y */
+  gx?: number; gz?: number; gy?: number;
 };
 
 export type SpeciesRuntime = {
@@ -232,7 +237,13 @@ function fleeDir(away: THREE.Vector3, vel: THREE.Vector3, radialW: number, out: 
   return out.normalize();
 }
 
+export type CreatureEvent = { type: 'warn' | 'charge' | 'hit'; def: SpeciesDef; p: THREE.Vector3 };
+
 export class Creatures {
+  /** encounters for the game layer (warnings, charges, bites); drained every frame */
+  events: CreatureEvent[] = [];
+  /** time budget per frame for lazily building species meshes (raised while a loading screen is up) */
+  buildBudgetMs = 6;
   /** test-only: pin agent 0 of a species */
   pin: { id: string; p: THREE.Vector3; yaw: number } | null = null;
   readonly group = new THREE.Group();
@@ -350,6 +361,26 @@ export class Creatures {
     return true;
   }
 
+  /** Animals that live on the bottom and must sit on it (sand, rock or coral), never hover. */
+  private benthic(def: SpeciesDef): boolean {
+    if (def.kind === 'none') return false;
+    return def.behavior === 'static' || (def.behavior === 'bottom' && def.kind !== 'ray' && def.kind !== 'dumbo');
+  }
+
+  /** Height at which a benthic animal rests on the real surface (terrain or rock / coral top). */
+  private restY(def: SpeciesDef, x: number, z: number, s: number): number {
+    const base = surfaceAt(x, z);
+    return base + (def.kind === 'fish' ? s * 0.1 : def.kind === 'octopus' ? s * 0.08 : 0.005);
+  }
+
+  /** Same, cached per agent while it crawls (re-sampled every 20 cm). */
+  private crawlY(def: SpeciesDef, a: Agent): number {
+    if (a.gx === undefined || Math.abs(a.p.x - a.gx) + Math.abs(a.p.z - a.gz!) > 0.2) {
+      a.gx = a.p.x; a.gz = a.p.z; a.gy = this.restY(def, a.p.x, a.p.z, a.s);
+    }
+    return a.gy!;
+  }
+
   private altitude(def: SpeciesDef): number {
     if (def.kind === 'inv' && (def.behavior === 'bottom' || def.behavior === 'static')) return 0.0;
     switch (def.behavior) {
@@ -417,9 +448,10 @@ export class Creatures {
         a.p.y = heightAt(a.p.x, a.p.z) + (def.kind === 'lobster' ? 0.05 : 0.35 + r() * 0.4);
         a.fixed = true;
       } else if (def.behavior === 'static') {
-        a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * 3, 0, (r() - 0.5) * 3));
-        if (def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots') a.p.copy(g.home);
-        else a.p.y = heightAt(a.p.x, a.p.z) + this.altitude(def);
+        const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots';
+        const spread = onTop ? 1.2 : 3;
+        a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * spread, 0, (r() - 0.5) * spread));
+        a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
         if (def.kind === 'none') a.p.set(VENT.x, heightAt(VENT.x, VENT.z) + 1.5, VENT.z);
       }
       if (def.instColors) a.col = new THREE.Color(def.instColors[Math.floor(r() * def.instColors.length)]);
@@ -428,7 +460,15 @@ export class Creatures {
     for (const g of rt.groups) rt.bounds.expandByPoint(g.home);
     rt.bounds.expandByScalar(Math.max(...rt.groups.map((g) => g.roam)) + def.size * 2 + 10);
 
-    if (def.kind !== 'none') {
+    return rt;
+  }
+
+  /**
+   * Mesh, painted texture and material for a species, built on first need (when it comes near the diver)
+   * instead of for all ~375 species at start-up.
+   */
+  private buildMesh(rt: SpeciesRuntime): void {
+    const def = rt.def;
       const photo = def.kind === 'fish' ? photoFor(def.id) : null;
       let geo: THREE.BufferGeometry;
       let mat: THREE.MeshStandardMaterial;
@@ -475,9 +515,7 @@ export class Creatures {
         if (def.id === 'angler') rt.lureOffset = new THREE.Vector3(0, def.fish!.H / 2 + 0.22, 0.54);
       }
       this.writeAll(rt);
-    }
-    return rt;
-  }
+      }
 
   private writeAll(rt: SpeciesRuntime) {
     rt.slot = 0;
@@ -603,7 +641,10 @@ export class Creatures {
       if (a.g !== gi) continue;
       if (def.behavior === 'static') {
         a.p.copy(p);
-        if (def.region !== 'rockSpots' && def.region !== 'coralTops' && def.region !== 'bommieSpots') { a.p.x += (r() - 0.5) * 3; a.p.z += (r() - 0.5) * 3; a.p.y = heightAt(a.p.x, a.p.z) + this.altitude(def); }
+        const spread = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' ? 1.2 : 3;
+        a.p.x += (r() - 0.5) * spread; a.p.z += (r() - 0.5) * spread;
+        a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
+        a.gx = undefined;
         a.alarm = 0;
       } else if (def.behavior === 'buried') {
         a.p.set(p.x + (r() - 0.5) * 1.2, 0, p.z + (r() - 0.5) * 1.2);
@@ -636,6 +677,8 @@ export class Creatures {
         g.absent = this.rnd() > p;
         if (!g.absent && movable) this.relocate(rt, gi, player, 4);
       });
+      const ag = rt.def.aggro;
+      for (const a of rt.agents) { a.aggro = !!ag && this.rnd() < ag.chance; a.mode = 0; a.modeT = 0; }
       // always keep at least one group of common species
       if (rt.def.rarity === 1 && rt.groups.every((g) => g.absent)) rt.groups[0].absent = false;
     }
@@ -673,11 +716,17 @@ export class Creatures {
     if (viewDir) this.viewDir.copy(viewDir);
     this.time += dt;
     const r = this.rnd;
-    const pFast = Math.min(1, playerVel.length() / 1.4); // 0 = drifting / slow, 1 = finning hard
+    const pFast = Math.min(1, playerVel.length() / 1.4);
+    const buildStart = performance.now(); // 0 = drifting / slow, 1 = finning hard
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
       if (this.pin && this.pin.id === rt.def.id) near = true;
+      if (near && !rt.mesh && rt.def.kind !== 'none') {
+        // lazy build, a few species per frame so a dive never stalls on texture painting
+        if (performance.now() - buildStart > this.buildBudgetMs) near = false;
+        else this.buildMesh(rt);
+      }
       rt.active = near;
       if (rt.mesh) rt.mesh.visible = near;
       if (rt.halo) rt.halo.visible = near;
@@ -705,7 +754,10 @@ export class Creatures {
             g.t.set(g.home.x + (r() - 0.5) * 2 * rr, g.home.y + (r() - 0.5) * Math.min(rr * 0.4, 6), g.home.z + (r() - 0.5) * 2 * rr);
           }
         }
-        if (!def.hab) {
+        if (def.behavior === 'bottom') {
+          // bottom dwellers follow the seafloor wherever it is, regardless of their listed depth range
+          g.t.y = heightAt(g.t.x, g.t.z) + this.altitude(def);
+        } else if (!def.hab) {
           const ground = heightAt(g.t.x, g.t.z);
           g.t.y = clamp(g.t.y, Math.max(ground + this.altitude(def), -def.depth[1]), Math.min(-def.depth[0], -0.6));
         } else g.t.y = Math.min(g.t.y, -0.3);
@@ -770,8 +822,8 @@ export class Creatures {
             a.alarm -= dt;
             a.p.addScaledVector(a.v, dt);
             a.v.multiplyScalar(1 - dt * 0.6);
-            const gy = heightAt(a.p.x, a.p.z) + this.altitude(def);
-            a.p.y += (gy + (a.alarm > 0.5 ? 0.4 : 0) - a.p.y) * Math.min(1, dt * 3);
+            const gy = this.crawlY(def, a);
+            a.p.y += (gy + (a.alarm > 0.5 && def.kind === 'fish' ? 0.4 : 0) - a.p.y) * Math.min(1, dt * 3);
             this.orient(rt, a, 1 - Math.exp(-dt * 4));
           } else if (!a.fixed) {
             a.q.setFromEuler(_e.set(0, a.yaw, 0));
@@ -794,7 +846,55 @@ export class Creatures {
           ty = g.c.y + a.off.y + Math.sin(this.time * 0.5 + a.ph) * 0.2;
           tz = g.c.z + oz;
         }
-        const hiding = (def.hab === 'coralHover' || def.hab === 'under') && dPlayer < fleeR * 1.6;
+        // Individual wander: reef residents keep finning around their home in slow loops instead of hanging
+        // motionless at one point (the group target itself only moves a few decimetres).
+        if (def.kind === 'fish' && def.behavior !== 'anemone' && (def.behavior === 'solo' || def.hab === 'coralHover' || def.hab === 'under' || def.hab === 'cleaner' || def.hab === 'coralPick')) {
+          const hover = def.hab === 'coralHover' || def.hab === 'cleaner';
+          const A = hover ? 0.3 + def.size * 2 : def.hab === 'under' ? 0.35 + def.size * 1.6 : 0.5 + def.size * 3;
+          const w = 0.26 / (0.5 + def.size);
+          tx += Math.sin(this.time * w + a.ph * 3.1) * A;
+          tz += Math.cos(this.time * w * 0.83 + a.ph * 1.7) * A;
+          ty += Math.sin(this.time * w * 0.6 + a.ph) * A * (hover ? 0.25 : 0.12);
+        }
+        let charging = false;
+        if (a.aggro && def.aggro) {
+          const ag = def.aggro;
+          a.modeT = (a.modeT ?? 0) - dt;
+          const mode = a.mode ?? 0;
+          const homeD = Math.hypot(player.x - g.home.x, player.z - g.home.z);
+          if (mode === 0) {
+            const trig = ag.kind === 'territory' ? dPlayer < ag.range && homeD < ag.range * 1.8 : dPlayer < ag.range;
+            if (trig && a.modeT <= 0) {
+              a.mode = ag.kind === 'territory' ? 2 : 1;
+              a.modeT = ag.kind === 'territory' ? 1.2 : 5 + r() * 6;
+              this.events.push({ type: 'warn', def, p: a.p.clone() });
+            }
+          } else if (mode === 1) {
+            // shark: tightening circles around the diver, then a bumping pass
+            const ang = this.time * (0.9 / (1 + def.size * 0.3)) + a.ph * 6;
+            const R = 3 + def.size * 1.2 + Math.max(0, a.modeT) * 0.25;
+            tx = player.x + Math.cos(ang) * R; tz = player.z + Math.sin(ang) * R; ty = player.y - 0.6;
+            if (dPlayer > ag.range * 1.8) { a.mode = 0; a.modeT = 10; }
+            else if (a.modeT <= 0) { a.mode = 2; a.modeT = 0; this.events.push({ type: 'charge', def, p: a.p.clone() }); }
+          } else if (mode === 2) {
+            if (ag.kind === 'territory' && a.modeT > 0) {
+              // threat display: turn to face the intruder, fins raised
+              tx = a.p.x + (player.x - a.p.x) * 0.05; ty = a.p.y; tz = a.p.z + (player.z - a.p.z) * 0.05;
+              if (a.modeT - dt <= 0) this.events.push({ type: 'charge', def, p: a.p.clone() });
+            } else {
+              tx = player.x; ty = player.y - 0.1; tz = player.z; charging = true;
+              if (dPlayer < def.size * 0.45 + 0.55) {
+                this.events.push({ type: 'hit', def, p: a.p.clone() });
+                a.mode = 3; a.modeT = ag.kind === 'territory' ? 3 : 6;
+              } else if (a.modeT < -3.5 || (ag.kind === 'territory' && homeD > ag.range * 2.4)) { a.mode = 3; a.modeT = 3; }
+            }
+          } else {
+            if (ag.kind === 'territory') { tx = g.home.x; ty = g.home.y; tz = g.home.z; }
+            else { _v2.copy(a.p).sub(player).setY(0).normalize(); tx = a.p.x + _v2.x * 6; ty = a.p.y; tz = a.p.z + _v2.z * 6; }
+            if (a.modeT <= 0) { a.mode = 0; a.modeT = ag.kind === 'territory' ? 5 : 14; }
+          }
+        }
+        const hiding = !a.aggro && (def.hab === 'coralHover' || def.hab === 'under') && dPlayer < fleeR * 1.6;
         if (hiding) {
           tx = g.home.x + a.off.x * 0.15;
           // nestle just above the coral surface (still visible) instead of disappearing inside it
@@ -802,11 +902,11 @@ export class Creatures {
           tz = g.home.z + a.off.z * 0.15;
         }
         _v.set(tx - a.p.x, ty - a.p.y, tz - a.p.z);
-        const k = def.behavior === 'anemone' || hiding ? 3 : def.hab === 'coralHover' || def.hab === 'under' || def.hab === 'cleaner' ? 1.6 : 0.9;
+        const k = charging ? 4 : def.behavior === 'anemone' || hiding ? 3 : def.hab === 'coralHover' || def.hab === 'under' || def.hab === 'cleaner' ? 1.6 : 0.9;
         const acc = _v.multiplyScalar(k);
         const watchR = Math.max(fleeR * 2.6, 2.6);
-        a.watch = def.flee > 0 && !hiding && dPlayer < watchR && dPlayer > def.size * 0.6 && pFast < 0.6 ? (1 - pFast / 0.6) * Math.min(1, (watchR - dPlayer) / (watchR * 0.4)) : 0;
-        if (def.flee > 0 && dPlayer < watchR && !hiding) {
+        a.watch = !a.aggro && def.flee > 0 && !hiding && dPlayer < watchR && dPlayer > def.size * 0.6 && pFast < 0.6 ? (1 - pFast / 0.6) * Math.min(1, (watchR - dPlayer) / (watchR * 0.4)) : 0;
+        if (def.flee > 0 && dPlayer < watchR && !hiding && !(a.aggro && a.mode)) {
           if (dPlayer < fleeR) {
             fleeDir(_v2.copy(a.p).sub(player), a.v, radialW, _v2);
             acc.addScaledVector(_v2, (fleeR - dPlayer) * 4);
@@ -819,7 +919,7 @@ export class Creatures {
         }
         a.v.addScaledVector(acc, dt);
         a.v.multiplyScalar(1 - Math.min(0.9, dt * 1.2));
-        const maxV = def.speed * (dPlayer < fleeR ? 1.6 + 1.2 * radialW : 1.6) + 0.15;
+        const maxV = charging ? def.aggro!.speed : a.aggro && a.mode === 1 ? Math.max(def.speed * 1.6, 1.6) : def.speed * (dPlayer < fleeR ? 1.6 + 1.2 * radialW : 1.6) + 0.15;
         const vl = a.v.length();
         if (vl > maxV) a.v.multiplyScalar(maxV / vl);
         // keep a minimum cruising speed for pelagics so they never hover
@@ -829,6 +929,17 @@ export class Creatures {
         const minY = gy + Math.max(0.06, def.behavior === 'bottom' ? this.altitude(def) : def.hab === 'sandForage' ? a.s * 0.15 : a.s * 0.3);
         if (a.p.y < minY) { a.p.y = minY; a.v.y = Math.max(a.v.y, 0); }
         if (a.p.y > -0.4) { a.p.y = -0.4; a.v.y = Math.min(a.v.y, 0); }
+        if (def.behavior === 'bottom') {
+          if (this.benthic(def)) {
+            // crawlers stay on the surface they are crossing (sand, rock or coral)
+            a.p.y = this.crawlY(def, a);
+            a.v.y = 0;
+          } else {
+            // rays and dumbo octopus glide just above the floor
+            const cap = gy + this.altitude(def) + 0.45;
+            if (a.p.y > cap) { a.p.y = cap; a.v.y = Math.min(a.v.y, 0); }
+          }
+        }
         // near the diver, keep swimmers outside coral heads and rocks
         if (dPlayer < 25 && def.hab !== 'under') resolveSphere(a.p, a.s * 0.25, a.v);
         this.orient(rt, a, 1 - Math.exp(-dt * (def.size > 3 ? 1.2 : 5)));
@@ -866,7 +977,7 @@ export class Creatures {
     let bestScore = -Infinity;
     const ndc = new THREE.Vector3();
     for (const rt of this.list) {
-      if (!rt.active) continue;
+      if (!rt.active || (!rt.mesh && rt.def.kind !== 'none')) continue;
       const def = rt.def;
       for (const a of rt.agents) {
         if (rt.groups[a.g].absent) continue;

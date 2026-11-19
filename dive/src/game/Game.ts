@@ -58,6 +58,12 @@ export class Game {
   private titleT = 0;
   private narc = 0;
   private lastWarn = 0;
+  /** down-current cells for this dive (drop-off / blue water): centre, radius, sink speed m/s */
+  private currents: { x: number; z: number; r: number; s: number }[] = [];
+  private currentF = 0;
+  private currentWarned = -100;
+  private shake = 0;
+  private lastEncounter = -100;
   private dprCap = 1.5;
   private frameAvg = 16;
   private paused = false;
@@ -83,19 +89,23 @@ export class Game {
     this.photoCanvas.width = 320;
     this.photoCanvas.height = 240;
 
+    const B: Record<string, number> = ((window as unknown as Record<string, unknown>).__BOOT_MS__ = {}) as Record<string, number>;
+    let tm = performance.now();
+    const mark = (k: string) => { const n = performance.now(); B[k] = Math.round(n - tm); tm = n; };
+    mark('renderer');
     this.save = this.loadSave();
     this.audio.muted = !!this.save.muted;
     this.scene.add(this.camera);
     this.env = new Environment(this.scene, this.camera, mobile);
     this.scene.environment = this.makeEnvMap();
     this.scene.environmentIntensity = 0.6;
+    mark('env');
     this.scene.add(this.terrain.group);
-    const t0 = performance.now();
     this.flora = new Flora();
-    const t1 = performance.now();
+    mark('flora');
     this.scene.add(this.flora.group);
     this.creatures = new Creatures(this.flora.homes);
-    (window as unknown as Record<string, unknown>).__BOOT_MS__ = { flora: Math.round(t1 - t0), creatures: Math.round(performance.now() - t1) };
+    mark('creatures');
     this.scene.add(this.creatures.group);
     this.audio.onExhale = () => {
       if (this.state === 'diving') this.env.exhale(this.camera, this.ads ? 0 : 1);
@@ -106,6 +116,7 @@ export class Game {
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.installHooks();
+    mark('ui');
   }
 
   // ------------------------------------------------------------------ setup
@@ -315,11 +326,16 @@ export class Game {
 
   // ------------------------------------------------------------------ flow
   start(): void {
+    const B = (window as unknown as Record<string, Record<string, number>>).__BOOT_MS__;
+    let tm = performance.now();
+    const mark = (k: string) => { const n = performance.now(); B[k] = Math.round(n - tm); tm = n; };
     this.titleCamera(0);
     this.terrain.prime(this.camera.position.x, this.camera.position.z, 90);
+    mark('terrainPrime');
     $('loading').classList.add('hidden');
     this.state = 'title';
     this.renderTitle();
+    mark('firstRender');
     this.renderer.setAnimationLoop(() => this.tick());
     // build the bathymetric chart while the player is on the title screen
     window.setTimeout(() => this.ensureMinimap(), 1200);
@@ -364,6 +380,11 @@ export class Game {
       this.flora.boat.visible = !this.ads;
       this.terrain.prime(dp.x, dp.z, 80);
       this.creatures.reshuffle(this.camera.position);
+      this.creatures.events.length = 0;
+      this.placeCurrents();
+      // the new site's species are built while the screen is still fading in
+      this.creatures.buildBudgetMs = 40;
+      window.setTimeout(() => (this.creatures.buildBudgetMs = 6), 2500);
       this.creatures.primeAround(this.camera.position);
       this.env.lightOn = this.ads;
       this.env.lightPower = this.ads ? 1.6 : 1;
@@ -386,6 +407,52 @@ export class Game {
       }
       this.toast(this.ads ? '大気圧潜水服で深海へ降下中…' : `${dp.name}にエントリー`, '', 3);
     }, 650);
+  }
+
+  /** 2-3 down-current cells at the drop-off edge and in the blue, different on every dive. */
+  private placeCurrents(): void {
+    this.currents = [];
+    const want = 2 + (Math.random() < 0.5 ? 1 : 0);
+    for (let k = 0; k < 200 && this.currents.length < want; k++) {
+      const x = -150 + Math.random() * 300, z = 330 + Math.random() * 320;
+      const zone = zoneAt(x, z);
+      if (zone !== 'dropoff' && zone !== 'offshore') continue;
+      if (this.currents.some((c) => Math.hypot(c.x - x, c.z - z) < 60)) continue;
+      this.currents.push({ x, z, r: 14 + Math.random() * 10, s: 0.8 + Math.random() * 0.6 });
+    }
+  }
+
+  /** Warnings, charges and bites from territorial triggerfish / curious sharks. */
+  private handleEncounters(): void {
+    const ev = this.creatures.events;
+    while (ev.length) {
+      const e = ev.shift()!;
+      const name = e.def.name;
+      const shark = e.def.aggro?.kind === 'shark';
+      if (e.type === 'warn') {
+        if (this.time - this.lastEncounter < 4) continue;
+        this.lastEncounter = this.time;
+        this.toast(shark ? `${name}がこちらの周りを回り始めた…` : `${name}の縄張りに入った！ 威嚇されている`, 'warn', 3);
+      } else if (e.type === 'charge') {
+        this.audio.warn();
+        this.toast(shark ? `${name}が突っ込んでくる！` : `${name}が突進してくる！ 離れて！`, 'danger', 2.5);
+      } else {
+        const bite = e.def.aggro?.bite ?? 5;
+        this.air = Math.max(1, this.air - bite);
+        const push = this.camera.position.clone().sub(e.p).setY(0.3).normalize();
+        this.vel.addScaledVector(push, shark ? 4.5 : 3);
+        this.shake = 1;
+        this.audio.warn();
+        this.toast(shark ? `${name}にぶつかられた！ エア −${bite}bar` : `${name}に噛まれた！ エア −${bite}bar`, 'danger', 3);
+        const f = $('flash');
+        f.classList.remove('go');
+        f.classList.add('hurt');
+        void f.offsetWidth;
+        f.classList.add('go');
+        window.setTimeout(() => f.classList.remove('hurt'), 500);
+        try { navigator.vibrate?.(shark ? [80, 40, 160] : 120); } catch { /* not supported */ }
+      }
+    }
   }
 
   private endDive(reason: 'surface' | 'blackout'): void {
@@ -467,6 +534,25 @@ export class Game {
     want.y += Math.sin(this.time * (Math.PI * 2) / 5.2) * 0.06;
     this.vel.lerp(want, 1 - Math.exp(-dt * (boosting ? 2.4 : 1.6)));
     cam.position.addScaledVector(this.vel, dt);
+    // down-current: the water itself sinks and spills seaward; escape by swimming sideways out of the cell
+    this.currentF = 0;
+    if (!this.ads) {
+      for (const c of this.currents) {
+        const d = Math.hypot(cam.position.x - c.x, cam.position.z - c.z);
+        const f = clamp((c.r - d) / (c.r * 0.45), 0, 1) * clamp((-cam.position.y - 1.5) / 4, 0, 1);
+        if (f <= 0) continue;
+        this.currentF = Math.max(this.currentF, f);
+        cam.position.y -= c.s * f * f * dt;
+        cam.position.z += c.s * 0.3 * f * dt;
+        cam.position.x += Math.sin(this.time * 0.7 + c.x) * c.s * 0.15 * f * dt;
+      }
+      if (this.currentF > 0.2 && this.time - this.currentWarned > 12) {
+        this.currentWarned = this.time;
+        this.audio.warn();
+        this.toast('ダウンカレントに捕まった！ 横へ泳いで流れから抜けよう', 'danger', 3.5);
+      }
+      this.shake = Math.max(this.shake, this.currentF * 0.25);
+    }
     const p = cam.position;
     // depth limits
     const depth = -p.y;
@@ -495,12 +581,20 @@ export class Game {
     // camera orientation with subtle sway
     const sway = this.reducedMotion ? 0 : 1;
     const roll = Math.sin(this.time * 0.7) * 0.012 * sway + clamp(-inp.moveX * 0.06, -0.06, 0.06) + Math.sin(this.time * 1.9) * this.narc * 0.08;
-    cam.rotation.set(this.pitch + Math.sin(this.time * 0.5) * 0.006 * sway, this.yaw, roll, 'YXZ');
+    this.shake = Math.max(0, this.shake - dt * 1.6);
+    const sk = this.reducedMotion ? 0 : this.shake * this.shake;
+    cam.rotation.set(
+      this.pitch + Math.sin(this.time * 0.5) * 0.006 * sway + Math.sin(this.time * 37) * 0.03 * sk,
+      this.yaw + Math.sin(this.time * 29) * 0.03 * sk,
+      roll + Math.sin(this.time * 23) * 0.04 * sk,
+      'YXZ',
+    );
+    this.handleEncounters();
 
     // air
     const d = Math.max(0, -p.y);
     const moving = this.vel.length() > 0.5 ? 1.15 : 1;
-    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5);
+    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8);
     this.air = Math.max(0, this.air - rate * dt);
     this.audio.breathRate = this.ads ? 0.8 : 1 + (this.air < 50 ? 0.4 : 0) + (boosting ? 0.3 : 0);
     this.diveTime += dt;
@@ -600,8 +694,8 @@ export class Game {
     const hdg = ((-this.yaw * 180) / Math.PI + 180 + 720) % 360; // 0 = offshore(+z)
     const dirs = ['沖', '沖東', '東', '岸東', '岸', '岸西', '西', '沖西'];
     $('heading').textContent = `${dirs[Math.round(hdg / 45) % 8]} ${Math.round(hdg)}°`;
-    $('depth-warn').classList.toggle('hidden', this.ads || d < 40);
-    $('depth-warn').textContent = d > 52 ? '限界深度に接近' : '窒素酔い注意';
+    $('depth-warn').classList.toggle('hidden', this.ads || (d < 40 && this.currentF < 0.1));
+    $('depth-warn').textContent = this.currentF >= 0.1 ? 'ダウンカレント' : d > 52 ? '限界深度に接近' : '窒素酔い注意';
     const frac = this.air / this.airMax;
     $('air-value').textContent = String(Math.ceil(this.air));
     $('air-ring').style.strokeDashoffset = String(169.6 * (1 - frac));
@@ -647,6 +741,7 @@ export class Game {
     const rawDt = this.clock.getDelta();
     const dt = Math.min(rawDt, 0.05);
     this.frame++;
+    if (this.frame <= 6) ((window as unknown as Record<string, Record<string, number>>).__BOOT_MS__)['f' + this.frame] = Math.round(rawDt * 1000);
     // adaptive resolution
     this.frameAvg = lerp(this.frameAvg, rawDt * 1000, 0.05);
     if (this.frame % 90 === 0) {
@@ -727,6 +822,8 @@ export class Game {
     };
     (window as unknown as Record<string, unknown>).__THREE_GAME_TEST_HOOKS__ = {
       game: this,
+      currents: () => this.currents,
+      currentF: () => this.currentF,
       showcase: (id: string, dist = 2, side = 1) => {
         const cam = this.camera;
         cam.updateMatrixWorld();

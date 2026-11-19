@@ -1,8 +1,7 @@
 import * as THREE from 'three';
-import sandUrl from '../assets/tex/sand.png';
-import rockUrl from '../assets/tex/rock.png';
-import polypUrl from '../assets/tex/polyp.png';
-import brainUrl from '../assets/tex/brain.png';
+import sandUrl from '../assets/tex/sand.webp';
+import polypUrl from '../assets/tex/polyp.webp';
+import brainUrl from '../assets/tex/brain.webp';
 import sandA from '../assets/tex/pbr_sand_a.jpg';
 import sandN from '../assets/tex/pbr_sand_n.jpg';
 import rubA from '../assets/tex/pbr_rubble_a.jpg';
@@ -27,8 +26,8 @@ function load(url: string): THREE.Texture {
 }
 let cache: Record<string, THREE.Texture> | null = null;
 export function baked() {
-  if (!cache) cache = { sand: load(sandUrl), rock: load(rockUrl), polyp: load(polypUrl), brain: load(brainUrl) };
-  return cache as { sand: THREE.Texture; rock: THREE.Texture; polyp: THREE.Texture; brain: THREE.Texture };
+  if (!cache) cache = { sand: load(sandUrl), polyp: load(polypUrl), brain: load(brainUrl) };
+  return cache as { sand: THREE.Texture; polyp: THREE.Texture; brain: THREE.Texture };
 }
 
 export type PbrPair = { a: THREE.Texture; n: THREE.Texture };

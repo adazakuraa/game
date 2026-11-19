@@ -50,16 +50,6 @@
    1.0
   ]
  },
- "tsumajiro": {
-  "i": 0,
-  "crop": [
-   0.04,
-   0.25,
-   0.95,
-   0.8
-  ],
-  "src": "whitetip"
- },
  "onikamasu": {
   "i": 0,
   "crop": [
@@ -278,5 +268,15 @@
    0.75
   ],
   "flip": true
+ },
+ "silvertip": {
+  "i": 0,
+  "crop": [
+   0.04,
+   0.25,
+   0.95,
+   0.8
+  ],
+  "src": "whitetip"
  }
 }

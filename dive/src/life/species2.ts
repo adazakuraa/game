@@ -97,6 +97,7 @@ export type FishSpec = {
   id: string; name: string; sci: string; zone: ZoneId; d: [number, number]; size: number; r?: 1 | 2 | 3;
   body: Sh; look: Look; hab: Habitat; n: number; g?: number; desc: string;
   region?: Region; speed?: number; flee?: number; spread?: number; swim?: [number, number, number]; metal?: number; photoRange?: number; glow?: number; behavior?: SpeciesDef['behavior']; pitch?: number;
+  aggro?: SpeciesDef['aggro'];
 };
 
 export function F(s: FishSpec): SpeciesDef {
@@ -113,7 +114,7 @@ export function F(s: FishSpec): SpeciesDef {
     swim: s.swim ?? [Math.max(0.8, 5.5 - sz * 4), sz < 0.4 ? 0.05 : 0.04, 4],
     mat: { metal: s.metal ?? 0.08, rough: (s.metal ?? 0) > 0.3 ? 0.3 : 0.5, glow: s.glow },
     photoRange: s.photoRange ?? Math.max(3.5, Math.min(30, sz * 14 + 3)),
-    hab: s.hab, habLabel: h.label, pitch: s.pitch,
+    hab: s.hab, habLabel: h.label, pitch: s.pitch, aggro: s.aggro,
   };
 }
 const zoneLabel: Record<ZoneId, string> = { lagoon: '浅瀬ラグーン', reef: 'サンゴ礁', rocky: '岩礁', dropoff: 'ドロップオフ', offshore: '沖の大海原', deep: '深海' };
@@ -229,9 +230,9 @@ export const MORE_SPECIES: SpeciesDef[] = [
     look: { c: ['#8a8a90', '#a8a8ac', '#e8e0c0'], mid: 0.6, fin: '#8a8a90', spots: [[18, 0.006, 0.01, BK]], snout: '#3a3a3a' }, desc: '灰色の体に黒い点。サンゴの先端をかじって食べる。' }),
   F({ id: 'shimakinchaku', name: 'シマキンチャクフグ', sci: 'Canthigaster valentini', zone: 'reef', d: [1, 55], size: 0.09, body: sh('puffer', { H: 0.42, W: 0.3 }), hab: 'coralPick', n: 8, g: 6,
     look: { c: ['#f0ece6', '#f6f2ea', '#fafaf6'], fin: '#e8c060', tail: '#f0c060', saddle: [[0.25, 0.08, '#1a1a1a'], [0.05, 0.09, '#1a1a1a'], [-0.18, 0.08, '#1a1a1a']], spots: [[30, 0.003, 0.005, '#d08040']] }, desc: '黒い鞍模様をもつ小さなフグ。毒をもつので、そっくりに擬態するカワハギもいる。' }),
-  F({ id: 'monngara', name: 'モンガラカワハギ', sci: 'Balistoides conspicillum', zone: 'reef', d: [1, 75], size: 0.4, r: 2, body: sh('trigger'), hab: 'reefRoam', n: 2, g: 2,
+  F({ id: 'monngara', aggro: { kind: 'territory', chance: 0.25, range: 3, bite: 4, speed: 2.2 }, name: 'モンガラカワハギ', sci: 'Balistoides conspicillum', zone: 'reef', d: [1, 75], size: 0.4, r: 2, body: sh('trigger'), hab: 'reefRoam', n: 2, g: 2,
     look: { c: ['#141414', '#1a1a1a', '#1e1e1e'], fin: BK, tail: '#1a1a1a', spots: [[18, 0.012, 0.02, WH, [-0.2, 0.3, -0.45, -0.1]]], saddle: [[0.05, 0.12, '#e8c020']], snout: '#f0b030' }, desc: '黒い体の腹側に大きな白い水玉。派手な見た目でダイバーに大人気。' }),
-  F({ id: 'gomamongara', name: 'ゴマモンガラ', sci: 'Balistoides viridescens', zone: 'reef', d: [1, 50], size: 0.6, r: 2, body: sh('trigger'), hab: 'sandForage', n: 2, g: 2, flee: 0,
+  F({ id: 'gomamongara', aggro: { kind: 'territory', chance: 0.6, range: 4.5, bite: 6, speed: 2.6 }, name: 'ゴマモンガラ', sci: 'Balistoides viridescens', zone: 'reef', d: [1, 50], size: 0.6, r: 2, body: sh('trigger'), hab: 'sandForage', n: 2, g: 2, flee: 0,
     look: { c: ['#4a5a3a', '#8a8a5a', '#c8b880'], fin: '#3a4a2a', tail: '#3a4a2a', net: 'rgba(30,40,20,0.6)', front: [0.25, '#3a4a30'] }, desc: '産卵期には砂地の巣を守って、近づくダイバーにも突進してくる。' }),
   F({ id: 'murasame', name: 'ムラサメモンガラ', sci: 'Rhinecanthus aculeatus', zone: 'reef', d: [0.5, 5], size: 0.22, body: sh('trigger'), hab: 'sandForage', n: 4, g: 4,
     look: { c: ['#8a7a5a', '#d8ccb0', '#f2eee6'], mid: 0.45, fin: '#d8ccb0', hl: [[0.05, 0.05, '#2a4ab0', 0.15, 0.48]], bars: [[-0.2, 0.08, '#2a2a2a'], [-0.1, 0.03, '#3a6ac0']], snout: '#e8b040' }, desc: '前衛的な模様から「ピカソ・トリガー」と呼ばれる。浅い砂地とサンゴの境目にいる。' }),
@@ -325,9 +326,9 @@ export const MORE_SPECIES: SpeciesDef[] = [
     look: { c: ['#1a2a5a', '#7a8aa8', '#e8eef2'], mid: 0.4, fin: '#2a3458', lines: { n: 4, color: 'rgba(40,50,80,0.6)', w: 3, ang: 0, y0: -0.1, y1: -0.45 } }, desc: '腹に縦じまのある回遊魚。大群で黒潮にのって北上する。', metal: 0.5 }),
   F({ id: 'basyou', name: 'バショウカジキ', sci: 'Istiophorus platypterus', zone: 'offshore', d: [0, 50], size: 2.6, r: 3, body: sh('sail'), hab: 'midwater', region: OFF, n: 2, g: 1, speed: 3.2,
     look: { c: ['#1a2a5a', '#5a7aa8', '#e0e8f0'], mid: 0.45, fin: '#2a3a7a', dorsal: '#2a4a9a', bars: [[0.2, 0.02, 'rgba(120,180,240,0.6)'], [0.0, 0.02, 'rgba(120,180,240,0.6)'], [-0.2, 0.02, 'rgba(120,180,240,0.6)']] }, desc: '芭蕉の葉のような巨大な背ビレ。時速100km以上で泳ぐといわれる。', metal: 0.4 }),
-  F({ id: 'yogore', name: 'ヨゴレ', sci: 'Carcharhinus longimanus', zone: 'offshore', d: [0, 150], size: 2.5, r: 3, body: sh('shark', { pect: { t: 0.64, len: 0.3, wid: 0.1, down: 0.3, out: 0.7 }, dorsal: [{ a: 0.5, b: 0.68, h: 0.16, sweep: 0.5 }, { a: 0.18, b: 0.24, h: 0.05 }] }), hab: 'midwater', region: OFF, n: 1, g: 1, speed: 1.0, flee: 0, swim: [1.0, 0.06, 3],
+  F({ id: 'yogore', aggro: { kind: 'shark', chance: 0.5, range: 14, bite: 12, speed: 3.6 }, name: 'ヨゴレ', sci: 'Carcharhinus longimanus', zone: 'offshore', d: [0, 150], size: 2.5, r: 3, body: sh('shark', { pect: { t: 0.64, len: 0.3, wid: 0.1, down: 0.3, out: 0.7 }, dorsal: [{ a: 0.5, b: 0.68, h: 0.16, sweep: 0.5 }, { a: 0.18, b: 0.24, h: 0.05 }] }), hab: 'midwater', region: OFF, n: 1, g: 1, speed: 1.0, flee: 0, swim: [1.0, 0.06, 3],
     look: { c: ['#7a7a70', '#8a8a80', '#e8e8e4'], mid: 0.55, fin: '#7a7a70', tail: '#7a7a70', dorsal: '#f0f0ea' }, desc: '外洋性のサメ。丸く大きな胸ビレの先が白い。好奇心旺盛で船の周りにやってくる。' }),
-  F({ id: 'tsumajiro', name: 'ツマジロ', sci: 'Carcharhinus albimarginatus', zone: 'dropoff', d: [10, 200], size: 2.2, r: 3, body: sh('shark', { pect: { t: 0.64, len: 0.26, wid: 0.08, down: 0.3, out: 0.7 } }), hab: 'midwater', region: DROP, n: 1, g: 1, speed: 1.1, flee: 0, swim: [1.1, 0.06, 3],
+  F({ id: 'silvertip', aggro: { kind: 'shark', chance: 0.3, range: 12, bite: 10, speed: 3.4 }, name: 'ツマジロ', sci: 'Carcharhinus albimarginatus', zone: 'dropoff', d: [10, 200], size: 2.2, r: 3, body: sh('shark', { pect: { t: 0.64, len: 0.26, wid: 0.08, down: 0.3, out: 0.7 } }), hab: 'midwater', region: DROP, n: 1, g: 1, speed: 1.1, flee: 0, swim: [1.1, 0.06, 3],
     look: { c: ['#5a6670', '#7a868e', '#e8ecee'], mid: 0.55, fin: '#5a6670', tail: '#5a6670', dorsal: '#f4f4f0' }, desc: 'すべてのヒレの先が白く縁取られるメジロザメの仲間。ドロップオフの潮通しのよい場所を回遊する。' }),
   F({ id: 'manbou', name: 'マンボウ', sci: 'Mola mola', zone: 'offshore', d: [0, 200], size: 2.2, r: 3, body: sh('sunfish'), hab: 'midwater', region: OFF, n: 1, g: 1, speed: 0.4, flee: 0, swim: [0.4, 0.01, 1],
     look: { c: ['#8a9098', '#b8bcc0', '#e0e2e4'], fin: '#8a9098', noise: 0.15, spots: [[30, 0.005, 0.012, 'rgba(255,255,255,0.4)']] }, desc: '尾ビレのない不思議な形の巨大魚。背ビレと尻ビレをはばたかせて泳ぐ。' }),
