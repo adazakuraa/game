@@ -844,18 +844,19 @@ export class Game {
         this.chunkKind = hz.kind;
         const toLane = this.tmpV.copy(this.seracLane).sub(hz.origin).setY(0).normalize();
         const rock = hz.kind === 'rock';
-        const dist = hz.kind === 'icefall' ? 26 : 55;
+        // Falling ice/rock reaches the lane ~5 s after the warning: enough to step clear if you react.
+        const dist = hz.kind === 'icefall' ? 32 : 55;
         const n = rock ? 9 : 7;
         for (let i = 0; i < n; i++) {
           const mesh = new THREE.Mesh(this.chunkGeo, rock ? this.rockChunkMat : this.chunkMat);
-          const sc = rock ? 0.35 + this.rng() * 0.8 : 1 + this.rng() * 2.2;
+          const sc = rock ? 0.35 + this.rng() * 0.8 : hz.kind === 'icefall' ? 0.8 + this.rng() * 0.9 : 1 + this.rng() * 2.2;
           mesh.scale.setScalar(sc);
           mesh.castShadow = true;
           const start = this.seracLane.clone().addScaledVector(toLane, -dist - this.rng() * 10);
           start.y = w.field.height(start.x, start.z) + (rock ? 10 : 18) + this.rng() * 8;
-          start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 10 : 7));
+          start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 8 : 5));
           this.scene.add(mesh);
-          const speed = hz.kind === 'icefall' ? 6 + this.rng() * 2 : 4 + this.rng() * 3;
+          const speed = hz.kind === 'icefall' ? 6 + this.rng() * 1 : 4 + this.rng() * 3;
           this.chunks.push({ mesh, pos: start, vel: toLane.clone().multiplyScalar(speed), life: 9 });
         }
       }
