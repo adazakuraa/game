@@ -798,6 +798,7 @@ export class Game {
         case 'unclipped': this.audio.clink(); this.hud.banner('ロープから外した', '無確保。足元に注意', '', 1800); break;
         case 'transferred': this.audio.clink(); this.hud.banner('付け替え完了', '', 'good', 1200); break;
         case 'anchorBlock': this.hud.banner('アンカーで止まった', 'カラビナを付け替えろ（クリップ / E）', '', 2200); break;
+        case 'unclipRefused': this.hud.banner('ここでは外せない', '急斜面の途中。ロープの終端かアンカーで付け替えろ', '', 2200); break;
         case 'tooSteep': this.hud.banner('急すぎて登れない', 'フィックスロープに確保すれば登れる', '', 2200); break;
         case 'gustKnock': this.audio.slip(); break;
         case 'crevasseDeath': this.audio.slip(); this.die('crevasse'); break;

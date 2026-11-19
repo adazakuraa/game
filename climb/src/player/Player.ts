@@ -29,6 +29,7 @@ export type PlayerEvent =
   | { type: 'unclipped' }
   | { type: 'transferred' }
   | { type: 'anchorBlock' }
+  | { type: 'unclipRefused' }
   | { type: 'tooSteep' }
   | { type: 'gustKnock' }
   | { type: 'crevasseDeath' }
@@ -196,6 +197,7 @@ export class Player {
     }
 
     if (this.mode === 'transfer' || this.mode === 'clipping') {
+      this.atAnchor = 0;
       // Pushing the stick abandons the rope work (e.g. to get out from under falling ice);
       // you stay clipped to whatever you were already on.
       const push = Math.max(Math.abs(input.moveX), Math.abs(input.moveY));
@@ -398,6 +400,13 @@ export class Player {
     this.actionReleased = false;
     if (this.clip) {
       const anchorDir = this.transferDir();
+      const tNow = this.distToSegment(this.clip).t;
+      const prevRope = this.route.ropes[this.clip.index - 1];
+      const nextRope = this.route.ropes[this.clip.index + 1];
+      const isFirst = !prevRope || prevRope.sectionId !== this.clip.sectionId;
+      const isLast = !nextRope || nextRope.sectionId !== this.clip.sectionId;
+      // off the end of the fixed line (top while ascending, bottom while descending)
+      const gentleEnd = (isLast && tNow > 0.85) || (isFirst && tNow < 0.15);
       if (anchorDir !== 0) {
         const nextIndex = this.clip.index + anchorDir;
         const next = this.route.ropes[nextIndex];
@@ -411,6 +420,11 @@ export class Player {
           this.route.ropePoint(next, anchorDir > 0 ? 0.06 : 0.94, this.actionTarget);
           return;
         }
+      }
+      // Nobody unclips mid-rope on steep ground: a stray tap here would be a fall.
+      if (this.slopeDeg > 40 && !gentleEnd) {
+        this.events.push({ type: 'unclipRefused' });
+        return;
       }
       this.mode = 'clipping';
       this.actionKind = 'unclip';
