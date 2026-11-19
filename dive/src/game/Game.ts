@@ -361,6 +361,7 @@ export class Game {
       this.ensureMinimap();
       this.flora.boat.visible = !this.ads;
       this.terrain.prime(dp.x, dp.z, 80);
+      this.creatures.reshuffle(this.camera.position);
       this.creatures.primeAround(this.camera.position);
       this.env.lightOn = this.ads;
       this.env.lightPower = this.ads ? 1.6 : 1;
@@ -478,6 +479,8 @@ export class Game {
     p.z = clamp(p.z, WORLD.minZ, WORLD.maxZ);
     // corals, rocks and sponges are solid: slide around or over them instead of swimming through
     resolveSphere(p, 0.4, this.vel);
+    this.flora.collideDynamic(p, 0.4, this.vel);
+    this.creatures.collideBig(p, 0.4, this.vel);
     const ground = heightAt(p.x, p.z) + 0.7;
     if (p.y < ground) {
       p.y = ground;

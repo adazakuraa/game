@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ARCH, bommieAt, heightAt, reefEdgeZ, rockyWeight, VENT, WRECK, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
-import { addCollider } from './colliders';
+import { addCollider, addSphere, resolveCapsule } from './colliders';
 import { SWAY_VERTEX, underwaterMaterial } from '../render/underwater';
 import { baked, pbr } from '../render/baked';
 import { makeBlade, makeSeaFan } from '../render/textures';
@@ -894,10 +894,25 @@ export class Flora {
     const wreck = wreckGroup(rustMat, darkMat);
     wreck.position.set(WRECK.x, heightAt(WRECK.x, WRECK.z) + 2.2, WRECK.z);
     wreck.rotation.set(0.04, 0.6, 0.22);
+    wreck.updateMatrixWorld(true);
+    {
+      const v = new THREE.Vector3();
+      for (let z = -15; z <= 15; z += 2.5) {
+        const bow = z > 9 ? 1 - ((z - 9) / 8) ** 1.6 : 1;
+        v.set(0, -1.3, z).applyMatrix4(wreck.matrixWorld);
+        addSphere(v.x, v.y, v.z, Math.max(1.2, 3.4 * bow));
+      }
+      const house = new THREE.Vector3(0.3, 2.3, -9.5).applyMatrix4(wreck.matrixWorld);
+      addSphere(house.x, house.y, house.z, 3.0);
+      const mast = wreck.children.find((c) => (c as THREE.Mesh).geometry?.type === 'CylinderGeometry' && c.scale.x === 1 && Math.abs(c.rotation.z - 1.25) < 0.01);
+      if (mast) for (let k = -7; k <= 7; k += 1) { v.set(0, k, 0).applyMatrix4(mast.matrixWorld); addSphere(v.x, v.y, v.z, 0.5); }
+    }
     this.group.add(wreck);
     this.landmarks.push(wreck);
     const arch = new THREE.Mesh(archGeometry(), rockMat);
     arch.position.set(ARCH.x, heightAt(ARCH.x, ARCH.z) - 3, ARCH.z);
+    // the arch is a half torus: spheres along it keep the passage underneath open
+    for (let a = 0; a <= Math.PI + 1e-3; a += Math.PI / 14) addSphere(arch.position.x + Math.cos(a) * 9, arch.position.y + Math.sin(a) * 9, arch.position.z, 2.7);
     this.group.add(arch);
     this.landmarks.push(arch);
 
@@ -913,11 +928,13 @@ export class Flora {
       line.position.set(dp.x + 4, -len / 2, dp.z + 4);
       this.group.add(line);
       const buoy = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8), buoyMat);
+      addSphere(dp.x + 4, -0.1, dp.z + 4, 0.5);
       buoy.position.set(dp.x + 4, -0.1, dp.z + 4);
       this.group.add(buoy);
       if (len < 59) {
         const block = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.8), darkMat);
         block.position.set(dp.x + 4, bottom + 0.2, dp.z + 4);
+        addSphere(dp.x + 4, bottom + 0.2, dp.z + 4, 0.55);
         this.group.add(block);
       }
     }
@@ -925,6 +942,15 @@ export class Flora {
       const m = o as THREE.Mesh;
       if (m.isMesh && !(m as unknown as THREE.Points).isPoints) { if (m.userData.noCast !== true && m.castShadow !== false) m.castShadow = true; m.receiveShadow = true; }
     });
+  }
+
+  /** Moving / per-dive obstacles: the dive boat hull. */
+  collideDynamic(p: THREE.Vector3, rad: number, vel?: THREE.Vector3): void {
+    if (!this.boat.visible) return;
+    const b = this.boat;
+    const a = new THREE.Vector3(0, -0.9, -5.5).applyMatrix4(b.matrixWorld);
+    const c = new THREE.Vector3(0, -0.9, 6.0).applyMatrix4(b.matrixWorld);
+    resolveCapsule(p, rad, a.x, a.y, a.z, c.x, c.y, c.z, 2.0, vel);
   }
 
   placeBoat(x: number, z: number): void {

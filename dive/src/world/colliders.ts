@@ -1,7 +1,7 @@
 import type * as THREE from 'three';
 
 /** Vertical-cylinder colliders for corals and rocks, bucketed in a coarse grid. */
-export type Collider = { x: number; z: number; r: number; y0: number; y1: number };
+export type Collider = { x: number; z: number; r: number; y0: number; y1: number; sphere?: boolean; y?: number };
 
 const CELL = 6;
 const grid = new Map<string, Collider[]>();
@@ -29,6 +29,20 @@ export function resolveSphere(p: THREE.Vector3, rad: number, vel?: THREE.Vector3
   if (!list) return false;
   let moved = false;
   for (const c of list) {
+    if (c.sphere) {
+      const dx = p.x - c.x, dy = p.y - c.y!, dz = p.z - c.z;
+      const d = Math.hypot(dx, dy, dz);
+      const R = c.r + rad;
+      if (d >= R || d < 1e-5) continue;
+      const k = (R - d) / d;
+      p.x += dx * k; p.y += dy * k; p.z += dz * k;
+      if (vel) {
+        const vn = (vel.x * dx + vel.y * dy + vel.z * dz) / d;
+        if (vn < 0) { vel.x -= (vn * dx) / d; vel.y -= (vn * dy) / d; vel.z -= (vn * dz) / d; }
+      }
+      moved = true;
+      continue;
+    }
     if (p.y < c.y0 - rad || p.y > c.y1 + rad) continue;
     const dx = p.x - c.x, dz = p.z - c.z;
     const d = Math.hypot(dx, dz);
@@ -64,4 +78,28 @@ export function insideAny(p: THREE.Vector3, rad: number): boolean {
   const list = grid.get(key(Math.floor(p.x / CELL), Math.floor(p.z / CELL)));
   if (!list) return false;
   return list.some((c) => p.y >= c.y0 - rad * 0.5 && p.y <= c.y1 + rad * 0.5 && Math.hypot(p.x - c.x, p.z - c.z) < c.r + rad * 0.5);
+}
+
+export function addSphere(x: number, y: number, z: number, r: number): void {
+  addCollider({ x, z, r, y0: y - r, y1: y + r, sphere: true, y });
+}
+
+/** Push a sphere out of a capsule (segment a-b, radius cr). */
+export function resolveCapsule(p: THREE.Vector3, rad: number, ax: number, ay: number, az: number, bx: number, by: number, bz: number, cr: number, vel?: THREE.Vector3): boolean {
+  const abx = bx - ax, aby = by - ay, abz = bz - az;
+  const l2 = abx * abx + aby * aby + abz * abz;
+  let t = l2 > 0 ? ((p.x - ax) * abx + (p.y - ay) * aby + (p.z - az) * abz) / l2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const qx = ax + abx * t, qy = ay + aby * t, qz = az + abz * t;
+  const dx = p.x - qx, dy = p.y - qy, dz = p.z - qz;
+  const d = Math.hypot(dx, dy, dz);
+  const R = cr + rad;
+  if (d >= R || d < 1e-5) return false;
+  const k = (R - d) / d;
+  p.x += dx * k; p.y += dy * k; p.z += dz * k;
+  if (vel) {
+    const vn = (vel.x * dx + vel.y * dy + vel.z * dz) / d;
+    if (vn < 0) { vel.x -= (vn * dx) / d; vel.y -= (vn * dy) / d; vel.z -= (vn * dz) / d; }
+  }
+  return true;
 }

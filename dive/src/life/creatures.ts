@@ -7,9 +7,9 @@ import { makeSoftDot } from '../render/textures';
 import { heightAt, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
-import { resolveSphere } from '../world/colliders';
+import { resolveCapsule, resolveSphere } from '../world/colliders';
 
-type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number };
+type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number; absent?: boolean };
 type Agent = {
   p: THREE.Vector3;
   v: THREE.Vector3;
@@ -558,6 +558,29 @@ export class Creatures {
     return true;
   }
 
+  /** Chance that a group shows up on a given dive, by rarity. */
+  private presence(rarity: number): number {
+    return rarity >= 3 ? 0.3 : rarity === 2 ? 0.6 : 0.9;
+  }
+
+  /**
+   * New dive: reseed, roll which groups are present (by rarity) and scatter every movable
+   * group to fresh habitat around the diver, so no dive looks the same.
+   */
+  reshuffle(player: THREE.Vector3, seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0): void {
+    this.rnd = mulberry32(seed);
+    for (const rt of this.list) {
+      const p = this.presence(rt.def.rarity);
+      const movable = this.canRelocate(rt.def);
+      rt.groups.forEach((g, gi) => {
+        g.absent = this.rnd() > p;
+        if (!g.absent && movable) this.relocate(rt, gi, player, 4);
+      });
+      // always keep at least one group of common species
+      if (rt.def.rarity === 1 && rt.groups.every((g) => g.absent)) rt.groups[0].absent = false;
+    }
+  }
+
   /** After a teleport (dive start): populate the surroundings immediately. */
   primeAround(player: THREE.Vector3): void {
     for (const rt of this.list) {
@@ -579,7 +602,10 @@ export class Creatures {
         if (!this.canRelocate(rt.def)) continue;
         if (rt.def.rarity >= 3 && this.rnd() > 0.15) continue;
         rt.groups.forEach((g, gi) => {
-          if (Math.hypot(g.c.x - player.x, g.c.z - player.z) > 100) this.relocate(rt, gi, player);
+          if (Math.hypot(g.c.x - player.x, g.c.z - player.z) > 100) {
+            g.absent = this.rnd() > this.presence(rt.def.rarity);
+            if (!g.absent) this.relocate(rt, gi, player);
+          }
         });
       }
     }
@@ -635,6 +661,7 @@ export class Creatures {
       for (let i = 0; i < rt.agents.length; i++) {
         const a = rt.agents[i];
         const g = rt.groups[a.g];
+        if (g.absent) continue;
         if (Math.abs(g.c.x - player.x) > 100 || Math.abs(g.c.z - player.z) > 100) continue;
         const dPlayer = a.p.distanceTo(player);
         if (def.behavior === 'buried') {
@@ -742,6 +769,7 @@ export class Creatures {
       if (!rt.active) continue;
       const def = rt.def;
       for (const a of rt.agents) {
+        if (rt.groups[a.g].absent) continue;
         if (def.behavior === 'buried' && a.retract > 0.5) continue;
         _v2.copy(a.p).sub(cp);
         const dist = _v2.length();
@@ -771,6 +799,27 @@ export class Creatures {
       }
     }
     return best;
+  }
+
+  /** The diver bumps into large animals instead of swimming through them (capsule along the body). */
+  collideBig(p: THREE.Vector3, rad: number, vel?: THREE.Vector3): void {
+    const fwd = new THREE.Vector3();
+    for (const rt of this.list) {
+      const def = rt.def;
+      if (!rt.active || def.size < 0.9 || def.kind === 'jelly' || def.kind === 'none') continue;
+      for (const a of rt.agents) {
+        if (rt.groups[a.g].absent) continue;
+        const reach = a.s * 0.7 + rad + 1;
+        if (Math.abs(a.p.x - p.x) > reach || Math.abs(a.p.z - p.z) > reach || Math.abs(a.p.y - p.y) > reach) continue;
+        fwd.set(0, 0, 1).applyQuaternion(a.q);
+        let half = a.s * 0.38, cr = a.s * 0.1;
+        if (def.kind === 'fish' && def.fish) cr = Math.max(0.08, (a.s * def.fish.H) / 2);
+        if (def.kind === 'ray') { half = a.s * 0.2; cr = a.s * (def.ray?.manta ? 0.35 : 0.3); }
+        if (def.kind === 'turtle') { half = a.s * 0.2; cr = a.s * 0.3; }
+        if (def.kind === 'squid') { half = a.s * 0.25; cr = a.s * 0.1; }
+        resolveCapsule(p, rad, a.p.x - fwd.x * half, a.p.y - fwd.y * half, a.p.z - fwd.z * half, a.p.x + fwd.x * half, a.p.y + fwd.y * half, a.p.z + fwd.z * half, cr, vel);
+      }
+    }
   }
 
   /** Terrain between camera and subject? (coarse ray march against the height field) */
