@@ -44,30 +44,11 @@ void main() {
   float sunVis = smoothstep(-0.03, 0.01, sy);
   col += vec3(1.0, 0.9, 0.75) * smoothstep(0.99965, 0.99985, cs) * 60.0 * sunVis;
   col += vec3(1.0, 0.8, 0.6) * (pow(max(cs,0.0), 600.0) * 4.0 + pow(max(cs,0.0), 24.0) * 0.35) * sunVis;
-  // Stars and Milky Way at night.
+  // Moon (stars are drawn as real points, see Environment.stars).
   float night = 1.0 - smoothstep(-0.18, 0.02, sy);
   if (night > 0.001 && d.y > -0.05) {
-    vec3 sp = d * 260.0;
-    vec3 cell = floor(sp);
-    float h = h31(cell);
-    vec3 fp = fract(sp) - 0.5;
-    float star = smoothstep(0.08, 0.0, length(fp)) * step(0.985, h) * (h - 0.985) * 70.0;
-    float tw2 = 0.6 + 0.4 * sin(uTime * 3.0 + h * 400.0);
-    vec3 mwAxis = normalize(vec3(0.4, 0.3, 0.86));
-    float band = exp(-pow(dot(d, mwAxis) * 3.2, 2.0));
-    float mw = band * (0.5 * vnoise(d * 9.0) + 0.3 * vnoise(d * 23.0) + 0.2);
-    col += night * (vec3(0.85, 0.9, 1.0) * star * tw2 * smoothstep(-0.05, 0.15, d.y) + vec3(0.03, 0.035, 0.05) * mw);
-    // Moon
     float cm = dot(d, uMoonDir);
-    col += night * vec3(0.9, 0.92, 1.0) * (smoothstep(0.99975, 0.9999, cm) * 6.0 + pow(max(cm,0.0), 80.0) * 0.08);
-  }
-  // High cirrus: thin wind-combed streaks, pink at dawn, silver by day.
-  if (d.y > 0.0 && uCirrus > 0.01) {
-    vec2 cp = d.xz / (d.y + 0.12) * 1.3 + vec2(uTime * 0.0035, uTime * 0.0012);
-    float c = vnoise(vec3(cp * vec2(0.8, 9.0), 0.0)) * 0.55 + vnoise(vec3(cp * vec2(2.0, 22.0), 1.7)) * 0.3 + vnoise(vec3(cp * vec2(6.0, 30.0), 3.1)) * 0.15;
-    float cir = smoothstep(0.6, 0.86, c) * smoothstep(0.0, 0.18, d.y) * uCirrus;
-    vec3 lit = mix(vec3(0.03, 0.035, 0.05), vec3(0.95, 0.96, 1.0), day) + vec3(1.0, 0.4, 0.22) * tw * 1.6;
-    col = mix(col, lit * (0.75 + 0.6 * sunward), cir * 0.42);
+    col += night * vec3(0.9, 0.92, 1.0) * (smoothstep(0.99975, 0.9999, cm) * 6.0 + pow(max(cm, 0.0), 80.0) * 0.06);
   }
   // Storm: flat grey overcast.
   vec3 stormCol = mix(vec3(0.02,0.025,0.03), vec3(0.42,0.45,0.5), day);
@@ -147,6 +128,8 @@ export class Environment {
   };
   private readonly skyMat: THREE.ShaderMaterial;
   private readonly cloudMat: THREE.ShaderMaterial;
+  private readonly stars: THREE.Points;
+  private readonly starMat: THREE.ShaderMaterial;
   private readonly moonDir = new THREE.Vector3(-0.55, 0.45, 0.35).normalize();
   private readonly lightDir = new THREE.Vector3();
   cloudY: number;
@@ -179,6 +162,53 @@ export class Environment {
     sky.frustumCulled = false;
     sky.renderOrder = -10;
     this.group.add(sky);
+
+    // Stars as points: crisp on every GPU (no noise-hash precision issues).
+    const n = mobile ? 1800 : 2600;
+    const sp = new Float32Array(n * 3);
+    const sz = new Float32Array(n);
+    let k = 0;
+    let seedS = 12345;
+    const rnd = () => { seedS = (seedS * 16807) % 2147483647; return seedS / 2147483647; };
+    while (k < n) {
+      const u = rnd() * 2 - 1, a = rnd() * Math.PI * 2;
+      const r = Math.sqrt(1 - u * u);
+      const y = u;
+      if (y < -0.05) continue;
+      sp[k * 3] = r * Math.cos(a); sp[k * 3 + 1] = y; sp[k * 3 + 2] = r * Math.sin(a);
+      // brightness: many faint stars, few bright ones
+      sz[k] = Math.pow(rnd(), 6) * 2.6 + 0.6;
+      k++;
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    sg.setAttribute('aSize', new THREE.BufferAttribute(sz, 1));
+    this.starMat = new THREE.ShaderMaterial({
+      uniforms: { uNight: { value: 0 }, uTime: { value: 0 } },
+      vertexShader: `attribute float aSize; uniform float uTime; varying float vB;
+        void main(){
+          vec4 p = projectionMatrix * viewMatrix * vec4((modelMatrix * vec4(position, 1.0)).xyz, 1.0);
+          gl_Position = p.xyww;
+          float tw = 0.75 + 0.25 * sin(uTime * 2.3 + position.x * 91.0 + position.z * 57.0);
+          vB = aSize * tw * smoothstep(-0.02, 0.15, position.y);
+          gl_PointSize = 1.2 + aSize * 1.1;
+        }`,
+      fragmentShader: `uniform float uNight; varying float vB;
+        void main(){
+          vec2 c = gl_PointCoord - 0.5;
+          float a = smoothstep(0.5, 0.0, length(c));
+          gl_FragColor = vec4(vec3(0.85, 0.9, 1.0) * vB * 0.9, a * uNight);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.stars = new THREE.Points(sg, this.starMat);
+    this.stars.scale.setScalar(19000);
+    this.stars.frustumCulled = false;
+    this.stars.renderOrder = -9;
+    this.stars.name = 'stars';
+    this.group.add(this.stars);
 
     this.cloudMat = new THREE.ShaderMaterial({
       vertexShader: CLOUD_VERT,
@@ -348,7 +378,9 @@ export class Environment {
     su.uSunDir.value.copy(s);
     su.uTime.value = elapsed;
     su.uStorm.value = storm;
-    su.uCirrus.value = this.cirrus;
+    this.stars.position.copy(camera.position);
+    this.starMat.uniforms.uNight.value = (1 - smoothstep(-0.18, 0.02, s.y)) * (1 - storm);
+    this.starMat.uniforms.uTime.value = elapsed;
     const cu = this.cloudMat.uniforms;
     cu.uSunDir.value.copy(s);
     (cu.uSunCol.value as THREE.Color).copy(this.state.sunColor).multiplyScalar(sunUp * (1 - storm * 0.7));
