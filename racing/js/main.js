@@ -209,7 +209,7 @@ function disposeGame() {
 input.onCamera = () => {
   if (!game) return;
   game.camMode = (game.camMode + 1) % 3;
-  store.set('cam', game.camMode);
+  store.set('cam2', game.camMode);
 };
 input.onPause = () => { if (game && !$('#results').classList.contains('show')) game.setPaused(!game.paused); };
 $('#camBtn').onclick = () => input.onCamera();

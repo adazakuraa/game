@@ -65,19 +65,19 @@ class RaceBase {
   }
 
   onCross(e) {
-    const t = this.mode === 'race' ? this.raceTime : this.time;
+    // レース・タイムアタックとも、スタートシグナルからの時間で計測する（1周目はグリッドからの発進を含む）
+    const t = this.raceTime;
     if (this.mode === 'ta') {
-      if (e.lap >= 2 && this.taTiming) {
+      if (e.lap >= 2) {
         const lt = t - e.lapStart;
         e.laps.push(lt);
         const isBest = lt < e.best;
         if (isBest) e.best = lt;
         this.events.push({ type: 'lap', entry: e, time: lt, best: isBest, frames: this.recording });
+        e.lapStart = t;
+        this.recording = [];
+        this.recT = 0;
       }
-      this.taTiming = true;
-      e.lapStart = t;
-      this.recording = [];
-      this.recT = 0;
       return;
     }
     if (e.lap >= 2) {
@@ -234,7 +234,9 @@ export class Race extends RaceBase {
       pe.prevS = player.s;
       this.entries.push(pe);
     } else {
-      player.reset(L - 40, track.sampleArr(track.line, L - 40));
+      // タイムアタックもレースと同じグリッド位置・スタートシグナルから
+      const n = DRIVERS.length;
+      player.reset(L - 12 - n * 8, n % 2 === 0 ? 3 : -3);
       pe.prevS = player.s;
       this.entries.push(pe);
     }
@@ -264,6 +266,9 @@ export class Race extends RaceBase {
         this.raceTime = 0;
         this.events.push({ type: 'go' });
         for (const e of this.entries) e.lapStart = 0;
+        this.recording = [];
+        this.recT = 0;
+        if (this.mode === 'ta') this.taTiming = true;
       }
     }
     if (started) this.raceTime += dt;
@@ -275,16 +280,13 @@ export class Race extends RaceBase {
       if (!this.bot) this.bot = new BotDriver(p.car, this.track, 0.9);
       inp = this.bot.update();
     }
-    if (!started && this.mode === 'race') {
+    if (!started) {
       // スタート前: 回転だけ上げられる
       p.car.rpm += ((1100 + input.throttle * 6000) - p.car.rpm) * Math.min(1, dt * 6);
       p.car.throttle = input.throttle;
     } else {
       p.car.step(dt, inp);
       if (p.car.impact > 2) this.events.push({ type: 'wall', power: p.car.impact });
-    }
-    if (this.mode === 'ta' && this.state === 'countdown') {
-      // TA はカウントダウン無し
     }
 
     // AI
@@ -314,7 +316,7 @@ export class Race extends RaceBase {
     }
 
     // ゴースト記録（プレイヤー）
-    if (started || this.mode === 'ta') {
+    if (started) {
       this.recT += dt;
       if (this.recT >= 1 / 20) {
         this.recT -= 1 / 20;

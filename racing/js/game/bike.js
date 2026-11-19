@@ -1,4 +1,5 @@
 // ロードバイク: 集団で走り、スリップストリームで脚を貯め、最後にスプリントする
+import * as THREE from 'three';
 import { GameBase } from './base.js';
 import { C, $, fmt, drawTrackMap } from './common.js';
 import { BikeWorld } from '../render/bikeworld.js';
@@ -58,6 +59,28 @@ export class BikeGame extends GameBase {
   cam(dt, snap) {
     const r = this.race.player.car;
     const far = this.camMode === 1;
+    // 一人称: ライダーの目線。自分のモデルは隠す
+    const me = this.models.get(this.race.player);
+    if (me) me.root.visible = this.camMode !== 2;
+    if (this.camMode === 2) {
+      const camera = C.camera;
+      let d = snap ? 0 : r.psi - this.camYaw;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      this.camYaw = snap ? r.psi : this.camYaw + d * Math.min(1, dt * 12);
+      const hx = Math.sin(this.camYaw), hz = Math.cos(this.camYaw);
+      const bob = r.surf === 'cobble' ? (Math.random() - 0.5) * 0.03 * Math.min(1, r.v / 8) : 0;
+      const pos = new THREE.Vector3(r.x + hx * 0.35, (r.y || 0) + 1.5 + bob, r.z + hz * 0.35);
+      if (!snap) this.camVel.copy(pos).sub(this.camPos).divideScalar(Math.max(dt, 1e-3));
+      this.camPos.copy(pos);
+      camera.position.copy(pos);
+      camera.lookAt(r.x + hx * 25, (r.y || 0) + 1.1, r.z + hz * 25);
+      let fov = 68 + r.v * 0.2;
+      if (camera.userData.portrait) fov += 22;
+      camera.fov += (fov - camera.fov) * (snap ? 1 : Math.min(1, dt * 3));
+      camera.updateProjectionMatrix();
+      return;
+    }
     this.followCamera(dt, snap, { x: r.x, y: r.y, z: r.z, psi: r.psi, speed: r.v, rough: r.surf === 'cobble' ? 1.5 : 0 }, { dist: far ? 8 : 4.4, hgt: far ? 3.2 : 1.85, lookAhead: 5, lookY: 1.0, fov: 60, fovSpeed: 0.5, follow: 6 });
   }
 

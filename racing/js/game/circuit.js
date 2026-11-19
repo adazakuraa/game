@@ -65,7 +65,7 @@ export class CircuitGame extends GameBase {
     this.ghostData = opts.mode === 'ta' ? store.get('best.' + track.def.id, null) : null;
     if (this.ghostData) this.makeGhost();
     // カメラ
-    this.camMode = store.get('cam', 0);
+    this.camMode = store.get('cam2', 2);
     this.camYaw = this.race.player.car.psi;
     this.camPos = new THREE.Vector3();
     this.camVel = new THREE.Vector3();
@@ -108,14 +108,10 @@ export class CircuitGame extends GameBase {
   }
 
   begin() {
-    if (this.opts.mode === 'race') {
-      this.race.startCountdown();
-      this.showMsg('', 0);
-      this.subMsg('アクセルで回転を上げて待て', 3);
-    } else {
-      this.race.state = 'racing';
-      this.subMsg('コントロールラインを越えると計測開始', 4);
-    }
+    // タイムアタックもレースと同じくスタートシグナルから計測
+    this.race.startCountdown();
+    this.showMsg('', 0);
+    this.subMsg('アクセルで回転を上げて待て', 3);
     super.begin();
   }
 
@@ -238,7 +234,7 @@ export class CircuitGame extends GameBase {
     }
     // ゴースト
     if (this.ghost && this.ghostData && r.taTiming) {
-      const t = r.time - r.player.lapStart;
+      const t = r.raceTime - r.player.lapStart;
       const f = this.ghostData.frames;
       const n = f.length / 4;
       const k = t * 20;
@@ -285,7 +281,7 @@ export class CircuitGame extends GameBase {
     $('#hLap').textContent = isRace ? lap : Math.max(1, r.player.laps.length + 1);
     let t = 0;
     if (isRace) t = r.state === 'racing' || r.state === 'finished' ? (r.player.finished ? r.player.finishTime : r.raceTime) : 0;
-    else t = r.taTiming ? r.time - r.player.lapStart : 0;
+    else t = r.taTiming ? r.raceTime - r.player.lapStart : 0;
     $('#hTime').textContent = fmt(t || 0.0001).replace('--:--.---', '0:00.000');
     if (isRace) {
       const st = r.standings();

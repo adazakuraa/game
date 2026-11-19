@@ -11,7 +11,7 @@ export class GameBase {
     this.msgTimer = 0;
     this.subTimer = 0;
     this.shake = 0;
-    this.camMode = store.get('cam', 0);
+    this.camMode = store.get('cam2', 2); // 標準は一人称（ボンネット／ライダー目線）
     this.camYaw = 0;
     this.camPos = new THREE.Vector3();
     this.camVel = new THREE.Vector3();
