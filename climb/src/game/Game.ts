@@ -106,6 +106,7 @@ export class Game {
   private paceChecked = false;
   private lastActionP = -1;
   private lookUp = 0;
+  rockSide = 0;
   private readonly attachTmp = new THREE.Vector3();
   private readonly gripTmp = new THREE.Vector3();
   private readonly map = new MapView(() => this.map.show(false));
@@ -835,12 +836,24 @@ export class Game {
       this.seracTimer -= dt;
       if (this.seracTimer <= 0 && this.seracWarn < 0) {
         this.seracWarn = 4.5;
-        const offset = (this.rng() - 0.5) * 10;
+        const isRock = hz.kind === 'rock';
+        const offset = (this.rng() - 0.5) * (isRock ? 6 : 10);
         const sLane = clamp(p.routeS + offset, hz.s0, hz.s1);
         w.route.pointAt(sLane, this.seracLane);
-        if (hz.kind === 'rock') this.audio.rockfall(); else this.audio.crack();
+        let warnSub: string = TEXT[hz.kind].warn[1];
+        if (isRock) {
+          // Rocks come down one side of the line; a step or two to the other side (even on the rope) is enough.
+          const side = this.rng() < 0.5 ? -1 : 1;
+          const d = w.route.directionAt(sLane);
+          this.seracLane.x += -d.z * side * 1.4;
+          this.seracLane.z += d.x * side * 1.4;
+          // (-d.z, d.x) is the climber's right when facing up the route
+          warnSub = side > 0 ? 'ルートの右側に落ちてくる — 左へ寄れ' : 'ルートの左側に落ちてくる — 右へ寄れ';
+          this.rockSide = side;
+        }
+        if (isRock) this.audio.rockfall(); else this.audio.crack();
         this.flash = 0.2;
-        this.hud.banner(TEXT[hz.kind].warn[0], TEXT[hz.kind].warn[1], 'danger', 3500);
+        this.hud.banner(TEXT[hz.kind].warn[0], warnSub, 'danger', 4000);
         this.chunkKind = hz.kind;
         const toLane = this.tmpV.copy(this.seracLane).sub(hz.origin).setY(0).normalize();
         const rock = hz.kind === 'rock';
@@ -849,12 +862,12 @@ export class Game {
         const n = rock ? 9 : 7;
         for (let i = 0; i < n; i++) {
           const mesh = new THREE.Mesh(this.chunkGeo, rock ? this.rockChunkMat : this.chunkMat);
-          const sc = rock ? 0.35 + this.rng() * 0.8 : hz.kind === 'icefall' ? 0.8 + this.rng() * 0.9 : 1 + this.rng() * 2.2;
+          const sc = rock ? 0.3 + this.rng() * 0.5 : hz.kind === 'icefall' ? 0.8 + this.rng() * 0.9 : 1 + this.rng() * 2.2;
           mesh.scale.setScalar(sc);
           mesh.castShadow = true;
           const start = this.seracLane.clone().addScaledVector(toLane, -dist - this.rng() * 10);
           start.y = w.field.height(start.x, start.z) + (rock ? 10 : 18) + this.rng() * 8;
-          start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 8 : 5));
+          start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 1.6 : 5));
           this.scene.add(mesh);
           const speed = hz.kind === 'icefall' ? 6 + this.rng() * 1 : 4 + this.rng() * 3;
           this.chunks.push({ mesh, pos: start, vel: toLane.clone().multiplyScalar(speed), life: 9 });
@@ -1158,9 +1171,8 @@ export class Game {
     } else if (p.mode === 'clipping') {
       prompt = p.actionKind === 'unclip' ? 'ロープからカラビナを外している…' : 'スリングのカラビナをフィックスロープに掛けている…';
     }
-    else if (p.clip && p.atAnchor !== 0) {
-      const next = w.route.ropes[p.clip.index + p.atAnchor];
-      if (next && next.sectionId === p.clip.sectionId) {
+    else if (p.clip && (p.atAnchor !== 0 || p.transferDir() !== 0)) {
+      if (p.transferDir() !== 0) {
         clipBtn = 'urgent'; clipLabel = '付け替え';
         prompt = 'アンカー：<b>クリップ / E</b> で次のロープへ付け替え';
       } else {

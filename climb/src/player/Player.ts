@@ -358,10 +358,24 @@ export class Player {
     this.events.push({ type: 'crevasseDeath' });
   }
 
+  /**
+   * Direction (+1 up / -1 down) of an anchor you can transfer across right now, else 0.
+   * Generous window so the button does what its label said a moment ago.
+   */
+  transferDir(): number {
+    if (!this.clip) return 0;
+    const t = this.distToSegment(this.clip).t;
+    const dir = !this.descending ? (t > 0.88 ? 1 : 0) : (t < 0.12 ? -1 : 0);
+    if (!dir) return 0;
+    const next = this.route.ropes[this.clip.index + dir];
+    return next && next.sectionId === this.clip.sectionId ? dir : 0;
+  }
+
   private handleClipAction(): void {
     if (this.clip) {
-      if (this.atAnchor !== 0) {
-        const nextIndex = this.clip.index + this.atAnchor;
+      const anchorDir = this.transferDir();
+      if (anchorDir !== 0) {
+        const nextIndex = this.clip.index + anchorDir;
         const next = this.route.ropes[nextIndex];
         if (next && next.sectionId === this.clip.sectionId) {
           // Real technique: clip the safety carabiner beyond the anchor first, then move the jumar.
@@ -369,8 +383,8 @@ export class Player {
           this.actionKind = 'transfer';
           this.actionT = this.actionDur = 2.6;
           this.pendingClip = next;
-          this.actionAnchor.copy(this.atAnchor > 0 ? this.clip.b : this.clip.a);
-          this.route.ropePoint(next, this.atAnchor > 0 ? 0.06 : 0.94, this.actionTarget);
+          this.actionAnchor.copy(anchorDir > 0 ? this.clip.b : this.clip.a);
+          this.route.ropePoint(next, anchorDir > 0 ? 0.06 : 0.94, this.actionTarget);
           return;
         }
       }
