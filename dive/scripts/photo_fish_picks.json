@@ -38,7 +38,8 @@
  },
  "basyou": {
   "i": 2,
-  "rot": -42
+  "rot": -42,
+  "rmax": 0.1
  },
  "manbou": {
   "i": 2,
@@ -225,5 +226,57 @@
    0.9
   ],
   "rot": -14
+ },
+ "whaleshark": {
+  "i": 4,
+  "flip": true,
+  "wb": 0.3,
+  "sat": 1.0
+ },
+ "tsumaguro": {
+  "i": 5,
+  "crop": [
+   0.05,
+   0.15,
+   1.0,
+   0.8
+  ],
+  "flip": true
+ },
+ "napoleon": {
+  "i": 3,
+  "wb": 0.8,
+  "flip": true
+ },
+ "monngara": {
+  "i": 5
+ },
+ "katsuo": {
+  "i": 4,
+  "flip": true,
+  "crop": [
+   0.0,
+   0.08,
+   1.0,
+   0.75
+  ],
+  "seg": "paper",
+  "thr": 12
+ },
+ "kurodai": {
+  "i": 4,
+  "flip": true,
+  "seg": "hull",
+  "thr": 7
+ },
+ "musujikoshoudai": {
+  "i": 5,
+  "crop": [
+   0.0,
+   0.15,
+   0.75,
+   0.75
+  ],
+  "flip": true
  }
 }

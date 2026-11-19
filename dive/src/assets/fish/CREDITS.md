@@ -29,3 +29,10 @@ Each was cut out (rembg IS-Net), colour-normalised and resized by `scripts/photo
 | irobudai | [Spotted Parrotfish imported from iNaturalist photo 420768758 on 22 August 2024.jpg](https://commons.wikimedia.org/wiki/File:Spotted_Parrotfish_imported_from_iNaturalist_photo_420768758_on_22_August_2024.jpg) | no rights reserved | CC0 |
 | aonomehata | [Blue-spotted.grouper.arp.jpg](https://commons.wikimedia.org/wiki/File:Blue-spotted.grouper.arp.jpg) | Adrian Pingstone | Public domain |
 | yokosimakurodai | [Humpnose Bigeye Bream imported from iNaturalist photo 420764323 on 23 August 2024.jpg](https://commons.wikimedia.org/wiki/File:Humpnose_Bigeye_Bream_imported_from_iNaturalist_photo_420764323_on_23_August_2024.jpg) | no rights reserved | CC0 |
+| whaleshark | [Rhincodon typus fgbnms.jpg](https://commons.wikimedia.org/wiki/File:Rhincodon_typus_fgbnms.jpg) | FGBNMS/Eckert | Public domain |
+| tsumaguro | [Blacktip reef shark.jpg](https://commons.wikimedia.org/wiki/File:Blacktip_reef_shark.jpg) | unknown | Public domain |
+| napoleon | [Cheilinus undulatus 435718364.jpg](https://commons.wikimedia.org/wiki/File:Cheilinus_undulatus_435718364.jpg) | Justin Philbois | CC0 |
+| monngara | [Balistoides conspicillum 419183010.jpg](https://commons.wikimedia.org/wiki/File:Balistoides_conspicillum_419183010.jpg) | Jean-Paul Boerekamps | CC0 |
+| katsuo | [Katsuwonus pelamis juvenile (USNM-403110).jpg](https://commons.wikimedia.org/wiki/File:Katsuwonus_pelamis_juvenile_(USNM-403110).jpg) | The U.S. Food and Drug Administration | Public domain |
+| kurodai | [Naturalis Biodiversity Center - RMNH.ART.397 - Acanthopagrus schlegelii (Bleeker) - Kawahara Keiga - 1823 - 1829 - Siebold Collection - pencil drawing - water colour.jpeg](https://commons.wikimedia.org/wiki/File:Naturalis_Biodiversity_Center_-_RMNH.ART.397_-_Acanthopagrus_schlegelii_(Bleeker)_-_Kawahara_Keiga_-_1823_-_1829_-_Siebold_Collection_-_pencil_drawing_-_water_colour.jpeg) | (Bleeker) | Public domain |
+| musujikoshoudai | [Plectorhinchus vittatus 264547288.jpg](https://commons.wikimedia.org/wiki/File:Plectorhinchus_vittatus_264547288.jpg) | Zoltán Stekkelpak | CC0 |
