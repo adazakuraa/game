@@ -106,6 +106,7 @@ export class Game {
   private paceChecked = false;
   private lastActionP = -1;
   private readonly attachTmp = new THREE.Vector3();
+  private readonly gripTmp = new THREE.Vector3();
   private readonly map = new MapView(() => this.map.show(false));
   private tutorial!: Tutorial;
   private readonly headlamp = new THREE.SpotLight(0xfff1dc, 0, 70, 0.42, 0.5, 1.2);
@@ -1073,6 +1074,7 @@ export class Game {
       actionProgress: p.actionProgress,
       target: p.actionTarget,
       anchor: p.actionAnchor,
+      grip: p.gripPoint(this.gripTmp),
     });
     // Gate snap sound when the carabiner closes on the rope.
     const ap = p.actionKind ? p.actionProgress : -1;

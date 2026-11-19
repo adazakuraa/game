@@ -148,6 +148,15 @@ export class Player {
     return this.route.ropePoint(this.clip, this.ropeT(), out);
   }
 
+  /** Where the left hand holds the jumar: on the rope a little ahead in the direction of travel. */
+  gripPoint(out: THREE.Vector3): THREE.Vector3 | null {
+    if (!this.clip) return null;
+    const seg = this.clip;
+    const len = Math.max(1, Math.hypot(seg.b.x - seg.a.x, seg.b.z - seg.a.z));
+    const t = clamp(this.ropeT() + ((this.descending ? -1 : 1) * 0.75) / len, 0, 1);
+    return this.route.ropePoint(seg, t, out);
+  }
+
   /** 0..1 progress through the current rope action. */
   get actionProgress(): number {
     return this.actionKind ? 1 - Math.max(0, this.actionT) / this.actionDur : 0;

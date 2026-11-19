@@ -165,6 +165,7 @@ export class Viewmodel {
       stepPhase: number; speed: number; resting: boolean; clipped: boolean; mode: string; actionT: number;
       arresting: boolean; breath: number; shake: number; shiver: number; aspect: number; slope: number;
       actionKind: 'clip' | 'unclip' | 'transfer' | null; actionProgress: number; target: THREE.Vector3; anchor: THREE.Vector3;
+      grip: THREE.Vector3 | null;
     },
   ): void {
     this.t += dt;
@@ -180,7 +181,17 @@ export class Viewmodel {
     // and only come into view when they are doing something.
     const caneNeeded = s.slope > 24 && !s.clipped;
     const rTarget = s.mode === 'slide' || s.resting || caneNeeded ? 1 : 0;
-    const lTarget = s.clipped || s.mode === 'transfer' || s.mode === 'clipping' ? 1 : 0;
+    // When clipped, the left hand rides the jumar on the real rope: it is only in view
+    // while that spot on the rope is in front of us and within arm's reach.
+    let gripLocal: THREE.Vector3 | null = null;
+    if (s.clipped && s.grip && !s.actionKind) {
+      const v = this.tmpA.copy(s.grip);
+      this.rig.worldToLocal(v);
+      const dist = v.length();
+      const inFront = v.z < -0.25 && Math.abs(v.x) < -v.z * 1.1 && dist < 1.6;
+      if (inFront) gripLocal = v.clone().normalize().multiplyScalar(Math.min(dist, 0.62));
+    }
+    const lTarget = gripLocal || s.mode === 'transfer' || s.mode === 'clipping' ? 1 : 0;
     this.rPres += (rTarget - this.rPres) * Math.min(1, dt * 3.5);
     this.lPres += (lTarget - this.lPres) * Math.min(1, dt * 3.5);
 
@@ -205,10 +216,15 @@ export class Viewmodel {
     let lx = -0.3, ly = -0.44 + breathe, lz = -0.52;
     let lRotX = 0.2;
     // Jumar: slid up the rope with each step.
-    if (s.clipped) { lx = -0.2; ly = -0.36 + Math.sin(ph) * 0.03 * walk; lz = -0.58 - Math.max(0, Math.sin(ph)) * 0.05 * walk; lRotX = 0.5; }
+    if (gripLocal) {
+      // hand sits just behind/below the grip point so the jumar body is on the rope
+      lx = gripLocal.x - 0.03; ly = gripLocal.y - 0.07 + Math.sin(ph) * 0.01 * walk; lz = gripLocal.z + 0.12;
+      lRotX = 0.5;
+    }
     // Rope work: reach the carabiner out to the rope, open the gate, snap it shut, bring the hand back.
     let gateOpen = 0;
-    let binerInHand = s.clipped;
+    // while clipped the carabiner hangs on the rope (drawn in the world), not in the hand
+    let binerInHand = false;
     if (s.actionKind) {
       const p = s.actionProgress;
       // target point in camera space, kept within arm's reach
@@ -255,7 +271,8 @@ export class Viewmodel {
     this.right.visible = this.rPres > 0.02;
     this.left.position.set((lx - shiver) * ax, ly, lz);
     this.left.rotation.set(lRotX, 0.1, 0);
-    if (s.actionKind) {
+    if (s.actionKind || gripLocal) {
+      if (!s.actionKind) this.reachK = 0.6;
       // Aim the forearm from the left shoulder to the hand so the arm enters from the lower left.
       this.left.updateMatrixWorld();
       const handW = this.left.getWorldPosition(this.tmpB.set(0, 0, 0));
@@ -270,8 +287,9 @@ export class Viewmodel {
     } else {
       this.reachK = 0;
     }
-    this.jumar.visible = s.clipped && !s.actionKind;
-    this.ropeBit.visible = s.clipped && !s.actionKind;
+    this.jumar.visible = !!gripLocal;
+    // The real fixed rope is drawn in the world; no camera-locked rope stub.
+    this.ropeBit.visible = false;
     // Sling from the harness (below, slightly left of view) to the carabiner in hand.
     this.rig.updateMatrixWorld(true);
     this.sling.visible = this.biner.visible && this.left.visible;
