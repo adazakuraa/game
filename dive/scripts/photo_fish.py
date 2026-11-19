@@ -13,7 +13,7 @@ N = 40  # profile columns
 _SESSION = None
 
 
-def segment(img, crop, method='rembg'):
+def segment(img, crop, method='rembg', thr=9):
     """Foreground mask. rembg (IS-Net, MIT) when installed, GrabCut otherwise; restricted to crop rect."""
     global _SESSION
     h, w = img.shape[:2]
@@ -31,6 +31,17 @@ def segment(img, crop, method='rembg'):
             m[int(y0 * h):int(y0 * h) + a.shape[0], int(x0 * w):int(x0 * w) + a.shape[1]] = np.where(a > 127, 255, 0)
         except ImportError:
             m = None
+    if method == 'paper':
+        # naturalist plates: uniform paper background -> Lab distance from the border colour
+        sub = img[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
+        lab = cv2.cvtColor(cv2.GaussianBlur(sub, (5, 5), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
+        border = np.concatenate([lab[:4].reshape(-1, 3), lab[-4:].reshape(-1, 3), lab[:, :4].reshape(-1, 3), lab[:, -4:].reshape(-1, 3)])
+        ref = np.median(border, 0)
+        dist = np.linalg.norm((lab - ref) * np.array([0.5, 1.0, 1.0], np.float32), axis=2)
+        a = np.where(dist > thr, 255, 0).astype(np.uint8)
+        a = cv2.morphologyEx(a, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        m = np.zeros((h, w), np.uint8)
+        m[int(y0 * h):int(y0 * h) + a.shape[0], int(x0 * w):int(x0 * w) + a.shape[1]] = a
     if m is None:
         cx0, cy0, cx1, cy1 = crop or [0.04, 0.06, 0.96, 0.94]
         rect = (int(cx0 * w), int(cy0 * h), int((cx1 - cx0) * w), int((cy1 - cy0) * h))
@@ -61,7 +72,25 @@ def process(cfg, src_img):
         img = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
     if cfg.get('flip'):
         img = img[:, ::-1].copy()
-    m = segment(img, cfg.get('crop'), cfg.get('seg', 'rembg'))
+    if cfg.get('seg') == 'hull':
+        # rembg outline + paper-difference pixels inside its convex hull (keeps pale bellies on paper)
+        a = segment(img, cfg.get('crop'), 'rembg')
+        b = segment(img, cfg.get('crop'), 'paper', cfg.get('thr', 6))
+        n, lab, st, _ = cv2.connectedComponentsWithStats(a)
+        a = np.where(lab == 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA])), 255, 0).astype(np.uint8)
+        hull = np.zeros_like(a)
+        cv2.fillPoly(hull, [cv2.convexHull(cv2.findNonZero(a))], 255)
+        b = cv2.morphologyEx(b & hull, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
+        m = a | b
+    else:
+        m = segment(img, cfg.get('crop'), cfg.get('seg', 'rembg'), cfg.get('thr', 9))
+    if cfg.get('close'):
+        # pale bellies on paper get lost: close the outline, then fill enclosed holes
+        k = max(3, int(min(m.shape) * cfg['close']) | 1)
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        ff = m.copy(); hh, ww = m.shape
+        cv2.floodFill(ff, np.zeros((hh + 2, ww + 2), np.uint8), (0, 0), 255)
+        m = m | (255 - ff)
     ys, xs = np.nonzero(m)
     x0, x1, y0, y1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
     img = img[y0:y1, x0:x1]; m = m[y0:y1, x0:x1]
