@@ -96,7 +96,7 @@ const HAB: Record<Habitat, { behavior: SpeciesDef['behavior']; region: Region; s
 export type FishSpec = {
   id: string; name: string; sci: string; zone: ZoneId; d: [number, number]; size: number; r?: 1 | 2 | 3;
   body: Sh; look: Look; hab: Habitat; n: number; g?: number; desc: string;
-  region?: Region; speed?: number; flee?: number; spread?: number; swim?: [number, number, number]; metal?: number; photoRange?: number; glow?: number; behavior?: SpeciesDef['behavior'];
+  region?: Region; speed?: number; flee?: number; spread?: number; swim?: [number, number, number]; metal?: number; photoRange?: number; glow?: number; behavior?: SpeciesDef['behavior']; pitch?: number;
 };
 
 export function F(s: FishSpec): SpeciesDef {
@@ -113,7 +113,7 @@ export function F(s: FishSpec): SpeciesDef {
     swim: s.swim ?? [Math.max(0.8, 5.5 - sz * 4), sz < 0.4 ? 0.05 : 0.04, 4],
     mat: { metal: s.metal ?? 0.08, rough: (s.metal ?? 0) > 0.3 ? 0.3 : 0.5, glow: s.glow },
     photoRange: s.photoRange ?? Math.max(3.5, Math.min(30, sz * 14 + 3)),
-    hab: s.hab, habLabel: h.label,
+    hab: s.hab, habLabel: h.label, pitch: s.pitch,
   };
 }
 const zoneLabel: Record<ZoneId, string> = { lagoon: '浅瀬ラグーン', reef: 'サンゴ礁', rocky: '岩礁', dropoff: 'ドロップオフ', offshore: '沖の大海原', deep: '深海' };

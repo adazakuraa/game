@@ -36,6 +36,7 @@ export type SpeciesRuntime = {
   haloPos?: Float32Array;
   lureOffset?: THREE.Vector3;
   slot: number;
+  minD?: number;
 };
 
 const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster', 'gardenEel', 'inv']);
@@ -399,7 +400,7 @@ export class Creatures {
       const mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
       const mesh = new THREE.InstancedMesh(geo, mat, def.count);
       mesh.frustumCulled = false;
-      mesh.castShadow = def.kind !== 'jelly' && def.size >= 0.2;
+      mesh.castShadow = def.kind !== 'jelly' && def.size >= 0.6;
       mesh.receiveShadow = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.name = def.id;
@@ -457,6 +458,7 @@ export class Creatures {
       pitch = -Math.asin(clamp(a.v.y / sp, -0.8, 0.8)) * 0.8;
     }
     if (def.id === 'oarfish') pitch = -1.25;
+    if (def.pitch !== undefined) pitch = def.pitch;
     if (def.kind === 'ray' && def.ray?.flounder) pitch = 0;
     _e.set(pitch, a.yaw, roll);
     a.q.setFromEuler(_e);
@@ -474,6 +476,7 @@ export class Creatures {
     if (d > (s < 0.12 ? 20 : s < 0.35 ? 34 : s < 1 ? 46 : 52 + s * 3)) return;
     if (d > reach && (dx * this.viewDir.x + dy * this.viewDir.y + dz * this.viewDir.z) < -reach) return;
     const i = rt.slot++;
+    if (d < (rt.minD ?? 1e9)) rt.minD = d;
     if (a.col) rt.mesh!.setColorAt(i, a.col);
     if (rt.def.behavior === 'buried') {
       _v.copy(a.p);
@@ -621,6 +624,7 @@ export class Creatures {
       if (rt.halo) rt.halo.visible = near;
       if (!near || !rt.mesh) continue;
       rt.slot = 0;
+      rt.minD = 1e9;
       const def = rt.def;
 
       // ---- group centers
@@ -751,7 +755,17 @@ export class Creatures {
       if (rt.mesh.instanceColor) rt.mesh.instanceColor.needsUpdate = true;
       if (rt.halo) rt.halo.geometry.attributes.position.needsUpdate = true;
     }
+    // draw budget: only the nearest species meshes are drawn (far small schools are lost in the haze anyway)
+    const drawn = this.list.filter((rt) => rt.mesh?.visible);
+    if (drawn.length > this.maxDrawn) {
+      drawn.sort((a, b) => (a.minD ?? 1e9) - (b.minD ?? 1e9));
+      for (let i = this.maxDrawn; i < drawn.length; i++) {
+        drawn[i].mesh!.visible = false;
+        if (drawn[i].halo) drawn[i].halo!.visible = false;
+      }
+    }
   }
+  maxDrawn = 70;
 
   /**
    * Best photographable creature. A shot counts only if the animal is inside the photo crop,

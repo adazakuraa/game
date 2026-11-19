@@ -861,6 +861,19 @@ export class Game {
         const src = this.renderer.domElement;
         return { ndc: [+v.x.toFixed(2), +v.y.toFixed(2), +v.z.toFixed(3)], w: src.width, h: src.height, yaw: this.yaw, pitch: this.pitch, t: this.target ? this.target.reason : null, paused: this.paused, active: rt!.active };
       },
+      drawStats: () => {
+        let creatures = 0, flora = 0, terrain = 0, other = 0, casters = 0;
+        this.scene.traverseVisible((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh && !(o as THREE.Points).isPoints) return;
+          if ((m as unknown as THREE.InstancedMesh).isInstancedMesh && (m as unknown as THREE.InstancedMesh).count === 0) return;
+          if (m.castShadow) casters++;
+          let p: THREE.Object3D | null = o;
+          while (p && p !== this.creatures.group && p !== this.flora.group && p !== this.terrain.group) p = p.parent;
+          if (p === this.creatures.group) creatures++; else if (p === this.flora.group) flora++; else if (p === this.terrain.group) terrain++; else other++;
+        });
+        return { creatures, flora, terrain, other, casters };
+      },
       nearFish: (r = 25) => {
         const c = this.camera.position;
         const out: Record<string, number> = {};

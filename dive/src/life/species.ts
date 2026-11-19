@@ -47,6 +47,8 @@ export type SpeciesDef = {
   /** buried-type animals sit at their home point (e.g. on coral) instead of on the sand */
   anchorHome?: boolean;
   rainbow?: boolean;
+  /** fixed body pitch (e.g. razorfish swim head-down) */
+  pitch?: number;
 };
 
 const fins = (p: Paint, c: string) => p.fill(c);
@@ -431,7 +433,9 @@ export const SPECIES: SpeciesDef[] = [
 import { MORE_SPECIES } from './species2';
 import { INVERTS } from './species3';
 import { MORE_FISH } from './species4';
-SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...INVERTS);
+import { FISH_300 } from './species5';
+import { INVERTS_2 } from './species6';
+SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2);
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
 export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];
