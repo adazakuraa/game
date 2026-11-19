@@ -17,6 +17,8 @@ export interface PlayerContext {
   rng: () => number;
   deepSnow: boolean;
   drift: number;
+  /** 1 while something is coming down on you: a scrambling burst of speed. */
+  adrenaline?: number;
 }
 
 export type PlayerEvent =
@@ -272,6 +274,7 @@ export class Player {
       speed *= ctx.deepSnow ? 0.72 : 1;
       speed *= 1 - ctx.frostbite * 0.002;
       if (input.moveY < -0.2) speed *= 0.6; // stepping backwards
+      speed *= 1 + 0.6 * (ctx.adrenaline ?? 0);
 
       const climbAngle = THREE.MathUtils.radToDeg(Math.atan(up));
       const ascending = !!this.clip && climbAngle > 30;

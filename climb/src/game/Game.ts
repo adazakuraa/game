@@ -682,6 +682,7 @@ export class Game {
       rng: this.rng,
       deepSnow,
       drift: smoothstep(45, 95, ph.hace),
+      adrenaline: this.seracWarn > 0 ? 1 : 0,
     });
     this.handlePlayerEvents();
 
@@ -922,7 +923,7 @@ export class Game {
           mesh.castShadow = true;
           const start = this.seracLane.clone().addScaledVector(toLane, -dist - this.rng() * 10);
           start.y = Math.max(w.field.height(start.x, start.z), this.seracLane.y) + (rock ? 9 : 14) + this.rng() * 5;
-          start.addScaledVector(rock ? hz.along : laneDir, (this.rng() - 0.5) * (rock ? 1.6 : 3));
+          start.addScaledVector(rock ? hz.along : laneDir, (this.rng() - 0.5) * (rock ? 1.6 : 2));
           this.scene.add(mesh);
           const puff = new THREE.Sprite(new THREE.SpriteMaterial({
             map: this.getPuffTex(), color: rock ? 0xb8aa98 : 0xf4f7fb, transparent: true, opacity: 0, depthWrite: false,
@@ -994,7 +995,7 @@ export class Game {
       (c.puff.material as THREE.SpriteMaterial).opacity = Math.min(1, age * 1.5) * Math.min(1, c.life / 2) * 0.62;
       const d = c.pos.distanceTo(this.tmpV.copy(p.pos).setY(p.pos.y + 1));
       nearest = Math.min(nearest, d);
-      if (lethal && this.state === 'play' && p.mode !== 'dead' && d < c.mesh.scale.x + 0.9) {
+      if (lethal && this.state === 'play' && p.mode !== 'dead' && d < c.mesh.scale.x * 0.8 + 0.6) {
         this.flash = 0.8;
         this.audio.impact();
         this.hitDir.copy(c.vel).setY(0).normalize();
