@@ -284,6 +284,16 @@ export class Props {
     };
     const variants = [makeCluster(3), makeCluster(4), makeCluster(2), makeCluster(5), makeCluster(3)];
     const debris = [makeBlock(0.6, 1.5), makeBlock(0.45, 2.0)];
+    // Each cluster's footing: its lowest vertices (tilted neighbours lift some corners).
+    const footings = variants.map((g) => {
+      const pa = g.getAttribute('position');
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i < pa.count; i++) if (pa.getY(i) < 0.12) pts.push(new THREE.Vector3(pa.getX(i), pa.getY(i), pa.getZ(i)));
+      // thin out: neighbouring triangles share corners
+      const seen = new Set<string>();
+      return pts.filter((v) => { const k = `${v.x.toFixed(2)},${v.z.toFixed(2)}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    });
+    const wv = new THREE.Vector3();
     const perVariant = 10;
     const meshes = variants.map((g) => new THREE.InstancedMesh(g, mat, perVariant));
     const debrisMeshes = debris.map((g) => new THREE.InstancedMesh(g, mat, 40));
@@ -304,8 +314,31 @@ export class Props {
       // Seracs are broad blocks rather than pillars: width usually exceeds height.
       const size = 7 + this.rng() * 9;
       const h = (3.5 + this.rng() * 6) * Math.min(1, 0.5 + Math.abs(lat) / 25);
+      const depth = size * (0.6 + this.rng() * 0.6);
+      // Seat the whole footprint: the cluster's neighbours reach ~0.9 of its scale from the centre,
+      // so sit it on the lowest ground under that ring (the uphill side is buried, never a floating edge).
+      let gMin = Infinity, gMax = -Infinity;
+      for (const rr of [0, 0.3, 0.6, 0.9]) {
+        for (let k = 0; k < (rr ? 10 : 1); k++) {
+          const a = (k / 10) * Math.PI * 2;
+          const gy = this.ground(x + Math.cos(a) * rr * size, z + Math.sin(a) * rr * depth);
+          gMin = Math.min(gMin, gy); gMax = Math.max(gMax, gy);
+        }
+      }
+      void gMax;
       q.setFromEuler(new THREE.Euler((this.rng() - 0.5) * 0.25, this.rng() * Math.PI * 2, (this.rng() - 0.5) * 0.25));
-      m4.compose(new THREE.Vector3(x, this.ground(x, z) - 0.6, z), q, new THREE.Vector3(size, h, size * (0.6 + this.rng() * 0.6)));
+      const scl = new THREE.Vector3(size, h, depth);
+      m4.compose(new THREE.Vector3(x, gMin, z), q, scl);
+      // drop it until no footing vertex is above the snow (plus a little bedding-in)
+      let maxGap = -Infinity, minGap = Infinity;
+      for (const fv of footings[v]) {
+        wv.copy(fv).applyMatrix4(m4);
+        const gap = wv.y - this.ground(wv.x, wv.z);
+        maxGap = Math.max(maxGap, gap); minGap = Math.min(minGap, gap);
+      }
+      // on a steep step the uphill side would swallow the whole tower: skip those spots only
+      if (maxGap - minGap > h * 1.1) continue;
+      m4.compose(new THREE.Vector3(x, gMin - maxGap - 0.6, z), q, scl);
       meshes[v].setMatrixAt(used[v]++, m4);
       // Broken debris at the tower's foot.
       const n = 1 + Math.floor(this.rng() * 3);
@@ -318,7 +351,8 @@ export class Props {
         if (Math.abs((dx - p.x) * -dir.z + (dz - p.z) * dir.x) < 4) continue; // keep the track clear
         const ds = 0.6 + this.rng() * 1.6;
         q.setFromEuler(new THREE.Euler(this.rng() * 1.2, this.rng() * 6, this.rng() * 1.2));
-        m4.compose(new THREE.Vector3(dx, this.ground(dx, dz) - ds * 0.25, dz), q, new THREE.Vector3(ds, ds, ds));
+        const dg = Math.min(this.ground(dx, dz), this.ground(dx + ds * 0.5, dz), this.ground(dx - ds * 0.5, dz), this.ground(dx, dz + ds * 0.5), this.ground(dx, dz - ds * 0.5));
+        m4.compose(new THREE.Vector3(dx, dg - ds * 0.3, dz), q, new THREE.Vector3(ds, ds, ds));
         debrisMeshes[dv].setMatrixAt(dUsed[dv]++, m4);
       }
     }
@@ -675,9 +709,21 @@ export class Props {
     const ice = new THREE.MeshStandardMaterial({ color: 0x8fbad6, roughness: 0.22, metalness: 0.0, emissive: 0x0a1a28 });
     const mesh = new THREE.Mesh(geo, ice);
     mesh.name = 'seracWall';
-    const groundY = this.ground(center.x, center.z);
-    mesh.position.set(center.x, groundY + 14, center.z);
-    mesh.lookAt(new THREE.Vector3(mid.x, groundY + 14, mid.z));
+    // lowest ground under the wall's footprint, so no edge hangs in the air on the slope
+    let groundY = Infinity;
+    for (let i = 0; i <= 8; i++) {
+      for (const dz of [-11, 0, 11]) {
+        const ox = (i / 8 - 0.5) * width;
+        const px = center.x + along.x * ox + toSummit.x * dz, pz = center.z + along.z * ox + toSummit.z * dz;
+        groundY = Math.min(groundY, this.ground(px, pz));
+      }
+    }
+    const groundC = this.ground(center.x, center.z);
+    // keep the crest where it was, extend the base down to the lowest ground
+    const bottom = groundY - 2, top = groundC + 31;
+    mesh.position.set(center.x, (top + bottom) / 2, center.z);
+    mesh.scale.y = (top - bottom) / 34;
+    mesh.lookAt(new THREE.Vector3(mid.x, mesh.position.y, mid.z));
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.group.add(mesh);
@@ -691,7 +737,7 @@ export class Props {
       kind: 'serac',
       s0: this.route.waypointS[from],
       s1: this.route.waypointS[to],
-      origin: new THREE.Vector3(center.x, groundY + 4, center.z).addScaledVector(toSummit, -12),
+      origin: new THREE.Vector3(center.x, groundC + 4, center.z).addScaledVector(toSummit, -12),
       along,
     });
   }

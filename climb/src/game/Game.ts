@@ -69,6 +69,7 @@ function writeSave(d: SaveData | null): void {
 
 interface IceChunk {
   mesh: THREE.Mesh;
+  puff: THREE.Sprite;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   life: number;
@@ -149,6 +150,17 @@ export class Game {
   private readonly chunks: IceChunk[] = [];
   private chunkGeo = new THREE.DodecahedronGeometry(1, 0);
   private chunkMat = new THREE.MeshStandardMaterial({ color: 0xa9cde4, roughness: 0.3 });
+  private puffTex: THREE.Texture | null = null;
+  /** Being struck by ice/rock: thrown, tumbling, buried in powder — not an instant cut. */
+  private hitAnim = false;
+  private readonly hitDir = new THREE.Vector3();
+  private readonly hitEye = new THREE.Vector3();
+  private hitYaw = 0;
+  private hitPitch = 0;
+  /** Where the crack came from: the head turns to it on reflex. */
+  private readonly hazSrc = new THREE.Vector3();
+  /** Powder billowing up where the serac/tower gave way. */
+  private readonly billows: { sprite: THREE.Sprite; age: number; size: number; rise: number }[] = [];
   private rockChunkMat = new THREE.MeshStandardMaterial({ color: 0x4a4541, roughness: 0.9, flatShading: true });
   private chunkKind: 'serac' | 'icefall' | 'rock' = 'serac';
   private titleAngle = 0.6;
@@ -473,6 +485,11 @@ export class Game {
     this.fade = 0;
     this.deathKind = null;
     this.deathTimer = 0;
+    this.hitAnim = false;
+    for (const c of this.chunks) { this.scene.remove(c.mesh); this.scene.remove(c.puff); }
+    this.chunks.length = 0;
+    for (const b of this.billows) this.scene.remove(b.sprite);
+    this.billows.length = 0;
     this.summitReached = false;
     this.player.descending = false;
     this.turnWarned = false;
@@ -483,7 +500,7 @@ export class Game {
     this.seracWarn = -1;
     this.lastLandmark = 0;
     this.maxAltitude = this.world.def.campAltitude;
-    for (const c of this.chunks) this.scene.remove(c.mesh);
+    for (const c of this.chunks) { this.scene.remove(c.mesh); this.scene.remove(c.puff); }
     this.chunks.length = 0;
     for (const c of this.world.props.caches) { c.taken = false; c.mesh.visible = true; }
     this.map.show(false);
@@ -582,14 +599,25 @@ export class Game {
 
   private updateDead(dt: number): void {
     this.deathTimer += dt;
-    this.fade = Math.min(1, this.fade + dt * 0.45);
+    if (this.world && this.player) this.updateChunks(dt, false);
+    if (this.hitAnim) {
+      this.updateHitCamera();
+      // powder blast whites the view out, then everything goes dark
+      const t = this.deathTimer;
+      this.post.params.whiteout = Math.min(1, t / 0.5) * Math.max(0, 1 - (t - 1.6) / 1.8) * 0.95;
+      this.flash = Math.max(0, this.flash - dt * 1.5);
+      this.post.params.flash = this.flash;
+      if (t > 1.8) this.fade = Math.min(1, this.fade + dt * 0.5);
+    } else {
+      this.fade = Math.min(1, this.fade + dt * 0.45);
+    }
     this.post.params.fade = this.fade * 0.85;
     this.updateEnvironment(dt, this.weather.state.storm);
     this.audio.update({
       wind: this.weather.state.windKmh, gust: this.weather.state.gust, storm: this.weather.state.storm, flow: 0,
       breathPhase: 0, breathRate: 10, effort: 0, heartPhase: 0, heartRate: 0, heartLoud: 0, drone: 0,
     });
-    if (this.deathTimer > 2.4 && document.getElementById('result')!.classList.contains('hidden')) this.showDeath();
+    if (this.deathTimer > (this.hitAnim ? 3.8 : 2.4) && document.getElementById('result')!.classList.contains('hidden')) this.showDeath();
   }
 
   private updatePlay(dt: number): void {
@@ -856,7 +884,20 @@ export class Game {
           warnSub = side > 0 ? 'ルートの右側に落ちてくる — 左へ寄れ' : 'ルートの左側に落ちてくる — 右へ寄れ';
           this.rockSide = side;
         }
+        if (!isRock) {
+          // Say where it is coming from and which way along the route is clear.
+          const rd = w.route.directionAt(sLane);
+          const toSrc = this.tmpV.copy(hz.origin).sub(this.seracLane).setY(0);
+          const fromRight = toSrc.x * -rd.z + toSrc.z * rd.x > 0;
+          const ahead = sLane - p.routeS;
+          const goingUp = !p.descending;
+          const run = Math.abs(ahead) < 1.5 ? '真上だ — 止まるな、走り抜けろ'
+            : (ahead > 0) === goingUp ? '崩落ラインは前方 — 下がれ' : '崩落ラインは後方 — 前へ急げ';
+          warnSub = `${fromRight ? '右手' : '左手'}から来る。${run}`;
+        }
         if (isRock) this.audio.rockfall(); else this.audio.crack();
+        this.radio.interrupt();
+        this.hazSrc.copy(hz.origin);
         this.flash = 0.2;
         this.hud.banner(TEXT[hz.kind].warn[0], warnSub, 'danger', 4000);
         this.chunkKind = hz.kind;
@@ -883,8 +924,24 @@ export class Game {
           start.y = Math.max(w.field.height(start.x, start.z), this.seracLane.y) + (rock ? 9 : 14) + this.rng() * 5;
           start.addScaledVector(rock ? hz.along : laneDir, (this.rng() - 0.5) * (rock ? 1.6 : 3));
           this.scene.add(mesh);
+          const puff = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: this.getPuffTex(), color: rock ? 0xb8aa98 : 0xf4f7fb, transparent: true, opacity: 0, depthWrite: false,
+          }));
+          puff.scale.setScalar(sc * 3);
+          this.scene.add(puff);
           const speed = hz.kind === 'icefall' ? 6 + this.rng() * 1 : 5 + this.rng() * 1.2;
-          this.chunks.push({ mesh, pos: start, vel: toLane.clone().multiplyScalar(speed), life: 9 });
+          this.chunks.push({ mesh, puff, pos: start, vel: toLane.clone().multiplyScalar(speed), life: 9 });
+        }
+        // the collapse itself: a powder cloud boiling up off the source, toward the lane
+        for (let i = 0; i < 6; i++) {
+          const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: this.getPuffTex(), color: isRock ? 0xa89a88 : 0xf2f5fa, transparent: true, opacity: 0, depthWrite: false,
+          }));
+          const k = i / 5;
+          sp.position.copy(this.seracLane).addScaledVector(toLane, -dist * (1 - k * 0.45) - 4).add(new THREE.Vector3((this.rng() - 0.5) * 8, 0, (this.rng() - 0.5) * 8));
+          sp.position.y = Math.max(w.field.height(sp.position.x, sp.position.z), this.seracLane.y) + 6 + this.rng() * 6;
+          this.scene.add(sp);
+          this.billows.push({ sprite: sp, age: -k * 0.8, size: (isRock ? 6 : 10) + this.rng() * 6, rise: 1 + this.rng() * 1.5 });
         }
       }
     }
@@ -892,7 +949,29 @@ export class Game {
       this.seracWarn -= dt;
       if (this.seracWarn < 0) this.seracTimer = 22 + this.rng() * 18;
     }
-    // Chunk physics
+    this.updateChunks(dt, true);
+  }
+
+  private getPuffTex(): THREE.Texture {
+    if (this.puffTex) return this.puffTex;
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d')!;
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.45, 'rgba(255,255,255,0.55)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 64, 64);
+    this.puffTex = new THREE.CanvasTexture(c);
+    return this.puffTex;
+  }
+
+  /** Falling ice/rock with its powder cloud. Only lethal while playing. */
+  private updateChunks(dt: number, lethal: boolean): void {
+    const w = this.world!;
+    const p = this.player!;
+    let nearest = 1e9;
     for (let i = this.chunks.length - 1; i >= 0; i--) {
       const c = this.chunks[i];
       c.life -= dt;
@@ -908,16 +987,71 @@ export class Game {
       c.mesh.position.copy(c.pos);
       c.mesh.rotation.x += dt * 3;
       c.mesh.rotation.z += dt * 2;
-      if (this.state === 'play' && p.mode !== 'dead' && c.pos.distanceTo(this.tmpV.copy(p.pos).setY(p.pos.y + 1)) < c.mesh.scale.x + 0.9) {
-        this.flash = 1;
+      // powder trails a little behind and swells as the block breaks up
+      const age = 9 - c.life;
+      c.puff.position.copy(c.pos).addScaledVector(c.vel, -0.12);
+      c.puff.scale.setScalar(c.mesh.scale.x * (4 + age * 2.4));
+      (c.puff.material as THREE.SpriteMaterial).opacity = Math.min(1, age * 1.5) * Math.min(1, c.life / 2) * 0.62;
+      const d = c.pos.distanceTo(this.tmpV.copy(p.pos).setY(p.pos.y + 1));
+      nearest = Math.min(nearest, d);
+      if (lethal && this.state === 'play' && p.mode !== 'dead' && d < c.mesh.scale.x + 0.9) {
+        this.flash = 0.8;
         this.audio.impact();
+        this.hitDir.copy(c.vel).setY(0).normalize();
+        this.startHit();
         this.die(this.chunkKind === 'rock' ? 'rock' : this.chunkKind === 'icefall' ? 'icefall' : 'serac');
       }
       if (c.life <= 0) {
         this.scene.remove(c.mesh);
+        this.scene.remove(c.puff);
+        (c.puff.material as THREE.SpriteMaterial).dispose();
         this.chunks.splice(i, 1);
       }
     }
+    for (let i = this.billows.length - 1; i >= 0; i--) {
+      const b = this.billows[i];
+      b.age += dt;
+      const a = Math.max(0, b.age);
+      b.sprite.scale.setScalar(b.size * (0.5 + a * 0.35));
+      b.sprite.position.y += b.rise * dt;
+      (b.sprite.material as THREE.SpriteMaterial).opacity = Math.min(1, a * 2) * Math.max(0, 1 - a / 9) * 0.75;
+      if (a > 9) {
+        this.scene.remove(b.sprite);
+        (b.sprite.material as THREE.SpriteMaterial).dispose();
+        this.billows.splice(i, 1);
+      }
+    }
+    // the ground shudders as it comes through
+    if (lethal && nearest < 25) p.shake = Math.max(p.shake, (1 - nearest / 25) * 0.7);
+  }
+
+  private startHit(): void {
+    const p = this.player!;
+    this.hitAnim = true;
+    this.hud.show(false);
+    this.radio.interrupt(99);
+    p.eyePosition(this.hitEye);
+    this.hitYaw = p.yaw;
+    this.hitPitch = p.pitch;
+  }
+
+  /** Thrown off your feet along the debris line, tumbling, then buried in powder. */
+  private updateHitCamera(): void {
+    const w = this.world!;
+    const t = this.deathTimer;
+    const fly = 1 - Math.pow(1 - Math.min(1, t / 0.9), 3);
+    const cam = this.camera;
+    cam.position.copy(this.hitEye).addScaledVector(this.hitDir, fly * 4.5);
+    const ground = w.field.height(cam.position.x, cam.position.z);
+    const hop = Math.sin(Math.min(1, t / 0.9) * Math.PI) * 0.8;
+    const eyeH = THREE.MathUtils.lerp(1.6, 0.3, Math.min(1, t / 1.1)) + hop;
+    cam.position.y = Math.max(ground + 0.25, THREE.MathUtils.lerp(this.hitEye.y, ground + eyeH, Math.min(1, t / 0.4)));
+    const shake = Math.max(0, 1 - t / 1.4) * (this.reducedMotion ? 0 : 1);
+    cam.rotation.order = 'YXZ';
+    cam.rotation.y = this.hitYaw + fly * 1.1 + (Math.random() - 0.5) * shake * 0.25;
+    cam.rotation.x = this.hitPitch + Math.sin(fly * Math.PI) * -0.9 + fly * 0.5 + (Math.random() - 0.5) * shake * 0.25;
+    cam.rotation.z = fly * 1.3 + Math.sin(t * 6) * shake * 0.3;
+    cam.updateMatrixWorld();
   }
 
   private updateProgress(): void {
@@ -1075,6 +1209,20 @@ export class Game {
       const w = Math.min(1, ap / 0.18, (1 - ap) / 0.18) * 0.92;
       lookYaw = dyaw * w;
       lookPitch = (wantPitch - p.pitch) * w;
+    }
+    if (this.seracWarn > 0 && this.state === 'play') {
+      // You hear the crack and look: a quick reflex toward the source, then control returns.
+      const e = 7 - this.seracWarn;
+      const w = Math.min(1, e / 0.35) * (1 - THREE.MathUtils.smoothstep(e, 1.6, 2.4)) * (this.reducedMotion ? 0.6 : 0.85);
+      if (w > 0) {
+        const eye = this.camera.position;
+        const dx = this.hazSrc.x - eye.x, dy = this.hazSrc.y - eye.y, dz = this.hazSrc.z - eye.z;
+        let dyaw = Math.atan2(-dx, -dz) - p.yaw;
+        dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+        const wantPitch = THREE.MathUtils.clamp(Math.atan2(dy, Math.hypot(dx, dz)), -0.3, 0.6);
+        lookYaw = dyaw * w;
+        lookPitch = (wantPitch - p.pitch) * w;
+      }
     }
     this.camera.rotation.y = p.yaw + lookYaw + (Math.random() - 0.5) * shake * 0.03;
     // On steep ground facing uphill, the eyes lift to the route instead of the wall in front.

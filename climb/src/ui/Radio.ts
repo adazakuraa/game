@@ -75,6 +75,13 @@ export class Radio {
     this.el.classList.add('hidden');
   }
 
+  /** Cut the current transmission (something more urgent is on screen). */
+  interrupt(hold = 8): void {
+    this.showing = 0;
+    this.cooldown = Math.max(this.cooldown, hold);
+    this.el.classList.add('hidden');
+  }
+
   /** Queue a line once per key (keys reset each leg). */
   say(key: string, text: string, from = 'BC'): void {
     if (this.said.has(key)) return;
