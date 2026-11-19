@@ -943,3 +943,61 @@ function buildShrimp(): THREE.BufferGeometry {
   }
   return finalize(parts, (x, _y, z) => [x * 2 + 0.5, z + 0.5]);
 }
+
+// --------------------------------------------------------------------------- photo fish
+
+/**
+ * Fish built from a photo silhouette (scripts/photo_fish.py). prof[i] = [top, bottom, coreTop, coreBottom]
+ * in 0..1 image space, columns tail -> head. Two lofted sheets (left / right) whose lateral bulge follows the
+ * fin-less core; fins stay as thin membranes and the exact outline comes from the texture alpha.
+ */
+export function buildPhotoFish(prof: number[][], aspect: number, widthRatio = 0.42, len = 1.12): THREE.BufferGeometry {
+  const N = prof.length - 1;
+  const M = 14;
+  const Hh = len / aspect;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const fin: number[] = [];
+  const bend: number[] = [];
+  const idx: number[] = [];
+  const bendW = (z: number) => Math.pow(Math.min(1, Math.max(0, (0.5 - z) / 1.0)), 1.6) * 0.95 + 0.05;
+  for (const side of [-1, 1]) {
+    const base = pos.length / 3;
+    for (let i = 0; i <= N; i++) {
+      const [top, bot, ct, cb] = prof[i];
+      const u = i / N;
+      const z = 0.5 - len + u * len;
+      const cm = (ct + cb) / 2;
+      const cr = Math.max(1e-3, (ct - cb) / 2);
+      const halfW = (ct - cb) * Hh * widthRatio * 0.5;
+      // pad the column slightly so alpha, not geometry, defines the outline
+      const t2 = Math.min(1, top + 0.01), b2 = Math.max(0, bot - 0.01);
+      for (let j = 0; j <= M; j++) {
+        const v = b2 + ((t2 - b2) * j) / M;
+        const q = (v - cm) / cr;
+        const inCore = Math.abs(q) < 1;
+        const bulge = inCore ? halfW * Math.pow(1 - q * q, 0.6) : 0;
+        pos.push(side * (bulge + 0.002), (v - 0.5) * Hh, z);
+        uv.push(u, v);
+        fin.push(inCore ? 0 : 1);
+        bend.push(bendW(z));
+      }
+    }
+    for (let i = 0; i < N; i++)
+      for (let j = 0; j < M; j++) {
+        const a = base + i * (M + 1) + j, b = a + M + 1;
+        if (side > 0) idx.push(a, a + 1, b, a + 1, b + 1, b);
+        else idx.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('aFin', new THREE.Float32BufferAttribute(fin, 1));
+  g.setAttribute('aBend', new THREE.Float32BufferAttribute(bend, 1));
+  for (const a of ['aFlap', 'aPulse', 'aGlow']) setAttr(g, a, () => 0);
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
+}

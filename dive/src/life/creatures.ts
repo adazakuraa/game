@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SPECIES, type SpeciesDef } from './species';
-import { buildCrustacean, buildFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr } from './models';
+import { loadPhotoTex, photoFor } from './photoFish';
+import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr } from './models';
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
@@ -87,7 +88,7 @@ function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Pai
   }
 }
 
-function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THREE.MeshStandardMaterial {
+function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false): THREE.MeshStandardMaterial {
   const m = def.mat ?? {};
   const translucent = m.translucent !== undefined;
   const mat = new THREE.MeshStandardMaterial({
@@ -107,14 +108,20 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THRE
   if (def.fish?.bendY) mat.defines = { BEND_Y: '' };
   if (def.id === 'atolla') mat.defines = { ...(mat.defines ?? {}), GLOW_SPIN: '' };
   if (def.rainbow) mat.defines = { ...(mat.defines ?? {}), RAINBOW: '' };
-  const scaly = def.kind === 'fish' || def.kind === 'gardenEel';
+  const scaly = !photo && (def.kind === 'fish' || def.kind === 'gardenEel');
+  if (photo) {
+    // photographed skin already carries scales / pattern; the outline comes from alpha
+    mat.alphaTest = 0.5;
+    mat.defines = { ...(mat.defines ?? {}), PHOTO_FISH: '' };
+    mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.3 : 0.42);
+  }
   if (scaly) {
     mat.defines = { ...(mat.defines ?? {}), FISH_SCALES: '' };
     // wet, glossy skin; silver species keep their metal value
     mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
   }
   return underwaterMaterial(mat, {
-    key: 'cr-' + def.kind + (translucent ? '-t' : ''),
+    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : ''),
     caustic: 0.9,
     uniforms: {
       uSwim: { value: new THREE.Vector3(...swim) },
@@ -169,6 +176,10 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THRE
       else if ( vFin < 1.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * ( 0.88 + 0.18 * abs( sin( vMapUv.y * 150.0 ) ) ), 0.7 );
       #endif`,
     fragBeforeLights: `
+      #if defined( PHOTO_FISH ) && defined( USE_MAP )
+        // photographed relief: luminance detail as a faint bump so scales and gill plates catch the light
+        normal = uwBump( normal, dot( texture2D( map, vMapUv ).rgb, vec3( 0.3, 0.59, 0.11 ) ) * uFishSize * 0.004 );
+      #endif
       #if defined( FISH_SCALES ) && defined( USE_MAP )
       {
         float hb = vFin < 0.5 ? fishScale( vMapUv ) * uFishSize * 0.0006 : vFin < 1.5 ? abs( sin( vMapUv.y * 150.0 ) ) * uFishSize * 0.0012 : 0.0;
@@ -197,6 +208,8 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THRE
 export type PhotoTarget = { rt: SpeciesRuntime; agent: Agent; dist: number; angle: number; inRange: boolean; reason: 'ok' | 'small' | 'murky' | 'dark' | 'hidden'; frac: number };
 
 export class Creatures {
+  /** test-only: pin agent 0 of a species */
+  pin: { id: string; p: THREE.Vector3; yaw: number } | null = null;
   readonly group = new THREE.Group();
   readonly list: SpeciesRuntime[] = [];
   private rnd = mulberry32(77);
@@ -391,13 +404,22 @@ export class Creatures {
     rt.bounds.expandByScalar(Math.max(...rt.groups.map((g) => g.roam)) + def.size * 2 + 10);
 
     if (def.kind !== 'none') {
-      const { geo, paint } = buildGeometry(def);
-      def.paint?.(paint);
-      const tex = new THREE.CanvasTexture(paint.c);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 4;
-      const lay = paint.fish;
-      const mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
+      const photo = def.kind === 'fish' ? photoFor(def.id) : null;
+      let geo: THREE.BufferGeometry;
+      let mat: THREE.MeshStandardMaterial;
+      if (photo) {
+        geo = buildPhotoFish(photo.prof, photo.aspect, def.photoWidth ?? (def.fish ? Math.min(0.9, def.fish.W / def.fish.H) : 0.42));
+        mat = makeMaterial(def, loadPhotoTex(photo.url), 1 / photo.aspect, true);
+      } else {
+        const b = buildGeometry(def);
+        geo = b.geo;
+        def.paint?.(b.paint);
+        const tex = new THREE.CanvasTexture(b.paint.c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
+        const lay = b.paint.fish;
+        mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
+      }
       const mesh = new THREE.InstancedMesh(geo, mat, def.count);
       mesh.frustumCulled = false;
       mesh.castShadow = def.kind !== 'jelly' && def.size >= 0.6;
@@ -619,6 +641,7 @@ export class Creatures {
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
+      if (this.pin && this.pin.id === rt.def.id) near = true;
       rt.active = near;
       if (rt.mesh) rt.mesh.visible = near;
       if (rt.halo) rt.halo.visible = near;
@@ -665,6 +688,16 @@ export class Creatures {
       for (let i = 0; i < rt.agents.length; i++) {
         const a = rt.agents[i];
         const g = rt.groups[a.g];
+        if (this.pin && this.pin.id === def.id && i === 0) {
+          // test showcase: hold one individual side-on in front of the camera
+          g.absent = false;
+          a.p.copy(this.pin.p);
+          a.v.set(Math.sin(this.pin.yaw), 0, Math.cos(this.pin.yaw)).multiplyScalar(0.25);
+          a.yaw = this.pin.yaw;
+          a.q.setFromEuler(_e.set(0, a.yaw, 0));
+          this.writeInstance(rt, a, i);
+          continue;
+        }
         if (g.absent) continue;
         if (Math.abs(g.c.x - player.x) > 100 || Math.abs(g.c.z - player.z) > 100) continue;
         const dPlayer = a.p.distanceTo(player);

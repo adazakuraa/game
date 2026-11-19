@@ -47,6 +47,8 @@ export type SpeciesDef = {
   /** buried-type animals sit at their home point (e.g. on coral) instead of on the sand */
   anchorHome?: boolean;
   rainbow?: boolean;
+  /** lateral thickness / core height for photo-based models */
+  photoWidth?: number;
   /** fixed body pitch (e.g. razorfish swim head-down) */
   pitch?: number;
 };

@@ -726,6 +726,18 @@ export class Game {
       deep: { x: VENT.x - 14, y: heightAt(VENT.x - 14, VENT.z - 22) + 6, z: VENT.z - 22, yaw: Math.PI * 0.8, pitch: -0.15, light: true },
     };
     (window as unknown as Record<string, unknown>).__THREE_GAME_TEST_HOOKS__ = {
+      game: this,
+      showcase: (id: string, dist = 2, side = 1) => {
+        const cam = this.camera;
+        cam.updateMatrixWorld();
+        const f = new THREE.Vector3();
+        cam.getWorldDirection(f);
+        const pos = cam.position.clone().addScaledVector(f, dist);
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        if (rt) rt.active = true;
+        this.creatures.pin = { id, p: pos, yaw: Math.atan2(f.x, f.z) + (side * Math.PI) / 2 };
+        return !!rt;
+      },
       seed: () => undefined,
       setState: (name: string) => {
         if (name === 'title') {
@@ -763,7 +775,9 @@ export class Game {
       findSpecies: (id: string) => {
         const rt = this.creatures.list.find((r) => r.def.id === id);
         const a = rt?.agents[0];
-        return a ? { x: a.p.x, y: a.p.y, z: a.p.z } : null;
+        if (!a) return null;
+        const f = new THREE.Vector3(0, 0, 1).applyQuaternion(a.q);
+        return { x: a.p.x, y: a.p.y, z: a.p.z, fx: f.x, fz: f.z, s: a.s };
       },
       triReport: () => {
         const out: Record<string, number> = {};
