@@ -100,7 +100,8 @@ export class Physiology {
     if (this.collapsed && this.stamina > 30) this.collapsed = false;
 
     // Heat balance: moving warms you, wind and stillness strip heat.
-    const produce = 0.45 + c.exertion * 0.8;
+    // a down suit plus moving keeps you warm; standing still in strong wind does not
+    const produce = 0.55 + c.exertion * 0.8;
     const chill = 0.25 + Math.max(0, -c.ambientC - 25) * 0.01 + Math.pow(c.windKmh / 50, 1.3) * 0.45;
     this.heatBalance = produce - chill;
     const dT = this.heatBalance * 0.018 * dt;

@@ -33,7 +33,8 @@ export type PlayerEvent =
   | { type: 'gustKnock' }
   | { type: 'crevasseDeath' }
   | { type: 'crevasseCaught' }
-  | { type: 'ladderWobble' };
+  | { type: 'ladderWobble' }
+  | { type: 'actionCancelled' };
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -58,6 +59,8 @@ export class Player {
   /** total length of the current clip/transfer/unclip action (s) */
   actionDur = 1;
   actionKind: 'clip' | 'unclip' | 'transfer' | null = null;
+  /** the stick was let go during the action (a fresh push cancels it) */
+  private actionReleased = false;
   /** where on the rope the hand is working (world) */
   readonly actionTarget = new THREE.Vector3();
   /** for transfers: the anchor being passed */
@@ -193,6 +196,19 @@ export class Player {
     }
 
     if (this.mode === 'transfer' || this.mode === 'clipping') {
+      // Pushing the stick abandons the rope work (e.g. to get out from under falling ice);
+      // you stay clipped to whatever you were already on.
+      const push = Math.max(Math.abs(input.moveX), Math.abs(input.moveY));
+      if (push < 0.2) this.actionReleased = true;
+      if (this.actionReleased && push > 0.5) {
+        this.pendingClip = null;
+        this.pendingUnclip = false;
+        this.actionKind = null;
+        this.actionT = 0;
+        this.mode = 'walk';
+        this.events.push({ type: 'actionCancelled' });
+        return;
+      }
       this.actionT -= dt;
       this.speed = 0;
       this.exertion = 0.05;
@@ -372,6 +388,7 @@ export class Player {
   }
 
   private handleClipAction(): void {
+    this.actionReleased = false;
     if (this.clip) {
       const anchorDir = this.transferDir();
       if (anchorDir !== 0) {

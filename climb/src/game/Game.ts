@@ -806,6 +806,9 @@ export class Game {
           this.physio.stamina = Math.max(0, this.physio.stamina - 25);
           this.hud.banner('クレバスに落ちた — ロープが止めた', 'ロープを手繰って這い上がった', 'danger', 3200);
           break;
+        case 'actionCancelled':
+          this.hud.banner('ロープ作業を中断', '元のロープには確保されたまま', '', 1600);
+          break;
         case 'ladderWobble':
           this.audio.clink();
           this.hud.banner('ハシゴの上でよろけた', 'ロープに確保していて助かった', '', 2400);
@@ -862,12 +865,12 @@ export class Game {
         const n = rock ? 9 : 7;
         for (let i = 0; i < n; i++) {
           const mesh = new THREE.Mesh(this.chunkGeo, rock ? this.rockChunkMat : this.chunkMat);
-          const sc = rock ? 0.3 + this.rng() * 0.5 : hz.kind === 'icefall' ? 0.8 + this.rng() * 0.9 : 1 + this.rng() * 2.2;
+          const sc = rock ? 0.3 + this.rng() * 0.5 : hz.kind === 'icefall' ? 0.7 + this.rng() * 0.6 : 1 + this.rng() * 2.2;
           mesh.scale.setScalar(sc);
           mesh.castShadow = true;
           const start = this.seracLane.clone().addScaledVector(toLane, -dist - this.rng() * 10);
           start.y = w.field.height(start.x, start.z) + (rock ? 10 : 18) + this.rng() * 8;
-          start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 1.6 : 5));
+          start.addScaledVector(hz.along, (this.rng() - 0.5) * (rock ? 1.6 : hz.kind === 'icefall' ? 3 : 5));
           this.scene.add(mesh);
           const speed = hz.kind === 'icefall' ? 6 + this.rng() * 1 : 4 + this.rng() * 3;
           this.chunks.push({ mesh, pos: start, vel: toLane.clone().multiplyScalar(speed), life: 9 });
