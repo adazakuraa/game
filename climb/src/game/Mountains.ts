@@ -75,7 +75,8 @@ const SUMMIT_STAGES: Record<'everest' | 'k2', MountainDef> = {
     stageName: 'サミットプッシュ',
     goalName: '山頂',
     goal: 'summit',
-    startHours: 3,
+    // Real summit pushes leave the top camp around 23:00 the night before.
+    startHours: -1,
     o2: 'summit',
     cloudAlt: 6900,
     name: 'エベレスト',
@@ -142,7 +143,8 @@ const SUMMIT_STAGES: Record<'everest' | 'k2', MountainDef> = {
     stageName: 'サミットプッシュ',
     goalName: '山頂',
     goal: 'summit',
-    startHours: 3,
+    // Real summit pushes leave the top camp around 23:00 the night before.
+    startHours: -1,
     o2: 'summit',
     cloudAlt: 6500,
     name: 'K2',

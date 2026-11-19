@@ -1002,7 +1002,7 @@ export class Game {
       `${w.def.goalName}（${w.def.summitAltitude.toLocaleString('en-US')}m）`,
       desc,
       'win',
-      next ? `翌朝出発 — ${next.stageName}` : '出発',
+      next ? (next.goal === 'summit' ? `今夜23時に出発 — ${next.stageName}` : `翌朝出発 — ${next.stageName}`) : '出発',
       [['高度順応', `${Math.round(this.acclim).toLocaleString('en-US')}m`], ['遠征日数', `${this.day}日目`]],
     );
     document.getElementById('result-rest')!.classList.remove('hidden');

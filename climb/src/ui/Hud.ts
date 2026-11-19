@@ -36,8 +36,10 @@ export interface HudData {
 }
 
 export function formatClock(hours: number): string {
-  const h = Math.floor(hours) % 24;
-  const m = Math.floor((hours - Math.floor(hours)) * 60);
+  // Hours may be negative (the night before, e.g. -1 = 23:00) or run past midnight.
+  const wrapped = ((hours % 24) + 24) % 24;
+  const h = Math.floor(wrapped);
+  const m = Math.floor((wrapped - h) * 60);
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
