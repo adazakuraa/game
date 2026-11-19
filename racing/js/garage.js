@@ -293,7 +293,6 @@ export function raceReward(info) {
 // タイムアタック: 周回ごと。新記録で加算。1回の挑戦で報酬が出る周回数には上限がある
 export const TA_LAP_COINS = 20;
 export const TA_BEST_COINS = 80;
-export const TA_MAX_PAID_LAPS = 10;
 
 // ラリー: ステージの順位に応じた報酬。長いステージなので周回レースより少し多め
 export function stageReward(info) {

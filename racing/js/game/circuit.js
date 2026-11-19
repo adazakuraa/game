@@ -5,7 +5,7 @@ import { World } from '../render/world.js';
 import { buildCar } from '../render/carmodel.js';
 import { Effects } from '../render/effects.js';
 import { store } from '../store.js';
-import { garage, raceReward, TA_LAP_COINS, TA_BEST_COINS, TA_MAX_PAID_LAPS } from '../garage.js';
+import { garage, raceReward, TA_LAP_COINS, TA_BEST_COINS } from '../garage.js';
 import { GameBase } from './base.js';
 import { C, $, fmt, drawTrackMap, isTouch } from './common.js';
 
@@ -32,7 +32,6 @@ export class CircuitGame extends GameBase {
     this.models = new Map();
     this.incidents = 0;
     this.lastIncident = -9;
-    this.taPaid = 0;
     this.reward = null;
     for (const e of this.race.entries) {
       const m = e.kind === 'player'
@@ -62,9 +61,10 @@ export class CircuitGame extends GameBase {
     }
     // ゴースト
     this.ghost = null;
-    // タイムアタックの記録は「連続2周の合計」。ゴーストもその2周を再生する
-    this.ghostData = opts.mode === 'ta' ? store.get('ta2.' + track.def.id, null) : null;
-    this.prevLap = null; // 直前の周 { time, frames }
+    // タイムアタックの記録は「1・2周目の合計」。ゴーストもその2周を再生する
+    this.taKey = 'ta12.' + track.def.id;
+    this.ghostData = opts.mode === 'ta' ? store.get(this.taKey, null) : null;
+    this.prevLap = null; // 1周目 { time, frames }
     if (this.ghostData) this.ghostProgress();
     if (this.ghostData) this.makeGhost();
     // カメラ
@@ -91,7 +91,7 @@ export class CircuitGame extends GameBase {
     this.best2 = opts.mode === 'ta' && this.ghostData ? this.ghostData.time : Infinity;
     $('#hBest').textContent = fmt(opts.mode === 'ta' ? this.best2 : Infinity);
     $('#hLast').textContent = fmt(0);
-    if (opts.mode === 'ta') { $('#hBestL').textContent = '2周BEST'; $('#hLastL').textContent = '2周'; }
+    if (opts.mode === 'ta') { $('#hBestL').textContent = '2周BEST'; $('#hLaps').textContent = '2'; }
     C.input.setMode(opts.steer);
     C.input.sens = opts.sens;
     $('#hMsg').classList.remove('show');
@@ -166,6 +166,14 @@ export class CircuitGame extends GameBase {
         }
       } else if (ev.type === 'lap') {
         this.onLap(ev);
+      } else if (ev.type === 'taFinish') {
+        this.finishedAt = performance.now();
+        const res = this.taResult;
+        if (this.ghost) this.ghost.root.visible = false;
+        $('#hDelta').textContent = '';
+        this.showMsg(res && res.newBest ? 'NEW RECORD!' : 'FINISH', 4, res && res.newBest ? '#ffd000' : '#fff');
+        this.subMsg('2周 ' + fmt(ev.total), 4);
+        setTimeout(() => { if (C.game() === this) this.showResults(); }, 3500);
       } else if (ev.type === 'finish') {
         this.finishedAt = performance.now();
         const p = ev.position;
@@ -204,40 +212,35 @@ export class CircuitGame extends GameBase {
       if (r.player.lap === r.laps) this.showMsg('FINAL LAP', 1.1, '#ffb000', true);
       return;
     }
-    // タイムアタック: 直前の周と合わせた連続2周の合計で記録する
-    const prev = this.prevLap;
-    this.prevLap = { time: ev.time, frames: ev.frames };
+    // タイムアタック: 1・2周目の合計で記録する
+    $('#hLast').textContent = fmt(ev.time);
     let newBest = false;
-    if (!prev) {
-      this.subMsg(`1周目 ${fmt(ev.time)}  — 次の周と合わせた2周で記録`, 3);
+    if (!this.prevLap) {
+      this.prevLap = { time: ev.time, frames: ev.frames };
+      this.showMsg('FINAL LAP', 1.1, '#ffb000', true);
+      this.subMsg(`1周目 ${fmt(ev.time)}`, 3);
     } else {
+      const prev = this.prevLap;
       const total = prev.time + ev.time;
-      $('#hLast').textContent = fmt(total);
-      const key = 'ta2.' + this.track.def.id;
-      const saved = store.get(key, null);
-      const prevBest = this.best2;
+      const saved = store.get(this.taKey, null);
+      this.taResult = { laps: [prev.time, ev.time], total, prevBest: saved ? saved.time : null };
       if (!saved || total < saved.time) {
         newBest = true;
         const frames = prev.frames.concat(ev.frames).map((v) => Math.round(v * 100) / 100);
-        store.set(key, { time: total, laps: [prev.time, ev.time], frames });
+        store.set(this.taKey, { time: total, laps: [prev.time, ev.time], frames });
         this.ghostData = { time: total, frames };
         this.ghostProgress();
         if (!this.ghost) this.makeGhost();
-        this.subMsg((saved ? '自己ベスト更新！ ' : '記録 ') + fmt(total) + `（${fmt(prev.time)} + ${fmt(ev.time)}）`, 3.5);
-      } else {
-        this.subMsg(`2周 ${fmt(total)}  (+${(total - saved.time).toFixed(3)})`, 3);
+        this.best2 = total;
+        $('#hBest').textContent = fmt(total);
       }
-      this.best2 = Math.min(prevBest, total);
-      $('#hBest').textContent = fmt(this.best2);
+      this.taResult.newBest = newBest;
     }
-    if (this.taPaid < TA_MAX_PAID_LAPS) {
-      const coins = TA_LAP_COINS + (newBest ? TA_BEST_COINS : 0);
-      this.taPaid++;
-      garage.addCoins(coins);
-      this.toastCoins(coins);
-    }
+    const coins = TA_LAP_COINS + (newBest ? TA_BEST_COINS : 0);
+    this.taCoins = (this.taCoins || 0) + coins;
+    garage.addCoins(coins);
+    this.toastCoins(coins);
   }
-
 
   updateCamera(dt, snap = false) {
     this.carCamera(dt, snap, this.race.player.car);
@@ -263,8 +266,8 @@ export class CircuitGame extends GameBase {
       }
     }
     // ゴースト
-    if (this.ghost && this.ghostData && r.taTiming) {
-      const t = r.raceTime - (r.player.prevLapStart || 0);
+    if (this.ghost && this.ghostData && r.taTiming && !r.player.finished) {
+      const t = r.raceTime;
       const f = this.ghostData.frames;
       const n = f.length / 4;
       const k = t * 20;
@@ -308,10 +311,10 @@ export class CircuitGame extends GameBase {
     $('#fAbs').classList.toggle('on', this.opts.assist && c.braking > 0.5 && c.slipF > 0.07);
     const isRace = this.opts.mode === 'race';
     const lap = Math.max(1, Math.min(r.laps, r.player.lap));
-    $('#hLap').textContent = isRace ? lap : Math.max(1, r.player.laps.length + 1);
+    $('#hLap').textContent = isRace ? lap : Math.min(2, Math.max(1, r.player.laps.length + 1));
     let t = 0;
     if (isRace) t = r.state === 'racing' || r.state === 'finished' ? (r.player.finished ? r.player.finishTime : r.raceTime) : 0;
-    else t = r.taTiming ? r.raceTime - r.player.lapStart : 0;
+    else t = r.player.finished ? r.player.finishTime : r.taTiming ? r.raceTime : 0;
     $('#hTime').textContent = fmt(t || 0.0001).replace('--:--.---', '0:00.000');
     if (isRace) {
       const st = r.standings();
@@ -324,12 +327,10 @@ export class CircuitGame extends GameBase {
       });
       this._standCount = (this._standCount || 0) + 1;
       if (this._standCount % 10 === 0) $('#hStand').innerHTML = rows.join('');
-    } else if (this.ghostData && r.taTiming) {
+    } else if (this.ghostData && r.taTiming && !r.player.finished) {
       // ゴーストとの差: 計測区間（連続2周）の中で、同じ距離を進んだ時刻を比べる
-      const tw = r.raceTime - (r.player.prevLapStart || 0);
-      const L = this.track.length;
-      const windowLap = Math.max(1, r.player.lap - 1);
-      const my = r.progress(r.player) - (windowLap - 1) * L;
+      const tw = r.raceTime;
+      const my = r.progress(r.player);
       const g = this.ghostProg;
       if (g && g.length > 1 && my >= g[0] && my <= g[g.length - 1]) {
         let lo = 0, hi = g.length - 1;
@@ -386,6 +387,20 @@ export class CircuitGame extends GameBase {
 
   showResults() {
     const r = this.race;
+    if (this.opts.mode === 'ta') {
+      const x = this.taResult;
+      if (!x) return;
+      const diff = x.prevBest == null ? '初記録' : x.newBest ? `自己ベスト更新（−${(x.prevBest - x.total).toFixed(3)}）` : `自己ベスト ${fmt(x.prevBest)}（+${(x.total - x.prevBest).toFixed(3)}）`;
+      $('#resTitle').textContent = this.track.def.name;
+      $('#resBody').innerHTML = `
+        <div class="res-big" style="color:${x.newBest ? '#ffd000' : '#fff'}">${fmt(x.total)}</div>
+        <div class="res-sub">タイムアタック · 1・2周目の合計 · ${diff}</div>
+        <div class="laps-list">${x.laps.map((l, i) => `<span>L${i + 1} ${fmt(l)}</span>`).join('')}</div>
+        <div class="coin-rows"><div class="r total"><span>獲得コイン</span><span><i class="coin"></i>+${this.taCoins || 0}</span></div></div>
+        <div class="res-sub">所持コイン ${garage.coins}</div>`;
+      $('#results').classList.add('show');
+      return;
+    }
     const res = r.results();
     const me = res.find((x) => x.kind === 'player');
     const laps = r.player.laps;

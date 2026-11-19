@@ -31,12 +31,12 @@ export const GENRES = [
     meta: (def, tr, s) => ({
       sub: `${def.en} · ${(tr.length / 1000).toFixed(2)} km`,
       rec: s.mode === 'ta'
-        ? `ベスト(連続2周) ${(store.get('ta2.' + def.id, null) || {}).time ? fmt(store.get('ta2.' + def.id, null).time) : '--:--.---'}`
+        ? `ベスト(1・2周目) ${(store.get('ta12.' + def.id, null) || {}).time ? fmt(store.get('ta12.' + def.id, null).time) : '--:--.---'}`
         : `最高順位 ${store.get('rank.' + def.id + '.' + s.difficulty, null) ? store.get('rank.' + def.id + '.' + s.difficulty, null) + '位' : '—'}（${DIFFICULTY[s.difficulty].label}）`,
     }),
     hint: (s) => (s.mode === 'race'
       ? '最後尾スタート。CPU 7台を抜いて優勝を目指そう。ブレーキングとライン取りが鍵。'
-      : 'ひとりで走り込み。記録は「連続した2周の合計」（2・3周目のように後からの2周でもOK）。自己ベストの2周がゴーストとして走る。'),
+      : 'ひとりで2周。スタートからの1・2周目の合計タイムが記録になる。自己ベストの2周がゴーストとして走る。'),
     tips: [
       'コーナーの手前の 150 / 100 / 50 の看板がブレーキの目安。',
       'アウト・イン・アウト。コーナーの出口でアクセルを早く踏めるラインを。',

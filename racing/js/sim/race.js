@@ -74,10 +74,15 @@ class RaceBase {
         const isBest = lt < e.best;
         if (isBest) e.best = lt;
         this.events.push({ type: 'lap', entry: e, time: lt, best: isBest, frames: this.recording });
-        e.prevLapStart = e.lapStart;
         e.lapStart = t;
         this.recording = [];
         this.recT = 0;
+        // 記録は 1・2 周目の合計。2周走ったら計測終了
+        if (e.laps.length === 2 && !e.finished) {
+          e.finished = true;
+          e.finishTime = t;
+          this.events.push({ type: 'taFinish', total: e.laps[0] + e.laps[1] });
+        }
       }
       return;
     }
@@ -268,7 +273,7 @@ export class Race extends RaceBase {
         this.state = 'racing';
         this.raceTime = 0;
         this.events.push({ type: 'go' });
-        for (const e of this.entries) { e.lapStart = 0; e.prevLapStart = 0; }
+        for (const e of this.entries) e.lapStart = 0;
         this.recording = [];
         this.recT = 0;
         if (this.mode === 'ta') this.taTiming = true;
