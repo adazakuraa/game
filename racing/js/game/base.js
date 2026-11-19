@@ -62,6 +62,17 @@ export class GameBase {
     this.msgTimer = dur;
   }
 
+  // スタートのカウントダウン表示（n: 3,2,1 / 0 で GO!）
+  countdown(n) {
+    const el = $('#hCount');
+    el.className = 'count';
+    void el.offsetWidth; // アニメーションをやり直す
+    el.textContent = n > 0 ? String(n) : 'GO!';
+    el.className = 'count anim ' + (n > 0 ? 'n' + n : 'go');
+    if (n > 0) C.audio.beep(440, 0.15, 0.25);
+    else C.audio.beep(880, 0.55, 0.32);
+  }
+
   subMsg(text, dur = 2) {
     const el = $('#hSubMsg');
     el.textContent = text;
@@ -96,6 +107,7 @@ export class GameBase {
     $('#hBest').textContent = '--:--.---';
     $('#hDelta').className = 't-delta';
     $('#hBestL').textContent = 'BEST';
+    $('#hCount').className = 'count';
     $('#hNotes').classList.remove('show');
     $('#fTcs').textContent = 'TCS';
     $('#fAbs').textContent = 'ABS';

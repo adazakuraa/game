@@ -74,6 +74,7 @@ class RaceBase {
         const isBest = lt < e.best;
         if (isBest) e.best = lt;
         this.events.push({ type: 'lap', entry: e, time: lt, best: isBest, frames: this.recording });
+        e.prevLapStart = e.lapStart;
         e.lapStart = t;
         this.recording = [];
         this.recT = 0;
@@ -260,12 +261,14 @@ export class Race extends RaceBase {
     const started = this.state === 'racing' || this.state === 'finished';
     if (this.state === 'countdown') {
       this.countdown += dt;
-      // 5灯が1秒ごとに点灯し、ランダム後に消灯
-      if (this.countdown >= 5 + (this.lightsOutDelay ??= 0.4 + Math.random() * 0.9)) {
+      // 1秒後から 3・2・1、4秒で GO（シグナルも合わせて点灯→消灯）
+      const left = Math.ceil(4 - this.countdown);
+      if (left !== this.lastTick && left >= 1 && left <= 3) { this.lastTick = left; this.events.push({ type: 'tick', n: left }); }
+      if (this.countdown >= 4) {
         this.state = 'racing';
         this.raceTime = 0;
         this.events.push({ type: 'go' });
-        for (const e of this.entries) e.lapStart = 0;
+        for (const e of this.entries) { e.lapStart = 0; e.prevLapStart = 0; }
         this.recording = [];
         this.recT = 0;
         if (this.mode === 'ta') this.taTiming = true;

@@ -62,7 +62,10 @@ export class CircuitGame extends GameBase {
     }
     // ゴースト
     this.ghost = null;
-    this.ghostData = opts.mode === 'ta' ? store.get('best.' + track.def.id, null) : null;
+    // タイムアタックの記録は「連続2周の合計」。ゴーストもその2周を再生する
+    this.ghostData = opts.mode === 'ta' ? store.get('ta2.' + track.def.id, null) : null;
+    this.prevLap = null; // 直前の周 { time, frames }
+    if (this.ghostData) this.ghostProgress();
     if (this.ghostData) this.makeGhost();
     // カメラ
     this.camMode = store.get('cam2', 2);
@@ -84,9 +87,11 @@ export class CircuitGame extends GameBase {
     $('#hTot').textContent = this.race.entries.length;
     $('#hud .pos').style.display = opts.mode === 'race' ? '' : 'none';
     $('#hStand').style.display = opts.mode === 'race' ? '' : 'none';
-    this.bestLap = opts.mode === 'ta' && this.ghostData ? this.ghostData.time : Infinity;
-    $('#hBest').textContent = fmt(this.bestLap);
+    this.bestLap = Infinity;
+    this.best2 = opts.mode === 'ta' && this.ghostData ? this.ghostData.time : Infinity;
+    $('#hBest').textContent = fmt(opts.mode === 'ta' ? this.best2 : Infinity);
     $('#hLast').textContent = fmt(0);
+    if (opts.mode === 'ta') { $('#hBestL').textContent = '2周BEST'; $('#hLastL').textContent = '2周'; }
     C.input.setMode(opts.steer);
     C.input.sens = opts.sens;
     $('#hMsg').classList.remove('show');
@@ -95,6 +100,22 @@ export class CircuitGame extends GameBase {
     $('#hStand').innerHTML = '';
     $('#steerHint').classList.remove('hide');
     document.body.classList.toggle('force-touch', isTouch);
+  }
+
+  // ゴーストの各フレームが計測区間の始まり（コントロールライン）から何 m 進んだ位置か
+  ghostProgress() {
+    const f = this.ghostData.frames, n = f.length / 4, L = this.track.length;
+    const out = new Float32Array(n), pj = {};
+    let hint = -1, prev = 0, acc = 0;
+    for (let i = 0; i < n; i++) {
+      this.track.project(f[i * 4], f[i * 4 + 2], hint, pj);
+      hint = pj.i;
+      if (i === 0) acc = pj.s > L / 2 ? pj.s - L : pj.s; // グリッド発進ならラインの手前（マイナス）
+      else { let d = pj.s - prev; if (d < -L / 2) d += L; if (d > L / 2) d -= L; acc += d; }
+      prev = pj.s;
+      out[i] = acc;
+    }
+    this.ghostProg = out;
   }
 
   makeGhost() {
@@ -126,10 +147,11 @@ export class CircuitGame extends GameBase {
   handleEvents() {
     const r = this.race;
     for (const ev of r.events) {
-      if (ev.type === 'go') {
+      if (ev.type === 'tick') {
+        this.countdown(ev.n);
+      } else if (ev.type === 'go') {
         this.world.setStartLights(0, false);
-        this.showMsg('GO!', 1.0, '#3ddc84');
-        C.audio.beep(880, 0.5, 0.3);
+        this.countdown(0);
       } else if (ev.type === 'wall' || ev.type === 'hit') {
         // 強い接触は 1.2 秒以上あけて 1 回と数える（クリーンレース判定用）
         if (ev.power > (ev.type === 'wall' ? 3 : 1.5)) {
@@ -173,38 +195,46 @@ export class CircuitGame extends GameBase {
 
   onLap(ev) {
     const r = this.race;
-    $('#hLast').textContent = fmt(ev.time);
     const isTA = this.opts.mode === 'ta';
-    const prevBest = this.bestLap;
-    if (ev.time < this.bestLap) {
-      this.bestLap = ev.time;
-      $('#hBest').textContent = fmt(ev.time);
+    if (ev.time < this.bestLap) this.bestLap = ev.time;
+    if (!isTA) {
+      // レースのラップは記録として残さない
+      $('#hLast').textContent = fmt(ev.time);
+      $('#hBest').textContent = fmt(this.bestLap);
+      if (r.player.lap === r.laps) this.showMsg('FINAL LAP', 1.1, '#ffb000', true);
+      return;
     }
-    // ゴースト保存（自己ベスト更新時）
-    const key = 'best.' + this.track.def.id;
-    const saved = store.get(key, null);
-    if (!saved || ev.time < saved.time) {
-      const frames = ev.frames.map((v) => Math.round(v * 100) / 100);
-      store.set(key, { time: ev.time, frames });
-      if (isTA) {
-        this.ghostData = { time: ev.time, frames };
+    // タイムアタック: 直前の周と合わせた連続2周の合計で記録する
+    const prev = this.prevLap;
+    this.prevLap = { time: ev.time, frames: ev.frames };
+    let newBest = false;
+    if (!prev) {
+      this.subMsg(`1周目 ${fmt(ev.time)}  — 次の周と合わせた2周で記録`, 3);
+    } else {
+      const total = prev.time + ev.time;
+      $('#hLast').textContent = fmt(total);
+      const key = 'ta2.' + this.track.def.id;
+      const saved = store.get(key, null);
+      const prevBest = this.best2;
+      if (!saved || total < saved.time) {
+        newBest = true;
+        const frames = prev.frames.concat(ev.frames).map((v) => Math.round(v * 100) / 100);
+        store.set(key, { time: total, laps: [prev.time, ev.time], frames });
+        this.ghostData = { time: total, frames };
+        this.ghostProgress();
         if (!this.ghost) this.makeGhost();
+        this.subMsg((saved ? '自己ベスト更新！ ' : '記録 ') + fmt(total) + `（${fmt(prev.time)} + ${fmt(ev.time)}）`, 3.5);
+      } else {
+        this.subMsg(`2周 ${fmt(total)}  (+${(total - saved.time).toFixed(3)})`, 3);
       }
-      if (saved) this.subMsg('自己ベスト更新！ ' + fmt(ev.time), 3);
-    } else if (isTA && isFinite(prevBest)) {
-      const d = ev.time - prevBest;
-      this.subMsg(`${fmt(ev.time)}  (+${d.toFixed(3)})`, 3);
+      this.best2 = Math.min(prevBest, total);
+      $('#hBest').textContent = fmt(this.best2);
     }
-    if (isTA && this.taPaid < TA_MAX_PAID_LAPS) {
-      const newBest = !saved || ev.time < saved.time;
+    if (this.taPaid < TA_MAX_PAID_LAPS) {
       const coins = TA_LAP_COINS + (newBest ? TA_BEST_COINS : 0);
       this.taPaid++;
       garage.addCoins(coins);
       this.toastCoins(coins);
-    }
-    if (!isTA) {
-      const lapNow = r.player.lap;
-      if (lapNow === r.laps) this.showMsg('FINAL LAP', 1.1, '#ffb000', true);
     }
   }
 
@@ -234,7 +264,7 @@ export class CircuitGame extends GameBase {
     }
     // ゴースト
     if (this.ghost && this.ghostData && r.taTiming) {
-      const t = r.raceTime - r.player.lapStart;
+      const t = r.raceTime - (r.player.prevLapStart || 0);
       const f = this.ghostData.frames;
       const n = f.length / 4;
       const k = t * 20;
@@ -255,11 +285,11 @@ export class CircuitGame extends GameBase {
     if (dt > 0) this.fx.update(dt, C.camera.position, this.camVel);
     // スタートシグナル
     if (r.state === 'countdown') {
-      const n = Math.min(5, Math.floor(r.countdown));
+      // 3 → 2灯、2 → 4灯、1 → 5灯、GO で消灯
+      const n = [0, 2, 4, 5][Math.min(3, Math.floor(r.countdown))];
       if (n !== this.lastLightN) {
         this.lastLightN = n;
         this.world.setStartLights(n, true);
-        if (n > 0) C.audio.beep(440, 0.15, 0.2);
       }
     }
     C.renderer.render(this.scene, C.camera);
@@ -295,21 +325,21 @@ export class CircuitGame extends GameBase {
       this._standCount = (this._standCount || 0) + 1;
       if (this._standCount % 10 === 0) $('#hStand').innerHTML = rows.join('');
     } else if (this.ghostData && r.taTiming) {
-      // ゴーストとの差（同じ地点を通過した時刻の比較）
-      const f = this.ghostData.frames;
-      const n = f.length / 4;
-      let best = -1, bd = Infinity;
-      const start = Math.max(0, Math.floor(t * 20) - 60), end = Math.min(n, Math.floor(t * 20) + 60);
-      for (let i = start; i < end; i++) {
-        const d = (f[i * 4] - c.x) ** 2 + (f[i * 4 + 2] - c.z) ** 2;
-        if (d < bd) { bd = d; best = i; }
-      }
-      if (best >= 0 && bd < 400) {
-        const delta = t - best / 20;
+      // ゴーストとの差: 計測区間（連続2周）の中で、同じ距離を進んだ時刻を比べる
+      const tw = r.raceTime - (r.player.prevLapStart || 0);
+      const L = this.track.length;
+      const windowLap = Math.max(1, r.player.lap - 1);
+      const my = r.progress(r.player) - (windowLap - 1) * L;
+      const g = this.ghostProg;
+      if (g && g.length > 1 && my >= g[0] && my <= g[g.length - 1]) {
+        let lo = 0, hi = g.length - 1;
+        while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (g[mid] < my) lo = mid; else hi = mid; }
+        const a = g[hi] > g[lo] ? (my - g[lo]) / (g[hi] - g[lo]) : 0;
+        const delta = tw - (lo + a) / 20;
         const el = $('#hDelta');
         el.textContent = (delta >= 0 ? '+' : '−') + Math.abs(delta).toFixed(2);
         el.className = 't-delta ' + (delta < 0 ? 'neg' : 'pos');
-      }
+      } else $('#hDelta').textContent = '';
     }
     // ミニマップ
     const m = this.mini.getContext('2d');

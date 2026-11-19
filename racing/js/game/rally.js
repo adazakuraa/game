@@ -77,11 +77,9 @@ export class RallyGame extends GameBase {
     const r = this.race;
     for (const ev of r.events) {
       if (ev.type === 'tick') {
-        this.showMsg(String(ev.n), 0.9, '#ffffff');
-        C.audio.beep(440, 0.15, 0.2);
+        this.countdown(ev.n);
       } else if (ev.type === 'go') {
-        this.showMsg('GO!', 0.9, '#3ddc84');
-        C.audio.beep(880, 0.5, 0.3);
+        this.countdown(0);
       } else if (ev.type === 'wall') {
         if (ev.power > 3) {
           if (r.time - this.lastIncident > 1.2) this.incidents++;

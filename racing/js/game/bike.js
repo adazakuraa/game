@@ -87,8 +87,8 @@ export class BikeGame extends GameBase {
   handleEvents() {
     const r = this.race;
     for (const ev of r.events) {
-      if (ev.type === 'tick') { this.showMsg(String(ev.n), 0.9, '#fff'); C.audio.beep(440, 0.15, 0.2); }
-      else if (ev.type === 'go') { this.showMsg('GO!', 0.9, '#3ddc84'); C.audio.beep(880, 0.5, 0.3); }
+      if (ev.type === 'tick') this.countdown(ev.n);
+      else if (ev.type === 'go') this.countdown(0);
       else if (ev.type === 'slip') {
         this.incidents++;
         this.showMsg('スリップ！', 1.0, '#ff3b2f', true);
