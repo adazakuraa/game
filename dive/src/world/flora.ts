@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ARCH, bommieAt, heightAt, reefEdgeZ, rockyWeight, VENT, WRECK, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
+import { addCollider } from './colliders';
 import { SWAY_VERTEX, underwaterMaterial } from '../render/underwater';
 import { baked, pbr } from '../render/baked';
 import { makeBlade, makeSeaFan } from '../render/textures';
@@ -24,7 +25,13 @@ const _s = new THREE.Vector3();
 const _p = new THREE.Vector3();
 
 function placeMatrix(x: number, z: number, scale: number | THREE.Vector3, r: Rng, alignToNormal = 0, sink = 0): THREE.Matrix4 {
-  const y = heightAt(x, z) - sink;
+  const fr = (typeof scale === 'number' ? scale : Math.max(scale.x, scale.z)) * 0.45;
+  let y = heightAt(x, z);
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    y = Math.min(y, heightAt(x + Math.cos(a) * fr, z + Math.sin(a) * fr));
+  }
+  y -= sink + fr * 0.08;
   normalAt(x, z, _n);
   _q.setFromUnitVectors(_up, _n.lerp(_up, 1 - alignToNormal).normalize());
   _q2.setFromAxisAngle(_up, r() * Math.PI * 2);
@@ -616,12 +623,24 @@ export class Flora {
       return out;
     };
     const color = (h: number, s: number, l: number) => new THREE.Color().setHSL(h, s, l);
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40, hi?: THREE.BufferGeometry) => {
+    const _cp = new THREE.Vector3(), _cq = new THREE.Quaternion(), _cs = new THREE.Vector3();
+    /** solid: register a cylinder collider per instance (from the geometry's bounds). */
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40, hi?: THREE.BufferGeometry, solid = false) => {
       if (!items.length) return;
+      if (solid) {
+        geo.computeBoundingBox();
+        const bb = geo.boundingBox!;
+        const gr = Math.max(-bb.min.x, bb.max.x, -bb.min.z, bb.max.z) * 0.8;
+        for (const it of items) {
+          it.m.decompose(_cp, _cq, _cs);
+          addCollider({ x: _cp.x, z: _cp.z, r: gr * Math.max(_cs.x, _cs.z), y0: _cp.y + bb.min.y * _cs.y, y1: _cp.y + bb.max.y * _cs.y * 0.92 });
+        }
+      }
       const set = new ScatterSet(geo, mat, items, view, cell, hi);
       this.sets.push(set);
       this.group.add(set.group);
     };
+    const solid = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40, hi?: THREE.BufferGeometry) => add(geo, mat, items, view, cell, hi, true);
     const slopeAt = (x: number, z: number) => 1 - normalAt(x, z, _n).y;
 
     // ---- seagrass meadows (lagoon)
@@ -637,7 +656,7 @@ export class Flora {
     const reefOk = (x: number, z: number) => zoneAt(x, z) === 'reef' && slopeAt(x, z) < 0.55 && (bommieAt(x, z) > 0.9 || r() < 0.18);
     const brainG = domeColony(3, 12, 0.12, 1.4, 0.75);
     const brains = sample(420, [-200, 200, 120, 345], reefOk, 30);
-    add(brainG, brainMat, brains.map(([x, z]) => {
+    solid(brainG, brainMat, brains.map(([x, z]) => {
       const c = [color(0.1, 0.35, 0.55), color(0.28, 0.3, 0.5), color(0.08, 0.45, 0.5), color(0.6, 0.2, 0.55)][Math.floor(r() * 4)];
       return { m: placeMatrix(x, z, 0.5 + r() * 1.1, r, 0.6, 0.15), c };
     }));
@@ -655,13 +674,13 @@ export class Flora {
       g.computeBoundingBox();
       const topY = g.boundingBox!.max.y;
       const pts = sample(200, [-200, 200, 125, 345], reefOk, 30);
-      add(g, coralMat, pts.map(([x, z]) => {
+      solid(g, coralMat, pts.map(([x, z]) => {
         const p = coralPalette[Math.floor(r() * coralPalette.length)];
         return { m: placeMatrix(x, z, vi === 2 ? 0.9 + r() * 1.2 : 0.55 + r() * 0.6, r, 0.3, 0.05), c: color(p[0], p[1], p[2]) };
       }));
       // dense coral heads on bommies (higher points)
       const heads = sample(60, [-200, 200, 130, 340], (x, z) => reefOk(x, z) && bommieAt(x, z) > 2.2 + vi * 0.3, 40);
-      add(g, coralMat, heads.map(([x, z]) => {
+      solid(g, coralMat, heads.map(([x, z]) => {
         const p = coralPalette[Math.floor(r() * coralPalette.length)];
         const sc = vi === 2 ? 1.0 + r() * 1.2 : 0.7 + r() * 0.6;
         this.homes.coralTops.push(new THREE.Vector3(x, heightAt(x, z) + sc * topY * 0.95, z));
@@ -671,7 +690,7 @@ export class Flora {
     });
     const tableG = tableCoral();
     const tables = sample(110, [-200, 200, 140, 340], reefOk, 30);
-    add(tableG, coralMat, tables.map(([x, z]) => {
+    solid(tableG, coralMat, tables.map(([x, z]) => {
       const sc = 0.9 + r() * 1.4;
       this.homes.underTables.push(new THREE.Vector3(x, heightAt(x, z) + sc * 0.45, z));
       return { m: placeMatrix(x, z, sc, r, 0.1, 0), c: color(0.1 + r() * 0.1, 0.35, 0.55 + r() * 0.15) };
@@ -698,7 +717,7 @@ export class Flora {
     this.mats.push(bushMat);
     const bushG = domeColony(21, 9, 0.35, 3.2, 0.7);
     const bushes = sample(900, [-200, 200, 125, 345], reefOk, 30);
-    add(bushG, bushMat, bushes.map(([x, z]) => {
+    solid(bushG, bushMat, bushes.map(([x, z]) => {
       const p = coralPalette[Math.floor(r() * coralPalette.length)];
       return { m: placeMatrix(x, z, 0.2 + r() * 0.4, r, 0.5, 0.03), c: color(p[0], p[1] * 0.9, p[2] * 0.95) };
     }));
@@ -729,11 +748,11 @@ export class Flora {
       }
       const smallBrain = domeColony(31, 9, 0.12, 1.4, 0.7);
       const smallStag = corymboseCoral(41);
-      add(bushG, bushMat, carpetBush, 42, 32, cauliflowerColony(21));
-      add(smallBrain, brainMat, carpetBrain, 42, 32, domeColony(31, 16, 0.1, 1.4, 0.7));
+      solid(bushG, bushMat, carpetBush, 42, 32, cauliflowerColony(21));
+      solid(smallBrain, brainMat, carpetBrain, 42, 32, domeColony(31, 16, 0.1, 1.4, 0.7));
       // split the branching carpet: half digitate cushions, half foliose plates
-      add(smallStag, coralMat, carpetStag.filter((_, i) => i % 2 === 0), 38, 48);
-      add(plateColony(51), coralMat, carpetStag.filter((_, i) => i % 2 === 1), 38, 48);
+      solid(smallStag, coralMat, carpetStag.filter((_, i) => i % 2 === 0), 38, 48);
+      solid(plateColony(51), coralMat, carpetStag.filter((_, i) => i % 2 === 1), 38, 48);
       this.carpetCount = carpetBush.length + carpetBrain.length + carpetStag.length;
       // small colonies don't need to render into the sun shadow map
       for (const set of this.sets.slice(-4)) set.group.traverse((o) => { o.castShadow = false; });
@@ -790,7 +809,7 @@ export class Flora {
           }
         }
       }
-      add(g, rockMat, items, 90, 60);
+      solid(g, rockMat, items, 90, 60);
     });
 
     // ---- kelp / sargassum in rocky zone
@@ -804,7 +823,7 @@ export class Flora {
       const zn = zoneAt(x, z);
       return (zn === 'dropoff' || zn === 'rocky') && slopeAt(x, z) < 0.75;
     });
-    add(spG, spongeMat, sponges.map(([x, z]) => ({ m: placeMatrix(x, z, 0.8 + r() * 1.4, r, 0.4, 0.1), c: [color(0.05, 0.5, 0.45), color(0.75, 0.3, 0.45), color(0.12, 0.6, 0.55)][Math.floor(r() * 3)] })));
+    solid(spG, spongeMat, sponges.map(([x, z]) => ({ m: placeMatrix(x, z, 0.8 + r() * 1.4, r, 0.4, 0.1), c: [color(0.05, 0.5, 0.45), color(0.75, 0.3, 0.45), color(0.12, 0.6, 0.55)][Math.floor(r() * 3)] })));
 
     // ---- deep: hydrothermal vent field
     const tubes: ScatterItem[] = [];
@@ -827,6 +846,7 @@ export class Flora {
       this.group.add(m);
       this.landmarks.push(m);
       chimneyPos.push(new THREE.Vector3(x, heightAt(x, z) - 0.5 + h, z));
+      addCollider({ x, z, r: 1.3, y0: heightAt(x, z) - 0.5, y1: heightAt(x, z) - 0.5 + h });
     }
     // black smoker plumes
     const SN = 260;

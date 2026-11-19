@@ -10,6 +10,7 @@ import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
+import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
 
 type Save = { found: Record<string, { photo: string; depth: number; t: number }>; dives: number; maxDepth: number; muted?: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
@@ -475,6 +476,8 @@ export class Game {
     }
     p.x = clamp(p.x, WORLD.minX, WORLD.maxX);
     p.z = clamp(p.z, WORLD.minZ, WORLD.maxZ);
+    // corals, rocks and sponges are solid: slide around or over them instead of swimming through
+    resolveSphere(p, 0.4, this.vel);
     const ground = heightAt(p.x, p.z) + 0.7;
     if (p.y < ground) {
       p.y = ground;
@@ -825,6 +828,14 @@ export class Game {
         this.paused = true;
         return t ? { id: t.rt.def.id, reason: t.reason, frac: +t.frac.toFixed(3), dist: +t.dist.toFixed(1), clear: +clear.toFixed(1) } : null;
       },
+      collisionTest: (i: number) => {
+        // drop the diver onto a coral head; the solver must push it out within a few frames
+        const top = this.flora.homes.coralTops[i % this.flora.homes.coralTops.length];
+        this.camera.position.set(top.x, top.y - 0.3, top.z);
+        this.vel.set(0, -1, 0);
+        return { colliders: colliderCount(), insideBefore: insideAny(this.camera.position, 0.4) };
+      },
+      insideNow: () => insideAny(this.camera.position, 0.4),
       aimAndShoot: (id: string) => {
         const rt = this.creatures.list.find((r) => r.def.id === id);
         const a = rt?.agents[0];

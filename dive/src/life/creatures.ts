@@ -7,6 +7,7 @@ import { makeSoftDot } from '../render/textures';
 import { heightAt, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
+import { resolveSphere } from '../world/colliders';
 
 type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number };
 type Agent = {
@@ -688,7 +689,8 @@ export class Creatures {
         const hiding = (def.hab === 'coralHover' || def.hab === 'under') && dPlayer < def.flee * 1.6;
         if (hiding) {
           tx = g.home.x + a.off.x * 0.15;
-          ty = g.home.y - (def.hab === 'coralHover' ? 0.15 : 0.05);
+          // nestle just above the coral surface (still visible) instead of disappearing inside it
+          ty = g.home.y + (def.hab === 'coralHover' ? 0.08 : -0.05);
           tz = g.home.z + a.off.z * 0.15;
         }
         _v.set(tx - a.p.x, ty - a.p.y, tz - a.p.z);
@@ -710,6 +712,8 @@ export class Creatures {
         const minY = gy + Math.max(0.06, def.behavior === 'bottom' ? this.altitude(def) : def.hab === 'sandForage' ? a.s * 0.15 : a.s * 0.3);
         if (a.p.y < minY) { a.p.y = minY; a.v.y = Math.max(a.v.y, 0); }
         if (a.p.y > -0.4) { a.p.y = -0.4; a.v.y = Math.min(a.v.y, 0); }
+        // near the diver, keep swimmers outside coral heads and rocks
+        if (dPlayer < 25 && def.hab !== 'under') resolveSphere(a.p, a.s * 0.25, a.v);
         this.orient(rt, a, 1 - Math.exp(-dt * (def.size > 3 ? 1.2 : 5)));
         this.writeInstance(rt, a, i);
       }
