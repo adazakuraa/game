@@ -431,9 +431,11 @@ export class Player {
     const len = Math.hypot(dx, dz) || 1;
     let t = d.t;
     // Cannot slide the carabiner past an anchor.
-    if (t > 1.0 || t < 0.0) {
+    // A little slack in the sling and rope: ~3 m past an anchor before it holds you.
+    const slack = 3 / len;
+    if (t > 1.0 + slack || t < -slack) {
       const dir = t > 1 ? 1 : -1;
-      t = clamp(t, 0, 1);
+      t = clamp(t, -slack, 1 + slack);
       const next = this.route.ropes[seg.index + dir];
       const hasNext = !!next && next.sectionId === seg.sectionId;
       if (hasNext && performance.now() - this.lastBlockMsg > 2000) {
@@ -443,8 +445,10 @@ export class Player {
     }
     const px = seg.a.x + dx * t;
     const pz = seg.a.z + dz * t;
-    const lx = this.pos.x - (seg.a.x + dx * clamp(d.t, 0, 1));
-    const lz = this.pos.z - (seg.a.z + dz * clamp(d.t, 0, 1));
+    // lateral offset measured from the (slack-limited) point along the rope
+    const tc = clamp(d.t, -slack, 1 + slack);
+    const lx = this.pos.x - (seg.a.x + dx * tc);
+    const lz = this.pos.z - (seg.a.z + dz * tc);
     const lat = Math.hypot(lx, lz);
     const maxLat = 2.8;
     const k = lat > maxLat ? maxLat / lat : 1;
