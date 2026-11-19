@@ -513,6 +513,7 @@ export class Game {
     const aspect = src.width / src.height;
     const cropX = Math.min(0.62, (0.8 * 4) / (3 * aspect));
     const cropY = Math.min(0.8, (cropX * aspect * 3) / 4);
+    cam.updateMatrixWorld();
     this.target = this.creatures.findTarget(cam, { clear, dark: d > 140, lightOn: this.env.lightOn, cropX, cropY });
     if (inp.consume('shutter')) {
       this.captureReq = this.target;
@@ -823,6 +824,26 @@ export class Game {
         const t = this.creatures.findTarget(this.camera, { clear, dark: d > 140, lightOn: this.env.lightOn, cropX: 0.6, cropY: 0.8 });
         this.paused = true;
         return t ? { id: t.rt.def.id, reason: t.reason, frac: +t.frac.toFixed(3), dist: +t.dist.toFixed(1), clear: +clear.toFixed(1) } : null;
+      },
+      aimAndShoot: (id: string) => {
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        const a = rt?.agents[0];
+        if (!a) return false;
+        const c = this.camera.position;
+        const dx = a.p.x - c.x, dy = a.p.y - c.y, dz = a.p.z - c.z;
+        this.yaw = Math.atan2(-dx, -dz);
+        this.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+        this.input.press('shutter');
+        return true;
+      },
+      targetDebug: (id: string) => {
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        const a = rt?.agents[0];
+        if (!a) return null;
+        this.camera.updateMatrixWorld();
+        const v = a.p.clone().project(this.camera);
+        const src = this.renderer.domElement;
+        return { ndc: [+v.x.toFixed(2), +v.y.toFixed(2), +v.z.toFixed(3)], w: src.width, h: src.height, yaw: this.yaw, pitch: this.pitch, t: this.target ? this.target.reason : null, paused: this.paused, active: rt!.active };
       },
       nearFish: (r = 25) => {
         const c = this.camera.position;

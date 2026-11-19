@@ -62,6 +62,11 @@ export class Input {
     });
   }
 
+  /** Queue a pressed edge (used by the test harness). */
+  press(name: string): void {
+    this.pressed.add(name);
+  }
+
   consume(name: string): boolean {
     const had = this.pressed.has(name);
     this.pressed.delete(name);
