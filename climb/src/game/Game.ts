@@ -26,7 +26,7 @@ import { clamp, smoothstep } from '../utils/noise';
 type GameState = 'title' | 'play' | 'paused' | 'dead' | 'summit' | 'camp' | 'won';
 type DeathKind = 'fall' | 'hace' | 'hypothermia' | 'serac' | 'exhaustion' | 'crevasse' | 'rock' | 'icefall';
 
-const TIME_SCALE = 40; // game seconds per real second
+const TIME_SCALE = 20; // game seconds per real second
 const START_HOURS = 3.0;
 const TURNAROUND = 14;
 
@@ -886,11 +886,10 @@ export class Game {
       c.pos.addScaledVector(c.vel, dt);
       const g = w.field.height(c.pos.x, c.pos.z) + c.mesh.scale.x * 0.6;
       if (c.pos.y < g) {
+        // Bounce vertically only: falling ice and rock keep their line, so the lane in the
+        // warning is the lane they actually come down.
         c.pos.y = g;
-        const n = w.field.normal(c.pos.x, c.pos.z);
-        c.vel.addScaledVector(n, -1.6 * c.vel.dot(n));
-        c.vel.x += n.x * 6 * dt * 10;
-        c.vel.z += n.z * 6 * dt * 10;
+        if (c.vel.y < 0) c.vel.y = -c.vel.y * 0.45 + 1.5;
       }
       c.mesh.position.copy(c.pos);
       c.mesh.rotation.x += dt * 3;
