@@ -136,15 +136,15 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     const bom = bommieAt(x, z);
     const turf = clamp(smoothstep(0.4, 2.2, bom) + 0.35 * smoothstep(0.1, 0.5, fbm2(x * 0.05 + 7, z * 0.05, 3)), 0, 1) * reefW;
     // living coral colonies: patchy palette (brown, olive, purple, pink, cream, blue-grey)
-    const pal = [[0.46, 0.36, 0.24], [0.42, 0.44, 0.24], [0.42, 0.28, 0.42], [0.62, 0.4, 0.44], [0.62, 0.56, 0.42], [0.34, 0.4, 0.46]];
+    const pal = [[0.5, 0.4, 0.3], [0.46, 0.42, 0.3], [0.48, 0.34, 0.44], [0.62, 0.42, 0.46], [0.64, 0.58, 0.48], [0.42, 0.44, 0.5]];
     const ci = Math.floor((simplex2(x * 0.33 + 11, z * 0.33) * 0.5 + 0.5) * 5.99);
     const ci2 = Math.floor((simplex2(x * 0.71, z * 0.71 + 4) * 0.5 + 0.5) * 5.99);
     const mixc = smoothstep(-0.1, 0.3, simplex2(x * 0.5, z * 0.5));
     const cc = pal[Math.max(0, Math.min(5, mixc > 0.5 ? ci : ci2))];
     const live = smoothstep(0.6, 1.6, bom);
-    r = lerp(r, lerp(0.44, cc[0], live) + 0.06 * n2, turf);
-    g = lerp(g, lerp(0.42, cc[1], live) + 0.05 * n2, turf);
-    b = lerp(b, lerp(0.3, cc[2], live), turf);
+    r = lerp(r, lerp(0.54, cc[0], live) + 0.06 * n2, turf);
+    g = lerp(g, lerp(0.48, cc[1], live) + 0.05 * n2, turf);
+    b = lerp(b, lerp(0.42, cc[2], live), turf);
     sand *= 1 - turf;
     reefHard = turf;
   }

@@ -65,7 +65,7 @@ const B: Record<string, Sh> = {
   gulper: { H: 0.1, W: 0.08, peak: 0.95, nose: 0.98, ped: 0.6, tail: 'none', dorsal: [{ a: 0.0, b: 0.6, h: 0.02 }], eyes: 0.1, eyeT: 0.96, segs: 30, rings: 8 },
   frilled: { H: 0.08, W: 0.08, peak: 0.6, nose: 0.85, ped: 0.4, tail: 'hetero', tailL: 0.18, tailH: 0.12, dorsal: [{ a: 0.18, b: 0.26, h: 0.04 }], anal: [{ a: 0.15, b: 0.3, h: 0.04 }], pect: pect(0.8, 0.08, 0.05, 0.3), eyes: 0.12, eyeT: 0.95, segs: 30, rings: 8 },
 };
-const sh = (k: string, o: Partial<Sh> = {}): Sh => ({ ...B[k], ...o });
+export const sh = (k: string, o: Partial<Sh> = {}): Sh => ({ ...B[k], ...o });
 
 // ----------------------------------------------------------------------------- regions
 const REEF: Region = [-190, 190, 135, 335];
@@ -93,13 +93,13 @@ const HAB: Record<Habitat, { behavior: SpeciesDef['behavior']; region: Region; s
   cleaner: { behavior: 'anemone', region: 'coralTops', speed: 0.3, flee: 0, spread: 0.5, label: 'サンゴの根の「クリーニングステーション」で客を待つ' },
 };
 
-type FishSpec = {
+export type FishSpec = {
   id: string; name: string; sci: string; zone: ZoneId; d: [number, number]; size: number; r?: 1 | 2 | 3;
   body: Sh; look: Look; hab: Habitat; n: number; g?: number; desc: string;
   region?: Region; speed?: number; flee?: number; spread?: number; swim?: [number, number, number]; metal?: number; photoRange?: number; glow?: number; behavior?: SpeciesDef['behavior'];
 };
 
-function F(s: FishSpec): SpeciesDef {
+export function F(s: FishSpec): SpeciesDef {
   const h = HAB[s.hab];
   const sz = s.size;
   return {

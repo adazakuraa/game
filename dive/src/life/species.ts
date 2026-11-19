@@ -430,7 +430,8 @@ export const SPECIES: SpeciesDef[] = [
 
 import { MORE_SPECIES } from './species2';
 import { INVERTS } from './species3';
-SPECIES.push(...MORE_SPECIES, ...INVERTS);
+import { MORE_FISH } from './species4';
+SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...INVERTS);
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
 export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];

@@ -110,7 +110,6 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THRE
     mat.defines = { ...(mat.defines ?? {}), FISH_SCALES: '' };
     // wet, glossy skin; silver species keep their metal value
     mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
-    mat.alphaHash = true;
   }
   return underwaterMaterial(mat, {
     key: 'cr-' + def.kind + (translucent ? '-t' : ''),
@@ -159,8 +158,9 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3): THRE
       }
       #endif`,
     fragDiffuse: `
-      #if defined( FISH_SCALES ) && defined( USE_ALPHAHASH )
-        if ( vFin > 0.5 && vFin < 1.5 ) diffuseColor.a = 0.86;
+      #ifdef FISH_SCALES
+        // fins are thin membranes: lighter and a little desaturated where light passes through
+        if ( vFin > 0.5 && vFin < 1.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, vec3( dot( diffuseColor.rgb, vec3( 0.33 ) ) ), 0.15 ) * 1.12;
       #endif
       #if defined( FISH_SCALES ) && defined( USE_MAP )
       if ( vFin < 0.5 ) diffuseColor.rgb *= 0.985 + 0.02 * fishScale( vMapUv );
@@ -398,7 +398,7 @@ export class Creatures {
       const mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
       const mesh = new THREE.InstancedMesh(geo, mat, def.count);
       mesh.frustumCulled = false;
-      mesh.castShadow = def.kind !== 'jelly';
+      mesh.castShadow = def.kind !== 'jelly' && def.size >= 0.2;
       mesh.receiveShadow = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.name = def.id;

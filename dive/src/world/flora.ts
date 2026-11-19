@@ -714,7 +714,7 @@ export class Flora {
           if (zoneAt(px, pz) !== 'reef') continue;
           const bom = bommieAt(px, pz);
           if (bom < 0.7) continue;
-          if (r() > Math.min(0.8, bom * 0.35)) {
+          if (r() > Math.min(0.92, bom * 0.5)) {
             // a free patch of bommie surface between colonies: anchor for clams, sea stars, tube worms
             if (r() < 0.15) this.homes.bommieSpots.push(new THREE.Vector3(px, heightAt(px, pz) + 0.02, pz));
             continue;
@@ -735,6 +735,8 @@ export class Flora {
       add(smallStag, coralMat, carpetStag.filter((_, i) => i % 2 === 0), 38, 48);
       add(plateColony(51), coralMat, carpetStag.filter((_, i) => i % 2 === 1), 38, 48);
       this.carpetCount = carpetBush.length + carpetBrain.length + carpetStag.length;
+      // small colonies don't need to render into the sun shadow map
+      for (const set of this.sets.slice(-4)) set.group.traverse((o) => { o.castShadow = false; });
     }
     const softMat = underwaterMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: THREE.DoubleSide }), {
       key: 'soft',
@@ -901,7 +903,7 @@ export class Flora {
     }
     this.group.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (m.isMesh && !(m as unknown as THREE.Points).isPoints) { m.castShadow = true; m.receiveShadow = true; }
+      if (m.isMesh && !(m as unknown as THREE.Points).isPoints) { if (m.userData.noCast !== true && m.castShadow !== false) m.castShadow = true; m.receiveShadow = true; }
     });
   }
 

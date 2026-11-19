@@ -277,7 +277,7 @@ export function paintLook(p: Paint, L: Look): void {
     p.bar(t - 0.5, 0.05, L.eyeBar, undefined, 0.01);
   }
   if (L.snout) p.clipBody(() => { g.fillStyle = L.snout!; g.fillRect(p.U(0.42), 0, p.W, p.H); });
-  p.scales(L.scales ?? 0.1, 4);
-  p.noise(L.noise ?? 0.06);
+  p.scales(Math.min(L.scales ?? 0.035, 0.06), Math.max(4, Math.round(p.W / 64)));
+  p.noise(L.noise ?? 0.05);
   p.eye(f.shape.eyes ?? 0.1, L.iris ?? '#2a2a20');
 }
