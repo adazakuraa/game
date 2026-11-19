@@ -158,8 +158,11 @@ export class MountainField {
     }
     // Icefall: tumbled glacier surface with ice blocks.
     if (def.seracField) {
-      const blocks = this.noise.ridged(x * 0.05, z * 0.05, 2);
-      h += (blocks - 0.4) * 5 * smoothstep(5, 14, routeD);
+      // Tumbled glacier: flat-topped slabs with steep broken edges, not spikes.
+      const b1 = this.noise.noise(x * 0.035, z * 0.035);
+      const b2 = this.noise2.noise(x * 0.07 + 11, z * 0.07);
+      const slab = smoothstep(0.05, 0.18, b1) * 2.6 + smoothstep(0.2, 0.32, b2) * 1.4;
+      h += slab * smoothstep(5, 14, routeD);
     }
     // Gentle boot-scale undulation on the crest itself.
     h += this.noise2.noise(x * 0.09, z * 0.09) * 0.35;
@@ -374,7 +377,8 @@ export function createTerrainMaterial(def: MountainDef, maxAniso: number): {
         diffuseColor.rgb *= mix(1.0, cav, 0.85);
         // Crevasse walls: blue ice darkening with depth.
         float crev = smoothstep(0.01, 0.2, vCrev);
-        diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.45,0.7,0.85), vec3(0.01,0.05,0.12), smoothstep(0.1, 0.8, vCrev)), crev);
+        // Bright blue ice at the lip, darkening only deep inside the crack.
+        diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.62,0.82,0.93), vec3(0.02,0.08,0.18), smoothstep(0.3, 1.0, vCrev)), crev);
         gSnow = mix(gSnow, 1.0, crev); gIce = mix(gIce, 1.0, crev);
         `,
       )

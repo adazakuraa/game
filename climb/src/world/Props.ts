@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import type { MountainDef } from '../game/Mountains';
 import type { MountainField } from './Terrain';
 import type { Route } from './Route';
@@ -131,59 +132,154 @@ export class Props {
     }
   }
 
-  /** Icefall seracs: tumbled towers of blue ice either side of the route. */
+  /**
+   * Icefall seracs: faceted blocks of glacier ice with flat fracture planes, sharp
+   * edges, annual layering, snow on every upward face and a skirt of broken debris.
+   */
   private buildIceTowers(): void {
-    // Fractured serac: displaced box with leaning faces, overhanging top and snow cap.
-    const g0 = new THREE.BoxGeometry(1, 1, 1, 4, 7, 4);
-    g0.deleteAttribute('normal');
-    g0.deleteAttribute('uv');
-    const geo = mergeVertices(g0, 1e-4);
-    const n = new Noise2D(this.def.seed + 31);
-    const pos = geo.getAttribute('position');
-    const col = new Float32Array(pos.count * 3);
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      const f = n.noise(x * 2.3 + y * 1.7, z * 2.3 - y) * 0.28 + n.noise(x * 6, z * 6 + y * 4) * 0.08;
-      const lean = (y + 0.5) * 0.18;
-      const top = y > 0.35 ? (y - 0.35) * (0.6 + n.noise(x * 3, z * 3) * 0.8) : 0;
-      pos.setXYZ(i, x * (1 + f) + lean, y + top * 0.4 + n.noise(x * 4.1, z * 4.1) * (y > 0.4 ? 0.12 : 0.03), z * (1 + f));
-    }
-    geo.computeVertexNormals();
-    const nrm = geo.getAttribute('normal');
-    for (let i = 0; i < pos.count; i++) {
-      const top = Math.min(1, Math.max(0, (nrm.getY(i) - 0.45) * 3));
-      const depth = 0.5 + 0.5 * (pos.getY(i) + 0.5);
-      col[i * 3] = top + (1 - top) * (0.42 + 0.25 * depth);
-      col[i * 3 + 1] = top + (1 - top) * (0.66 + 0.2 * depth);
-      col[i * 3 + 2] = top + (1 - top) * (0.84 + 0.12 * depth);
-    }
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.0, emissive: 0x05121e });
-    const count = 95;
-    const mesh = new THREE.InstancedMesh(geo, mat, count);
+    const rnd = createSeededRandom(this.def.seed + 31);
+    const makeBlock = (tall: number, jag: number): THREE.BufferGeometry => {
+      // Blocky serac: near-vertical walls, broad flat broken top, one corner sheared off.
+      const pts: THREE.Vector3[] = [];
+      const lean = (rnd() - 0.5) * 0.18;
+      const sides = 5 + Math.floor(rnd() * 4);
+      const phase = rnd() * 6;
+      for (let i = 0; i < sides; i++) {
+        const a = phase + (i / sides) * Math.PI * 2 + (rnd() - 0.5) * 0.7;
+        const r = 0.34 + rnd() * 0.24;
+        pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r));
+        const y = tall * (0.3 + rnd() * 0.5);
+        const rr = r * (0.8 + rnd() * 0.3);
+        pts.push(new THREE.Vector3(Math.cos(a + (rnd() - 0.5) * 0.4) * rr + lean * y, y, Math.sin(a) * rr));
+      }
+      const shear = Math.floor(rnd() * sides);
+      const tiltX = (rnd() - 0.5) * 0.5 * jag, tiltZ = (rnd() - 0.5) * 0.5 * jag;
+      for (let i = 0; i < sides + 2; i++) {
+        const a = phase + (i / (sides + 2)) * Math.PI * 2 + (rnd() - 0.5) * 0.8;
+        const r = 0.18 + rnd() * 0.3;
+        const cx = Math.cos(a) * r, cz = Math.sin(a) * r;
+        let y = tall * (0.9 + rnd() * 0.1) + cx * tiltX + cz * tiltZ;
+        if (i === shear || i === (shear + 1) % (sides + 2)) y = tall * (0.45 + rnd() * 0.2);
+        pts.push(new THREE.Vector3(cx + lean * tall, y, cz));
+      }
+      const g0 = new ConvexGeometry(pts);
+      const g = g0.index ? g0.toNonIndexed() : g0;
+      g.computeVertexNormals();
+      // Vertex colours: snow on up-facing facets, layered ice on the walls.
+      const pos = g.getAttribute('position');
+      const nrm = g.getAttribute('normal');
+      const col = new Float32Array(pos.count * 3);
+      for (let i = 0; i < pos.count; i += 3) {
+        // one colour per facet (flat), from the facet centre
+        const cy = (pos.getY(i) + pos.getY(i + 1) + pos.getY(i + 2)) / 3 / tall;
+        const ny = nrm.getY(i);
+        const snow = ny > 0.55 ? 1 : 0;
+        const layer = 0.5 + 0.5 * Math.sin(cy * 38 + rnd() * 0.6);
+        const deep = 1 - cy;
+        let r = 0.5 + 0.18 * cy + 0.06 * layer;
+        let gg = 0.72 + 0.14 * cy + 0.05 * layer;
+        let b = 0.86 + 0.08 * cy + 0.03 * layer;
+        // older, compressed ice lower down is bluer and darker; occasional dusty band
+        r -= deep * 0.18; gg -= deep * 0.1;
+        if (layer > 0.93) { r *= 0.86; gg *= 0.86; b *= 0.88; }
+        if (snow) { r = 0.95; gg = 0.96; b = 0.99; }
+        for (let k = 0; k < 3; k++) { col[(i + k) * 3] = r; col[(i + k) * 3 + 1] = gg; col[(i + k) * 3 + 2] = b; }
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      return g;
+    };
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.18, metalness: 0, flatShading: true });
+    // Thin-edge glow: light scattering through ice shows as blue at grazing angles.
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>
+          varying vec3 vIcePos;`)
+        .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+          vec4 icePos = vec4(transformed, 1.0);
+          #ifdef USE_INSTANCING
+            icePos = instanceMatrix * icePos;
+          #endif
+          vIcePos = (modelMatrix * icePos).xyz;`);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+          varying vec3 vIcePos;
+          float iH(vec3 p){ p = fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+          float iN(vec3 p){ vec3 i=floor(p); vec3 f=fract(p); f=f*f*(3.0-2.0*f);
+            return mix(mix(mix(iH(i),iH(i+vec3(1,0,0)),f.x),mix(iH(i+vec3(0,1,0)),iH(i+vec3(1,1,0)),f.x),f.y),
+                       mix(mix(iH(i+vec3(0,0,1)),iH(i+vec3(1,0,1)),f.x),mix(iH(i+vec3(0,1,1)),iH(i+vec3(1,1,1)),f.x),f.y),f.z); }`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          {
+            float snowFace = smoothstep(0.9, 0.94, vColor.r);
+            // Annual layers, vertical melt streaks and fracture mottling on the ice walls.
+            float layers = smoothstep(0.82, 0.97, sin(vIcePos.y * 3.1 + iN(vIcePos * 0.35) * 4.0) * 0.5 + 0.5);
+            float streak = iN(vec3(vIcePos.x * 1.7 + vIcePos.z * 1.3, vIcePos.y * 0.12, 0.0));
+            float mottle = iN(vIcePos * 1.6) * 0.6 + iN(vIcePos * 5.0) * 0.4;
+            vec3 ice = diffuseColor.rgb * (0.82 + 0.3 * mottle);
+            ice *= 1.0 - layers * 0.22;
+            ice = mix(ice, ice * vec3(0.78, 0.88, 1.0), smoothstep(0.55, 0.8, streak) * 0.6);
+            diffuseColor.rgb = mix(ice, diffuseColor.rgb * (0.94 + 0.08 * mottle), snowFace);
+          }`)
+        .replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+        {
+          float rim = pow(1.0 - abs(dot(normalize(normal), normalize(vViewPosition))), 2.0);
+          float ice = 1.0 - smoothstep(0.9, 0.95, vColor.r);
+          totalEmissiveRadiance += vec3(0.04, 0.16, 0.28) * rim * ice * 0.9;
+        }`,
+      );
+    };
+    mat.customProgramCacheKey = () => 'serac-ice-v2';
+
+    const variants = [makeBlock(1.0, 0.8), makeBlock(1.4, 1.2), makeBlock(0.7, 0.5), makeBlock(1.8, 1.4)];
+    const debris = [makeBlock(0.6, 1.5), makeBlock(0.45, 2.0)];
+    const perVariant = 26;
+    const meshes = variants.map((g) => new THREE.InstancedMesh(g, mat, perVariant));
+    const debrisMeshes = debris.map((g) => new THREE.InstancedMesh(g, mat, 70));
+    const used = new Array(variants.length).fill(0);
+    const dUsed = [0, 0];
     const m4 = new THREE.Matrix4();
     const q = new THREE.Quaternion();
-    let used = 0;
-    for (let i = 0; i < count * 3 && used < count; i++) {
-      const sAt = this.rng() * this.route.length;
+    for (let i = 0; i < perVariant * variants.length * 3; i++) {
+      const v = i % variants.length;
+      if (used[v] >= perVariant) continue;
+      // The icefall proper starts above base camp, which sits on flatter moraine-covered ice.
+      const sAt = 70 + this.rng() * (this.route.length - 70);
       if (this.route.crevasseS.some((cs) => Math.abs(cs - sAt) < 10)) continue;
       const p = this.route.pointAt(sAt);
-      const d = this.route.directionAt(sAt);
-      const lat = (this.rng() < 0.5 ? -1 : 1) * (7 + Math.pow(this.rng(), 1.3) * 55);
-      const x = p.x - d.z * lat, z = p.z + d.x * lat;
-      const w = 3 + this.rng() * 7;
-      const h = 4 + this.rng() * 12 * Math.min(1, Math.abs(lat) / 20);
-      q.setFromEuler(new THREE.Euler((this.rng() - 0.5) * 0.3, this.rng() * 6, (this.rng() - 0.5) * 0.3));
-      m4.compose(new THREE.Vector3(x, this.ground(x, z) + h * 0.4, z), q, new THREE.Vector3(w, h, w * (0.6 + this.rng() * 0.6)));
-      mesh.setMatrixAt(used++, m4);
+      const dir = this.route.directionAt(sAt);
+      const lat = (this.rng() < 0.5 ? -1 : 1) * (8 + Math.pow(this.rng(), 1.3) * 55);
+      const x = p.x - dir.z * lat, z = p.z + dir.x * lat;
+      // Seracs are broad blocks rather than pillars: width usually exceeds height.
+      const size = 7 + this.rng() * 9;
+      const h = (3.5 + this.rng() * 6) * Math.min(1, 0.5 + Math.abs(lat) / 25);
+      q.setFromEuler(new THREE.Euler((this.rng() - 0.5) * 0.25, this.rng() * Math.PI * 2, (this.rng() - 0.5) * 0.25));
+      m4.compose(new THREE.Vector3(x, this.ground(x, z) - 0.6, z), q, new THREE.Vector3(size, h, size * (0.6 + this.rng() * 0.6)));
+      meshes[v].setMatrixAt(used[v]++, m4);
+      // Broken debris at the tower's foot.
+      const n = 1 + Math.floor(this.rng() * 3);
+      for (let k = 0; k < n; k++) {
+        const dv = k % 2;
+        if (dUsed[dv] >= 70) continue;
+        const a = this.rng() * Math.PI * 2;
+        const r = size * (0.6 + this.rng() * 0.6);
+        const dx = x + Math.cos(a) * r, dz = z + Math.sin(a) * r;
+        if (Math.abs((dx - p.x) * -dir.z + (dz - p.z) * dir.x) < 4) continue; // keep the track clear
+        const ds = 0.6 + this.rng() * 1.6;
+        q.setFromEuler(new THREE.Euler(this.rng() * 1.2, this.rng() * 6, this.rng() * 1.2));
+        m4.compose(new THREE.Vector3(dx, this.ground(dx, dz) - ds * 0.25, dz), q, new THREE.Vector3(ds, ds, ds));
+        debrisMeshes[dv].setMatrixAt(dUsed[dv]++, m4);
+      }
     }
-    mesh.count = used;
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.computeBoundingSphere();
-    mesh.name = 'iceTowers';
-    this.group.add(mesh);
+    [...meshes, ...debrisMeshes].forEach((mesh, i) => {
+      mesh.count = i < meshes.length ? used[i] : dUsed[i - meshes.length];
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      mesh.name = i < meshes.length ? 'seracTowers' : 'seracDebris';
+      this.group.add(mesh);
+    });
   }
 
   private buildHazards(): void {

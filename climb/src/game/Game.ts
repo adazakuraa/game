@@ -251,20 +251,7 @@ export class Game {
     });
     this.refreshContinue();
     document.getElementById('resume-btn')!.addEventListener('click', () => this.setPaused(false));
-    // Breathing sound setting (remembered on this device).
-    const breathBox = document.getElementById('opt-breath') as HTMLInputElement;
-    const breathBtn = document.getElementById('breath-btn')!;
-    const applyBreath = (on: boolean) => {
-      this.audio.setBreathing(on);
-      breathBox.checked = on;
-      breathBtn.textContent = `呼吸音：${on ? 'ON' : 'OFF'}`;
-      try { localStorage.setItem('dz8000-breath', on ? '1' : '0'); } catch { /* ignore */ }
-    };
-    let breathPref = true;
-    try { breathPref = localStorage.getItem('dz8000-breath') !== '0'; } catch { /* ignore */ }
-    applyBreath(breathPref);
-    breathBox.addEventListener('change', () => applyBreath(breathBox.checked));
-    breathBtn.addEventListener('click', () => applyBreath(!this.audio.breathOn));
+
     document.getElementById('help-btn')!.addEventListener('click', () => {
       this.showScreen(null);
       this.state = 'play';

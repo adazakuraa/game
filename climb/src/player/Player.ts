@@ -244,7 +244,8 @@ export class Player {
       this.exertion = clamp((this.speed / 2.75) * (0.45 + up * 1.4 + (ascending ? 0.3 : 0)), 0, 1);
 
       // Step cadence
-      const stride = 0.5;
+      // ~0.85 m per step: full stick reads as an ordinary walking cadence (~1.9 steps/s on the flat).
+      const stride = 0.85;
       const before = Math.floor(this.stepPhase);
       this.stepPhase += moved / stride;
       if (Math.floor(this.stepPhase) !== before) {
