@@ -353,11 +353,13 @@ export class Game {
       this.diveShots = 0;
       this.pending.clear();
       this.vel.set(0, 0, 0);
-      const startY = this.ads ? -175 : -1.6;
+      // a few metres down after the giant-stride entry, clear of the boat's keel (~1.8 m draft)
+      const startY = this.ads ? -175 : -3.2;
       this.camera.position.set(dp.x, startY, dp.z);
       this.yaw = Math.PI; // face offshore (+z)
       this.pitch = this.ads ? -0.5 : -0.35;
-      this.flora.placeBoat(dp.x, dp.z - 3);
+      // moored ~12 m up-current behind the diver, stern (ladder) facing the diver
+      this.flora.placeBoat(dp.x - 2, dp.z - 12);
       this.ensureMinimap();
       this.flora.boat.visible = !this.ads;
       this.terrain.prime(dp.x, dp.z, 80);

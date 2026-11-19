@@ -955,7 +955,8 @@ export class Flora {
 
   placeBoat(x: number, z: number): void {
     this.boat.position.set(x, 0, z);
-    this.boat.rotation.y = 0.4;
+    this.boat.rotation.y = Math.PI + 0.15;
+    this.boat.updateMatrixWorld(true);
   }
 
   update(cam: THREE.Vector3, time: number): void {
