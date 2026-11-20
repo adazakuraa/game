@@ -699,6 +699,17 @@ export class Creatures {
     }
   }
 
+  /** A random species with an individual within `radius` (for photo requests). */
+  randomNear(p: THREE.Vector3, radius: number): SpeciesDef | null {
+    const cands: SpeciesDef[] = [];
+    for (const rt of this.list) {
+      const d = rt.def;
+      if (!rt.active || !rt.mesh || d.kind === 'none' || d.size < 0.06 || d.behavior === 'buried') continue;
+      if (rt.agents.some((a) => !rt.groups[a.g].absent && a.p.distanceTo(p) < radius)) cands.push(d);
+    }
+    return cands.length ? cands[Math.floor(Math.random() * cands.length)] : null;
+  }
+
   /** Fish finder: nearest individual of each not-yet-photographed species within `radius`. */
   sonar(p: THREE.Vector3, radius: number, known: (id: string) => boolean): { x: number; z: number; rare: boolean }[] {
     const out: { x: number; z: number; rare: boolean }[] = [];

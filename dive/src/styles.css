@@ -282,3 +282,12 @@ button.gear-item.can { border-color: var(--ok); color: var(--ink); animation: bl
 button.gear-item.locked { opacity: 0.5; }
 button.gear-item.locked .req { color: var(--ink-dim); }
 @media (width <= 420px) { .gear { grid-template-columns: repeat(3, 1fr); } }
+
+#mission { position: absolute; left: 50%; top: calc(112px + var(--safe-t)); transform: translateX(-50%); min-width: 210px; max-width: calc(100vw - 260px); padding: 7px 14px 8px; border-radius: 12px; background: var(--panel); border: 1px solid var(--warn); text-align: center; pointer-events: none; }
+#ms-title { font-size: 12.5px; font-weight: 900; color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ms-prog { font-family: var(--num); font-size: 15px; font-weight: 700; margin-top: 1px; }
+.ms-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); margin-top: 5px; overflow: hidden; }
+.ms-bar i { display: block; height: 100%; width: 100%; background: var(--warn); transition: width 0.25s linear; }
+.res-bonus { width: 100%; display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; padding: 7px 10px; border-radius: 10px; background: rgba(255,181,71,0.12); color: var(--warn); }
+.res-bonus b { font-family: var(--num); color: var(--ok); }
+@media (width <= 520px) { #mission { top: calc(214px + var(--safe-t)); max-width: calc(100vw - 32px); } }

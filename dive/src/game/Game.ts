@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Missions } from './missions';
 import { evaluateShot, LEGACY_NEED, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
@@ -60,10 +61,14 @@ export class Game {
   private currentWarned = -100;
   private shake = 0;
   private lastClear = 20;
+  private sonarBlips: { x: number; z: number; rare: boolean }[] = [];
   /** hit-stop: world freezes for a beat after a good shot */
   private freezeT = 0;
   private lastEncounter = -100;
   private coldWarned = -100;
+  private missions!: Missions;
+  /** request rewards earned this dive */
+  private bonuses: { label: string; value: number }[] = [];
   private cold = 0;
   private dprCap = 1.5;
   private frameAvg = 16;
@@ -108,6 +113,8 @@ export class Game {
     this.creatures = new Creatures(this.flora.homes);
     mark('creatures');
     this.scene.add(this.creatures.group);
+    this.missions = new Missions();
+    this.scene.add(this.missions.group);
     this.audio.onExhale = () => {
       if (this.state === 'diving') this.env.exhale(this.camera, this.ads || this.has('rebreather') ? 0 : 1);
     };
@@ -459,6 +466,8 @@ export class Game {
       this.creatures.shield = this.has('shield');
       if (this.minimap) this.minimap.blips = [];
       this.coldWarned = -100;
+      this.missions.reset();
+      this.bonuses = [];
       $('btn-light').classList.toggle('on', this.env.lightOn);
       $('btn-boost').classList.toggle('hidden', !this.has('scooter'));
       $('title').classList.add('hidden');
@@ -539,7 +548,7 @@ export class Game {
       const old = this.save.found[id];
       if (!old || f.score > (old.score ?? -1)) this.save.found[id] = { photo: f.photo, depth: f.depth, score: f.score, t: Date.now() };
     }
-    const gross = shots.reduce((a, [, f]) => a + f.value, 0);
+    const gross = shots.reduce((a, [, f]) => a + f.value, 0) + this.bonuses.reduce((a, b) => a + b.value, 0);
     const earn = reason === 'surface' ? gross : Math.round((gross * PHOTO.blackoutKeep) / 10) * 10;
     const moneyBefore = this.save.money ?? 0;
     this.save.money = moneyBefore + earn;
@@ -574,6 +583,8 @@ export class Game {
     list.innerHTML = shots.length
       ? shots.map(([id, f]) => `<div class="res-card"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
+    if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">依頼達成：${b.label}<b>${yen(b.value)}</b></div>`).join(''));
+    this.missions.reset();
     if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
     const stockedNow = SHOP.filter((g) => !this.has(g.id) && Math.ceil((g.need / 100) * SPECIES.length) > before && this.stockGap(g) === 0);
     const affordable = SHOP.filter((g) => !this.has(g.id) && this.stockGap(g) === 0 && this.save.money! >= g.price && (moneyBefore < g.price || stockedNow.includes(g)));
@@ -596,7 +607,7 @@ export class Game {
   private updateDexChip(): void {
     const newOnes = [...this.pending.keys()].filter((k) => !this.save.found[k]).length;
     $('dex-count').textContent = String(this.foundCount + newOnes);
-    const earn = [...this.pending.values()].reduce((a, f) => a + f.value, 0);
+    const earn = [...this.pending.values()].reduce((a, f) => a + f.value, 0) + this.bonuses.reduce((a, b) => a + b.value, 0);
     $('cash-val').textContent = yen(earn);
     const n = $('dex-new');
     n.textContent = '+' + newOnes;
@@ -714,6 +725,16 @@ export class Game {
       this.lastWarn = this.time;
     }
 
+    // occasional requests (mini-games)
+    this.missions.update({
+      dt, time: this.time, diveTime: this.diveTime, player: p, forward: this.tmpDir.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).clone(),
+      zone: zoneAt(p.x, p.z),
+      nearbySpecies: () => this.creatures.randomNear(p, 25),
+      toast: (t, k, d) => this.toast(t, k ?? '', d),
+      chime: (big) => this.audio.chime(big),
+      reward: (v, label) => { this.bonuses.push({ label, value: v }); this.shake = Math.max(this.shake, 0.4); this.freezeT = 0.15; this.updateDexChip(); },
+    });
+
     // photo target & shutter
     // sharp-photo distance: where water haze stays under ~50 % (FogExp2), shortened by narcosis
     const clear = (0.83 / this.env.fog.density) * (1 - this.narc * 0.3);
@@ -766,6 +787,7 @@ export class Game {
     const known = !!this.save.found[def.id];
     const depth = -t.agent.p.y;
     const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2);
+    this.missions.onPhoto(def.id, ev.grade.g);
     // a known species pays a share unless this beats the best photo on record
     const best = this.save.found[def.id]?.score ?? -1;
     const value = known && ev.score <= best ? Math.round((ev.value * PHOTO.repeatShare) / 10) * 10 : ev.value;
@@ -825,8 +847,10 @@ export class Game {
     const secs = Math.max(0, (this.air - 0) / rate);
     $('air-time').textContent = `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
     $('narc').style.opacity = String(this.narc * 0.8);
-    if (this.minimap && this.has('sonar') && this.frame % 20 === 0)
-      this.minimap.blips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
+    if (this.minimap && this.frame % 10 === 0) {
+      if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
+      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks()];
+    }
     this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
 
@@ -952,6 +976,7 @@ export class Game {
     };
     (window as unknown as Record<string, unknown>).__THREE_GAME_TEST_HOOKS__ = {
       game: this,
+      startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost') => { this.missions.force = k; },
       currents: () => this.currents,
       currentF: () => this.currentF,
       showcase: (id: string, dist = 2, side = 1) => {
