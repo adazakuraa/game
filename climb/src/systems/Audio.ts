@@ -255,6 +255,14 @@ export class Audio {
     this.tone(660, 0.12, 0.05, 'triangle', (this.ctx?.currentTime ?? 0) + 0.15);
   }
 
+  /** Short rising chime: a tense moment is over (praise). */
+  cleared(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(587.3, 0.35, 0.07, 'triangle', t);
+    this.tone(880, 0.6, 0.07, 'triangle', t + 0.12);
+  }
+
   summit(): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;

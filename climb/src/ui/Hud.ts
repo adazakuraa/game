@@ -33,6 +33,9 @@ export interface HudData {
   restAxe: boolean;
   interact: string | null;
   prompt: string;
+  /** Pace against the guide standard (empty = hidden). */
+  paceText: string;
+  paceTone: '' | 'ahead' | 'behind';
 }
 
 export function formatClock(hours: number): string {
@@ -46,7 +49,7 @@ export function formatClock(hours: number): string {
 export class Hud {
   readonly root = $('hud');
   private readonly el = {
-    alt: $('alt-value'), clock: $('clock-value'), turn: $('turn-value'), nextName: $('next-name'),
+    alt: $('alt-value'), clock: $('clock-value'), turn: $('turn-value'), pace: $('pace-value'), nextName: $('next-name'),
     nextDist: $('next-dist'), progFill: $('progress-fill'), progMarks: $('progress-marks'),
     spo2: $('spo2-value'), hr: $('hr-value'), stam: $('stam-fill'), temp: $('temp-value'), frost: $('frost-value'),
     o2: $('o2-fill'), spare: $('spare-value'), flow: $('flow-value'), wind: $('wind-value'), amb: $('temp-amb'),
@@ -86,6 +89,8 @@ export class Hud {
     this.set('turn', e.turn, late ? `${d.turnLabel}を過ぎた` : `${d.turnLabel} ${formatClock(d.turnaround)}`);
     this.cls('o2vis', this.root, d.hasO2 ? '' : 'no-o2', ['no-o2']);
     this.cls('turnc', e.turn, late ? 'late' : '', ['late']);
+    this.set('pace', e.pace, d.paceText);
+    this.cls('pacec', e.pace, d.paceTone, ['ahead', 'behind']);
     this.set('nextName', e.nextName, d.nextName);
     this.set('nextDist', e.nextDist, `${Math.max(0, Math.round(d.nextDist))}m`);
     e.progFill.style.width = `${(d.progress * 100).toFixed(1)}%`;

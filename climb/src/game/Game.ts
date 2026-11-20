@@ -22,6 +22,7 @@ import { Plume } from '../world/Plume';
 import { NearGround } from '../world/NearGround';
 import { createSeededRandom } from '../utils/random';
 import { clamp, smoothstep } from '../utils/noise';
+import { STANDARD, gradeFor, formatDur, bestFor, submitTime, type Grade } from './Scoring';
 
 type GameState = 'title' | 'play' | 'paused' | 'dead' | 'summit' | 'camp' | 'won';
 type DeathKind = 'fall' | 'hace' | 'hypothermia' | 'serac' | 'exhaustion' | 'crevasse' | 'rock' | 'icefall';
@@ -74,6 +75,24 @@ interface IceChunk {
   vel: THREE.Vector3;
   life: number;
 }
+
+/** A point on today's climb to resume from after a death (quick retry). */
+interface Checkpoint {
+  name: string;
+  s: number;
+  hours: number;
+  descending: boolean;
+  summitReached: boolean;
+  summitHours: number;
+  lastLandmark: number;
+  lastDownMark: number;
+  spo2: number; stamina: number; coreTemp: number; frostbite: number; hace: number;
+  bottle: number; spares: number; flow: number;
+  storm: number;
+  caches: boolean[];
+}
+
+interface LegResult { key: string; time: number; std: number; grade: Grade; isNew: boolean; best: number | null }
 
 interface World {
   def: MountainDef;
@@ -169,6 +188,22 @@ export class Game {
   private readonly tmpV = new THREE.Vector3();
   private readonly windDir = new THREE.Vector3(1, 0, 0.25).normalize();
   private lastLandmark = -1;
+  /** Descending: last landmark passed on the way down (for checkpoints). */
+  private lastDownMark = 99;
+  // --- play loop extras (rating, praise, quick retry, assist)
+  private legKey = '';
+  /** Deaths on the current leg; from two on, base camp offers a weather window. */
+  private legDeaths = 0;
+  private assistOn = false;
+  private retries = 0;
+  private nearMisses = 0;
+  private nearThisFall = false;
+  private hzInside: { kind: 'serac' | 'icefall' | 'rock'; s0: number; s1: number } | null = null;
+  private laddersCrossed = 0;
+  private ladderEnterS = -1;
+  private checkpoint: Checkpoint | null = null;
+  private lastNoRopeMsg = 0;
+  private legResult: LegResult | null = null;
   private maxAltitude = 0;
   private dprCap: number;
 
@@ -249,7 +284,6 @@ export class Game {
     document.getElementById('start-btn')!.addEventListener('click', () => {
       this.audio.unlock();
       this.audio.setMuted(!(document.getElementById('opt-sound') as HTMLInputElement).checked);
-      this.spares = Number((document.getElementById('opt-bottles') as HTMLSelectElement).value);
       this.withLoading(() => {
         this.newExpedition(this.selected);
         if (!this.mobile) this.tryPointerLock();
@@ -280,8 +314,10 @@ export class Game {
       if (this.state === 'summit') this.beginDescent();
       else if (this.state === 'camp') this.withLoading(() => this.departNextStage());
       else if (this.state === 'won') this.withLoading(() => this.newExpedition(this.selected));
+      else if (this.checkpoint) this.resumeCheckpoint();
       else this.startRun();
     });
+    document.getElementById('result-camp')!.addEventListener('click', () => this.startRun());
     document.getElementById('result-rest')!.addEventListener('click', () => this.restDay());
     document.getElementById('result-secondary')!.addEventListener('click', () => this.toTitle());
     document.addEventListener('pointerlockchange', () => {
@@ -345,6 +381,7 @@ export class Game {
   private newExpedition(exp: 'everest' | 'k2'): void {
     this.selected = exp;
     this.day = 1;
+    this.spares = 1;
     this.acclim = EXPEDITIONS[exp].baseAltitude + 300; // acclimatised on the trek in
     this.frostCarry = 0;
     this.buildStage(exp, 0);
@@ -473,11 +510,25 @@ export class Game {
     if (!this.world || !this.player) return;
     this.rng = createSeededRandom(this.seed);
     const def = this.world.def;
+    const legKey = `${this.selected}-${this.stageIndex}`;
+    if (legKey !== this.legKey) { this.legKey = legKey; this.legDeaths = 0; }
+    // Rescue without humiliation: after two deaths on a leg, base camp waits for a weather window.
+    this.assistOn = this.legDeaths >= 2;
     this.weather.stormChance = def.goal === 'summit' ? Math.min(0.9, 0.35 + Math.max(0, this.day - 7) * 0.08) : 0.3;
     this.weather.reset(this.rng);
-    this.physio.reset(def.o2 === 'summit' ? this.spares : 0, {
+    if (this.assistOn) this.weather.willStorm = false;
+    this.physio.reset(def.o2 === 'summit' ? this.spares + (this.assistOn ? 1 : 0) : 0, {
       o2: def.o2 !== 'none', acclim: this.acclim, frost: this.frostCarry,
     });
+    this.retries = 0;
+    this.nearMisses = 0;
+    this.nearThisFall = false;
+    this.hzInside = null;
+    this.laddersCrossed = 0;
+    this.ladderEnterS = -1;
+    this.checkpoint = null;
+    this.lastDownMark = 99;
+    this.player.rappelling = false;
     this.player.reset(0);
     this.hours = def.startHours;
     this.playTime = 0;
@@ -511,13 +562,128 @@ export class Game {
     this.radio.reset();
     this.ambient.reset();
     this.paceChecked = false;
+    if (this.assistOn) {
+      this.radio.say('assist', def.o2 === 'summit'
+        ? '無理をするな。今日は天気の窓だ、風も弱い。デポにボンベを1本足しておいた。'
+        : '無理をするな。今日は天気の窓だ、崩れる心配はない。落ち着いて行け。');
+    }
     this.radio.lore(def.stageKey, 0);
     const deadline = def.goal === 'summit' ? TURNAROUND : 18.5;
     this.radio.say('forecast', this.weather.willStorm && this.weather.stormAt < deadline + 1
       ? `今日の予報：${formatClock(this.weather.stormAt)}ごろから天気が崩れる。それまでに${def.goalName}へ入れ。`
       : '今日の予報：晴れ、風は弱い。いい日だ。');
     const goal = def.goal === 'summit' ? `山頂 ${def.summitAltitude.toLocaleString('en-US')}m · 折返 ${TURNAROUND}:00` : `${def.goalName}（${def.summitAltitude.toLocaleString('en-US')}m）へ`;
-    this.hud.banner(`${this.day}日目 — ${def.stageName}`, `${formatClock(this.hours)} ${def.campName}出発 · ${goal}`, '', 4500);
+    const std = STANDARD[def.stageKey];
+    const best = bestFor(def.stageKey + (def.goal === 'summit' ? ':up' : ''));
+    const target = std ? `<br>ガイド基準 ${formatDur(std.up)}${best !== null ? `（自己ベスト ${formatDur(best)}）` : ''}` : '';
+    this.hud.banner(`${this.day}日目 — ${def.stageName}`, `${formatClock(this.hours)} ${def.campName}出発 · ${goal}${target}`, '', 5000);
+  }
+
+  // ---------------------------------------------------------------- quick retry
+  private saveCheckpoint(name: string): void {
+    const p = this.player, ph = this.physio;
+    if (!p || !this.world || this.state !== 'play' || p.mode !== 'walk') return;
+    this.checkpoint = {
+      name, s: p.routeS, hours: this.hours, descending: p.descending,
+      summitReached: this.summitReached, summitHours: this.summitHours,
+      lastLandmark: this.lastLandmark, lastDownMark: this.lastDownMark,
+      spo2: ph.spo2, stamina: ph.stamina, coreTemp: ph.coreTemp, frostbite: ph.frostbite, hace: ph.hace,
+      bottle: ph.bottle, spares: ph.spares, flow: ph.flow,
+      storm: this.weather.state.storm,
+      caches: this.world.props.caches.map((c) => c.taken),
+    };
+  }
+
+  /** Back on your feet at the last landmark passed, a minute after the mistake. */
+  private resumeCheckpoint(): void {
+    const cp = this.checkpoint, p = this.player, w = this.world;
+    if (!cp || !p || !w) { this.startRun(); return; }
+    const ph = this.physio;
+    this.retries += 1;
+    p.reset(cp.s);
+    p.descending = cp.descending;
+    if (cp.descending) p.yaw += Math.PI;
+    // never resume unroped on a fixed-rope slope
+    const r = p.nearestRope();
+    if (r) p.clip = r;
+    this.hours = cp.hours;
+    this.summitReached = cp.summitReached;
+    this.summitHours = cp.summitHours;
+    this.lastLandmark = cp.lastLandmark;
+    this.lastDownMark = cp.lastDownMark;
+    // A breather is part of the retry: no waking into a death already in progress.
+    ph.spo2 = cp.spo2; ph.stamina = Math.max(cp.stamina, 70); ph.coreTemp = Math.max(cp.coreTemp, 36.2);
+    ph.frostbite = cp.frostbite; ph.hace = Math.min(cp.hace, 30);
+    ph.bottle = cp.bottle; ph.spares = cp.spares; ph.flow = cp.flow; ph.collapsed = false;
+    this.weather.rewind(cp.hours, cp.storm);
+    w.props.caches.forEach((c, i) => { c.taken = cp.caches[i] ?? c.taken; c.mesh.visible = !c.taken; });
+    this.flash = 0; this.fade = 0; this.deathKind = null; this.deathTimer = 0; this.hitAnim = false;
+    for (const c of this.chunks) { this.scene.remove(c.mesh); this.scene.remove(c.puff); }
+    this.chunks.length = 0;
+    for (const b of this.billows) this.scene.remove(b.sprite);
+    this.billows.length = 0;
+    this.seracWarn = -1; this.seracTimer = 10; this.swapT = 0; this.collapseT = 0; this.hzInside = null;
+    this.map.show(false);
+    this.state = 'play';
+    this.input.enabled = true;
+    this.showScreen(null);
+    this.hud.show(true);
+    this.radio.interrupt(4);
+    this.hud.banner(`${cp.name}から再開`, p.clip ? 'ロープに確保した状態で立て直した' : '息を整えて、もう一度', '', 2600);
+    if (!this.mobile) this.tryPointerLock();
+  }
+
+  /** Praise for getting through a tense stretch: a breath out, and a little strength back. */
+  private hazardCleared(kind: 'serac' | 'icefall' | 'rock'): void {
+    const T = {
+      icefall: ['崩壊帯を抜けた', 'よし、抜けたな！見事だ。ここから先は少し落ち着ける。'],
+      serac: ['セラックの下を抜けた', '抜けた！よくやった、今のが一番危ない場所だった。'],
+      rock: ['落石地帯を抜けた', '落石帯を抜けたか。いい判断だった。'],
+    } as const;
+    const ph = this.physio;
+    ph.stamina = Math.min(100, ph.stamina + 20);
+    this.audio.cleared();
+    this.hud.banner(T[kind][0], '張り詰めた息を吐く — 体力が少し戻った', 'good', 3000);
+    this.radio.say(`praise-${kind}-${this.player!.descending ? 'd' : 'u'}`, T[kind][1]);
+    this.saveCheckpoint(T[kind][0].replace('を抜けた', 'の先'));
+  }
+
+  private legStd(): { std: { up: number; round?: number } | undefined; elapsed: number } {
+    const def = this.world!.def;
+    return { std: STANDARD[def.stageKey], elapsed: this.hours - def.startHours };
+  }
+
+  private rate(key: string, time: number, std: number): LegResult {
+    const best = bestFor(key);
+    const isNew = submitTime(key, time);
+    return { key, time, std, grade: gradeFor(time / std), isNew, best };
+  }
+
+  private resultRows(r: LegResult, label: string): [string, string][] {
+    const rows: [string, string][] = [
+      [label, formatDur(r.time)],
+      ['ガイド基準', formatDur(r.std)],
+      ['自己ベスト', r.isNew ? (r.best !== null ? `更新！（前回 ${formatDur(r.best)}）` : '初記録') : formatDur(r.best ?? r.time)],
+    ];
+    if (this.nearMisses > 0) rows.push(['崩落をかわした', `${this.nearMisses}回`]);
+    if (this.laddersCrossed > 0) rows.push(['渡ったハシゴ', `${this.laddersCrossed}本`]);
+    if (this.retries > 0) rows.push(['やり直し', `${this.retries}回`]);
+    return rows;
+  }
+
+  private showGrade(r: LegResult, praise: string): void {
+    const ex = document.getElementById('result-extra')!;
+    ex.innerHTML = `<div class="grade ${r.grade.tone}">${r.grade.name}${r.isNew ? '<span class="new">自己ベスト</span>' : ''}</div><div>${praise}</div>`;
+    ex.classList.remove('hidden');
+  }
+
+  private static praiseFor(g: Grade): string {
+    return {
+      top: 'シェルパ並みの速さだ。BCのテントがざわついている。',
+      good: 'プロのガイドと同じペース。文句なしだ。',
+      ok: '遠征隊員として十分なペース。着実に登った。',
+      slow: '時間はかかったが、生きて着いた。それが一番大事だ。',
+    }[g.tone];
   }
 
   private beginDescent(): void {
@@ -528,6 +694,8 @@ export class Game {
     this.showScreen(null);
     this.hud.show(true);
     this.hud.banner('下山開始', '登頂は折り返し地点にすぎない。C4へ生きて帰れ', '', 4000);
+    this.lastDownMark = this.world!.def.landmarks.length - 1;
+    this.saveCheckpoint('山頂');
     if (!this.mobile) this.tryPointerLock();
   }
 
@@ -683,8 +851,21 @@ export class Game {
       deepSnow,
       drift: smoothstep(45, 95, ph.hace),
       adrenaline: this.seracWarn > 0 ? 1 : 0,
+      // spare bottles are ~3.5 kg each: carrying more is slower (and lighter as you use them)
+      load: w.def.o2 === 'summit' && ph.hasO2 ? clamp(1 + 0.06 * (1 - ph.spares), 0.86, 1.08) : 1,
     });
     this.handlePlayerEvents();
+    // Ladder crossings: a small "made it" each time.
+    if (p.onLadder && this.ladderEnterS < 0) this.ladderEnterS = p.routeS;
+    if (!p.onLadder && this.ladderEnterS >= 0) {
+      if (p.mode === 'walk' && Math.abs(p.routeS - this.ladderEnterS) > 2) {
+        this.laddersCrossed += 1;
+        this.audio.cleared();
+        this.hud.banner('渡り切った', this.laddersCrossed === 1 ? '最初のハシゴを越えた' : `ハシゴ ${this.laddersCrossed}本目`, 'good', 1500);
+        if (this.laddersCrossed === 1) this.radio.say('ladder1', '最初のハシゴを越えたな。下は見るなよ、その調子だ。');
+      }
+      this.ladderEnterS = -1;
+    }
 
     // Physiology
     const handsExposed = swapping || p.mode === 'transfer';
@@ -828,6 +1009,14 @@ export class Game {
         case 'transferred': this.audio.clink(); this.hud.banner('付け替え完了', '', 'good', 1200); break;
         case 'anchorBlock': this.hud.banner('アンカーで止まった', 'カラビナを付け替えろ（クリップ / E）', '', 2200); break;
         case 'unclipRefused': this.hud.banner('ここでは外せない', '急斜面の途中。ロープの終端かアンカーで付け替えろ', '', 2200); break;
+        case 'noRope':
+          if (performance.now() - this.lastNoRopeMsg > 1800) {
+            this.lastNoRopeMsg = performance.now();
+            this.audio.clink();
+            this.hud.banner('近くにロープがない', '赤いフィックスロープの近くでクリップ', '', 1500);
+          }
+          break;
+        case 'rappel': this.hud.banner('懸垂下降', 'ロープに体重を預けて一気に下る', 'good', 2000); break;
         case 'tooSteep': this.hud.banner('急すぎて登れない', 'フィックスロープに確保すれば登れる', '', 2200); break;
         case 'gustKnock': this.audio.slip(); break;
         case 'crevasseDeath': this.audio.slip(); this.die('crevasse'); break;
@@ -858,6 +1047,12 @@ export class Game {
     let active: (typeof w.props.hazards)[number] | null = null;
     for (const hz of w.props.hazards) {
       if (p.routeS > hz.s0 - 5 && p.routeS < hz.s1 + 5) active = hz;
+    }
+    if (active) this.hzInside = active;
+    else if (this.hzInside && this.state === 'play') {
+      const hz = this.hzInside;
+      this.hzInside = null;
+      if (p.descending ? p.routeS < hz.s0 - 5 : p.routeS > hz.s1 + 5) this.hazardCleared(hz.kind);
     }
     if (active && this.state === 'play') {
       const hz = active;
@@ -897,6 +1092,7 @@ export class Game {
           warnSub = `${fromRight ? '右手' : '左手'}から来る。${run}`;
         }
         if (isRock) this.audio.rockfall(); else this.audio.crack();
+        this.nearThisFall = false;
         this.radio.interrupt();
         this.hazSrc.copy(hz.origin);
         this.flash = 0.2;
@@ -948,7 +1144,16 @@ export class Game {
     }
     if (this.seracWarn >= 0) {
       this.seracWarn -= dt;
-      if (this.seracWarn < 0) this.seracTimer = 22 + this.rng() * 18;
+      if (this.seracWarn < 0) {
+        this.seracTimer = 22 + this.rng() * 18;
+        if (this.nearThisFall && this.state === 'play') {
+          this.nearMisses += 1;
+          this.audio.cleared();
+          this.hud.banner('かわした！', this.nearMisses === 1 ? '間一髪。落下ラインから出ていた' : `間一髪 — ${this.nearMisses}回目`, 'good', 2200);
+          this.radio.say('nearmiss', '今のは危なかった！いい反応だ。');
+        }
+        this.nearThisFall = false;
+      }
     }
     this.updateChunks(dt, true);
   }
@@ -995,6 +1200,7 @@ export class Game {
       (c.puff.material as THREE.SpriteMaterial).opacity = Math.min(1, age * 1.5) * Math.min(1, c.life / 2) * 0.62;
       const d = c.pos.distanceTo(this.tmpV.copy(p.pos).setY(p.pos.y + 1));
       nearest = Math.min(nearest, d);
+      if (lethal && d < c.mesh.scale.x * 0.8 + 3) this.nearThisFall = true;
       if (lethal && this.state === 'play' && p.mode !== 'dead' && d < c.mesh.scale.x * 0.8 + 0.6) {
         this.flash = 0.8;
         this.audio.impact();
@@ -1062,9 +1268,22 @@ export class Game {
     for (let i = lms.length - 1; i >= 1; i--) {
       if (p.routeS >= w.route.waypointS[lms[i].routeIndex] - 3 && i > this.lastLandmark && p.routeDist < 25) {
         this.lastLandmark = i;
-        if (i < lms.length - 1) this.hud.banner(lms[i].name, lms[i].note, 'good', 3600);
+        if (i < lms.length - 1) {
+          this.hud.banner(lms[i].name, lms[i].note, 'good', 3600);
+          this.saveCheckpoint(lms[i].name);
+        }
         this.radio.lore(w.def.stageKey, i);
         break;
+      }
+    }
+    if (p.descending) {
+      for (let i = Math.min(this.lastDownMark, lms.length) - 1; i >= 1; i--) {
+        if (p.routeS <= w.route.waypointS[lms[i].routeIndex] + 3 && p.routeDist < 25) {
+          this.lastDownMark = i;
+          this.hud.banner(lms[i].name, `${w.def.campName}まであと${Math.round(p.routeS)}m`, 'good', 2400);
+          this.saveCheckpoint(lms[i].name);
+          break;
+        }
       }
     }
     if (w.def.goal === 'camp') {
@@ -1078,6 +1297,9 @@ export class Game {
         this.acclim = Math.max(this.acclim, campAlt + 300);
         this.frostCarry = Math.max(0, this.physio.frostbite * 0.8 - 5);
         this.saveAtCamp();
+        const { std, elapsed } = this.legStd();
+        this.legResult = std ? this.rate(w.def.stageKey, elapsed, std.up) : null;
+        this.legDeaths = 0;
         setTimeout(() => this.showCamp(false), 1200);
       }
       return;
@@ -1085,6 +1307,8 @@ export class Game {
     if (!this.summitReached && p.routeS >= w.route.length - 2.5 && p.routeDist < 6) {
       this.summitReached = true;
       this.summitHours = this.hours;
+      const { std, elapsed } = this.legStd();
+      this.legResult = std ? this.rate(`${w.def.stageKey}:up`, elapsed, std.up) : null;
       this.audio.summit();
       this.state = 'summit';
       this.input.enabled = false;
@@ -1093,6 +1317,9 @@ export class Game {
       this.hud.banner(`${w.def.name} 山頂`, `${w.def.summitAltitude.toLocaleString('en-US')}m`, 'good', 3000);
     }
     if (this.summitReached && p.descending && p.routeS < 10 && p.routeDist < 25) {
+      const { std, elapsed } = this.legStd();
+      this.legResult = std?.round ? this.rate(`${w.def.stageKey}:round`, elapsed, std.round) : null;
+      this.legDeaths = 0;
       this.state = 'won';
       this.input.enabled = false;
       if (document.pointerLockElement) document.exitPointerLock();
@@ -1103,6 +1330,7 @@ export class Game {
   private die(kind: DeathKind): void {
     if (this.state !== 'play') return;
     this.deathKind = kind;
+    this.legDeaths += 1;
     this.state = 'dead';
     this.deathTimer = 0;
     this.input.enabled = false;
@@ -1111,9 +1339,16 @@ export class Game {
     this.hud.clearBanner();
   }
 
-  private statsHtml(extra: [string, string][] = []): string {
+  private statsHtml(extra: [string, string][] = [], compact = false): string {
     const w = this.world!;
-    const rows: [string, string][] = [
+    const ph = this.physio;
+    // With a rating to show, keep only what the rating doesn't already say.
+    const rows: [string, string][] = compact ? [
+      ['時刻', formatClock(this.hours)],
+      ...(ph.hasO2 ? [['残り酸素', `${Math.round((ph.bottle / BOTTLE_LITERS) * 100)}% +${ph.spares}本`] as [string, string]] : []),
+      ...(ph.frostbite > 5 ? [['凍傷', `${Math.round(ph.frostbite)}`] as [string, string]] : []),
+      ...extra,
+    ] : [
       ['最高到達点', `${Math.round(this.maxAltitude).toLocaleString('en-US')}m`],
       ['時刻', formatClock(this.hours)],
       ['行動時間', (() => { const h = Math.max(0, this.hours - w.def.startHours); return `${Math.floor(h)}時間${Math.floor((h % 1) * 60)}分`; })()],
@@ -1130,12 +1365,14 @@ export class Game {
     document.getElementById('result-kicker')!.textContent = kicker;
     document.getElementById('result-title')!.textContent = title;
     document.getElementById('result-desc')!.textContent = desc;
-    document.getElementById('result-stats')!.innerHTML = this.statsHtml(extra);
+    document.getElementById('result-stats')!.innerHTML = this.statsHtml(extra, cls === 'win' && extra.length > 2);
     document.getElementById('result-primary')!.textContent = primary;
     const panel = document.querySelector('.result-panel')!;
     panel.classList.remove('dead', 'win');
     panel.classList.add(cls);
     document.getElementById('result-rest')!.classList.add('hidden');
+    document.getElementById('result-camp')!.classList.add('hidden');
+    document.getElementById('result-extra')!.classList.add('hidden');
     this.showScreen('result');
   }
 
@@ -1143,7 +1380,19 @@ export class Game {
     const k = this.deathKind ?? 'fall';
     const t = DEATH_TEXT[k];
     const alt = this.altitudeAt(this.player!.pos.y);
-    this.showResult(`死亡 · ${Math.round(alt).toLocaleString('en-US')}m · ${formatClock(this.hours)}`, t.title, t.desc, 'dead', `${this.world!.def.campName}から再挑戦`);
+    const cp = this.checkpoint;
+    const camp = this.world!.def.campName;
+    this.showResult(`死亡 · ${Math.round(alt).toLocaleString('en-US')}m · ${formatClock(this.hours)}`, t.title, t.desc, 'dead', cp ? `${cp.name}から再開` : `${camp}から再挑戦`);
+    if (cp) {
+      const b = document.getElementById('result-camp')!;
+      b.textContent = `${camp}から出直す`;
+      b.classList.remove('hidden');
+    }
+    if (this.legDeaths >= 2) {
+      const ex = document.getElementById('result-extra')!;
+      ex.innerHTML = `<div class="assist">BC「焦るな。${camp}から出直すなら、天気の窓を待ってやる」<br><small>出直すと、嵐の来ない日になる${this.world!.def.o2 === 'summit' ? '（予備ボンベ+1）' : ''}</small></div>`;
+      ex.classList.remove('hidden');
+    }
   }
 
   private showSummit(): void {
@@ -1155,7 +1404,9 @@ export class Game {
       late ? '頂に立った。だが折り返し時刻を過ぎている。日没までにC4へ戻れるか。' : '世界の屋根に立った。足元には雲海と、遠くヒマラヤの峰々。だが登頂は半分にすぎない。',
       'win',
       '下山を開始する',
+      this.legResult ? this.resultRows(this.legResult, '登頂までの時間') : [],
     );
+    if (this.legResult) this.showGrade(this.legResult, Game.praiseFor(this.legResult.grade));
   }
 
   private showCamp(rested: boolean): void {
@@ -1171,9 +1422,37 @@ export class Game {
       desc,
       'win',
       next ? (next.goal === 'summit' ? `今夜23時に出発 — ${next.stageName}` : `翌朝出発 — ${next.stageName}`) : '出発',
-      [['高度順応', `${Math.round(this.acclim).toLocaleString('en-US')}m`], ['遠征日数', `${this.day}日目`]],
+      [
+        ...(!rested && this.legResult ? this.resultRows(this.legResult, '区間タイム') : []),
+        ['高度順応', `${Math.round(this.acclim).toLocaleString('en-US')}m`], ['遠征日数', `${this.day}日目`],
+      ],
     );
     document.getElementById('result-rest')!.classList.remove('hidden');
+    const ex = document.getElementById('result-extra')!;
+    let html = '';
+    if (!rested && this.legResult) {
+      const r = this.legResult;
+      html += `<div class="grade ${r.grade.tone}">${r.grade.name}${r.isNew ? '<span class="new">自己ベスト</span>' : ''}</div><div>${Game.praiseFor(r.grade)}</div>`;
+    }
+    if (next?.goal === 'summit') {
+      // The risk/return choice belongs right before the push, where its weight is felt.
+      const opts: [number, string, string][] = [
+        [0, '予備 0本 — 軽い', '歩く速さ +6%。使っている1本が尽きたら無酸素'],
+        [1, '予備 1本 — 標準', '速さ ±0。往復ぎりぎりの量'],
+        [2, '予備 2本 — 重い', '歩く速さ −6%。酸素に余裕、流量を上げられる'],
+      ];
+      html += `<div style="margin-top:8px">山頂アタックに持つ酸素ボンベ</div><div class="load">${opts.map(([v, a, b]) =>
+        `<label class="${v === this.spares ? 'sel' : ''}"><input type="radio" name="load" value="${v}" ${v === this.spares ? 'checked' : ''}/><span>${a}<small>${b}</small></span></label>`).join('')}</div>`;
+    }
+    if (html) {
+      ex.innerHTML = html;
+      ex.classList.remove('hidden');
+      ex.querySelectorAll<HTMLInputElement>('input[name="load"]').forEach((inp) => inp.addEventListener('change', () => {
+        this.spares = Number(inp.value);
+        ex.querySelectorAll('.load label').forEach((l) => l.classList.toggle('sel', (l.querySelector('input') as HTMLInputElement).checked));
+        this.saveAtCamp();
+      }));
+    }
   }
 
   private showWin(): void {
@@ -1181,7 +1460,9 @@ export class Game {
     const w = this.world!;
     this.showResult('生還', `${w.def.name} 登頂・生還`, 'あなたは頂に立ち、そして生きて帰ってきた。デスゾーンから戻れることこそ、本当の登頂だ。', 'win', 'もう一度登る', [
       ['登頂時刻', formatClock(this.summitHours)],
+      ...(this.legResult ? this.resultRows(this.legResult, '往復の時間') : []),
     ]);
+    if (this.legResult) this.showGrade(this.legResult, Game.praiseFor(this.legResult.grade));
   }
 
   // ---------------------------------------------------------------- camera / env
@@ -1379,7 +1660,20 @@ export class Game {
       restAxe: p.mode === 'slide',
       interact,
       prompt,
+      ...this.paceInfo(),
     });
+  }
+
+  /** Live pace against the guide standard: the target hangs right in front of you. */
+  private paceInfo(): { paceText: string; paceTone: '' | 'ahead' | 'behind' } {
+    const w = this.world!, p = this.player!;
+    const { std, elapsed } = this.legStd();
+    const frac = clamp(p.routeS / w.route.length, 0, 1);
+    if (!std || (!p.descending && frac < 0.04)) return { paceText: '', paceTone: '' };
+    const expected = p.descending && std.round ? std.up + (std.round - std.up) * (1 - frac) : std.up * frac;
+    const d = Math.round((elapsed - expected) * 60);
+    if (Math.abs(d) < 3) return { paceText: '基準どおり', paceTone: '' };
+    return d < 0 ? { paceText: `基準 −${-d}分`, paceTone: 'ahead' } : { paceText: `基準 +${d}分`, paceTone: 'behind' };
   }
 
   private render(): void {

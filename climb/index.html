@@ -23,6 +23,7 @@
             <span id="clock-value">03:00</span>
             <span class="sep"></span>
             <span id="turn-value">折返 14:00</span>
+            <span id="pace-value"></span>
           </div>
           <div id="next-mark"><span class="arrow">▲</span> <span id="next-name">バルコニー</span> <b id="next-dist">320m</b></div>
           <div id="progress"><div id="progress-fill"></div><div id="progress-marks"></div></div>
@@ -99,13 +100,6 @@
           </header>
           <div id="mountain-cards"></div>
           <div class="options">
-            <label>山頂アタックの予備ボンベ
-              <select id="opt-bottles">
-                <option value="0">0本</option>
-                <option value="1" selected>1本</option>
-                <option value="2">2本</option>
-              </select>
-            </label>
             <label class="check"><input type="checkbox" id="opt-sound" checked /> サウンド</label>
           </div>
           <button id="continue-btn" class="primary hidden" type="button">続きから</button>
@@ -137,7 +131,9 @@
           <h2 id="result-title"></h2>
           <p id="result-desc"></p>
           <dl id="result-stats"></dl>
+          <div id="result-extra" class="hidden"></div>
           <button id="result-primary" class="primary" type="button">再挑戦</button>
+          <button id="result-camp" class="hidden" type="button"></button>
           <button id="result-rest" class="hidden" type="button">休養して高度順応（+1日）</button>
           <button id="result-secondary" type="button">山を選び直す</button>
         </div>

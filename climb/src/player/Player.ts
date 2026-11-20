@@ -19,6 +19,8 @@ export interface PlayerContext {
   drift: number;
   /** 1 while something is coming down on you: a scrambling burst of speed. */
   adrenaline?: number;
+  /** Speed factor from what is carried (spare oxygen bottles are heavy). */
+  load?: number;
 }
 
 export type PlayerEvent =
@@ -32,6 +34,8 @@ export type PlayerEvent =
   | { type: 'transferred' }
   | { type: 'anchorBlock' }
   | { type: 'unclipRefused' }
+  | { type: 'noRope' }
+  | { type: 'rappel' }
   | { type: 'tooSteep' }
   | { type: 'gustKnock' }
   | { type: 'crevasseDeath' }
@@ -79,6 +83,8 @@ export class Player {
   private readonly tmp = new THREE.Vector3();
   private readonly nrm = new THREE.Vector3();
   descending = false;
+  /** Set once the first rappel of a descent has been announced. */
+  rappelling = false;
   onLadder = false;
   ladders: Ladder[] = [];
 
@@ -275,7 +281,12 @@ export class Player {
       speed *= 1 - ctx.frostbite * 0.002;
       if (input.moveY < -0.2) speed *= 0.6; // stepping backwards
       speed *= 1 + 0.6 * (ctx.adrenaline ?? 0);
-
+      speed *= ctx.load ?? 1;
+      // Going down a fixed line: rappel/arm-wrap instead of down-climbing step by step.
+      if (this.clip && this.descending && down > 0.45) {
+        speed *= 1.7;
+        if (!this.rappelling) { this.rappelling = true; this.events.push({ type: 'rappel' }); }
+      }
       const climbAngle = THREE.MathUtils.radToDeg(Math.atan(up));
       const ascending = !!this.clip && climbAngle > 30;
       if (ascending) speed *= 0.85; // jumaring
@@ -444,6 +455,8 @@ export class Player {
       this.pendingClip = r;
       const d = this.distToSegment(r);
       this.route.ropePoint(r, Math.min(1, Math.max(0, d.t)), this.actionTarget);
+    } else {
+      this.events.push({ type: 'noRope' });
     }
   }
 

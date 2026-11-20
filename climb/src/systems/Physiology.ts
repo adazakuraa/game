@@ -169,6 +169,18 @@ export class Weather {
   willStorm = false;
   stormAt = 12;
 
+  /** Back to an earlier moment of the same day (checkpoint retry). */
+  rewind(hours: number, storm: number): void {
+    this.stormChecked = hours > this.stormAt;
+    this.stormTarget = this.stormChecked && this.willStorm ? 0.85 : 0;
+    if (hours > 14.5) this.stormTarget = Math.max(this.stormTarget, 0.9);
+    this.state.storm = storm;
+    this.gustT = -1;
+    this.state.gust = 0;
+    this.state.gustWarning = -1;
+    this.nextGust = 15 + this.rng() * 10;
+  }
+
   forceStorm(v: number): void {
     this.stormTarget = v;
     this.state.storm = v;
