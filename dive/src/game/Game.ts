@@ -334,7 +334,7 @@ export class Game {
         const c = document.createElement('button');
         c.type = 'button';
         c.className = 'dcard' + (f ? '' : ' unk');
-        const stars = '★'.repeat(s.rarity);
+        const stars = s.rarity >= 4 ? '伝説' : '★'.repeat(s.rarity);
         c.innerHTML = `<div class="ph" style="${f ? `background-image:url(${f.photo})` : ''}">${f ? '' : '?'}</div><div class="nm"><span class="stars">${stars}</span>${f ? s.name : '？？？'}</div>`;
         c.addEventListener('click', () => this.showDetail(s.id));
         g.appendChild(c);
@@ -349,7 +349,7 @@ export class Game {
     const img = $<HTMLImageElement>('dd-photo');
     img.src = f ? f.photo : 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
     img.classList.toggle('none', !f);
-    $('dd-zone').textContent = `${ZONE_NAMES[s.zone]}・水深 ${s.depth[0]}–${s.depth[1]}m・${'★'.repeat(s.rarity)}`;
+    $('dd-zone').textContent = `${ZONE_NAMES[s.zone]}・水深 ${s.depth[0]}–${s.depth[1]}m・${s.rarity >= 4 ? '伝説級（古生物）' : '★'.repeat(s.rarity)}`;
     $('dd-name').textContent = f ? s.name : '？？？';
     $('dd-sci').textContent = f ? s.sci : '';
     $('dd-meta').textContent = f ? `大きさ 約${s.size >= 1 ? s.size.toFixed(1) + 'm' : Math.round(s.size * 100) + 'cm'}　撮影水深 ${f.depth.toFixed(1)}m${this.pending.has(id) && !this.save.found[id] ? '　（未保存：浮上で登録）' : ''}` : '';
@@ -813,7 +813,7 @@ export class Game {
     void el.offsetWidth;
     el.style.animation = '';
     $<HTMLImageElement>('disc-photo').src = photo;
-    $('disc-tag').textContent = isNew ? (s.rarity >= 3 ? '★ 激レア発見！' : '新種発見！') : record ? '自己ベスト更新！' : '撮影成功（登録済み）';
+    $('disc-tag').textContent = isNew ? (s.rarity >= 4 ? '◆ 伝説の生き物を発見！！' : s.rarity >= 3 ? '★ 激レア発見！' : '新種発見！') : record ? '自己ベスト更新！' : '撮影成功（登録済み）';
     const gEl = $('disc-grade');
     if (ev) {
       gEl.className = 'disc-grade g' + ev.grade.g;

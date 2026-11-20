@@ -1071,3 +1071,120 @@ export function buildPhotoFish(prof: number[][], aspect: number, widthRatio = 0.
   g.computeBoundingSphere();
   return g;
 }
+
+// --------------------------------------------------------------------------- prehistoric (legendary)
+
+/** Ammonite: coiled, ribbed shell (planispiral, in the y-z plane) with a tuft of arms at the aperture (+z). */
+export function buildAmmonite(): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const turns = 3.2, N = 140, R = 10;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const th = t * turns * Math.PI * 2;
+    const r = 0.035 * Math.exp(t * 2.1); // growing radius of the coil
+    const tube = r * 0.55 * (1 + 0.06 * Math.max(0, Math.sin(th * 7))); // ribs
+    const cy = Math.sin(th) * r, cz = -Math.cos(th) * r;
+    for (let j = 0; j <= R; j++) {
+      const a = (j / R) * Math.PI * 2;
+      const nx = Math.cos(a), nr = Math.sin(a);
+      pos.push(nx * tube * 0.75, cy + Math.sin(th) * nr * tube, cz - Math.cos(th) * nr * tube);
+    }
+  }
+  for (let i = 0; i < N; i++)
+    for (let j = 0; j < R; j++) {
+      const a = i * (R + 1) + j, b = a + R + 1;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  const shell = new THREE.BufferGeometry();
+  shell.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  shell.setIndex(idx);
+  shell.computeVertexNormals();
+  const s = 0.5 / 0.3;
+  shell.scale(s, s, s);
+  parts.push(shell);
+  // arms from the aperture (the last ring sits at the bottom-front of the coil)
+  for (let k = 0; k < 10; k++) {
+    const a = (k / 10) * Math.PI * 2;
+    const arm = new THREE.CylinderGeometry(0.004, 0.012, 0.22, 4);
+    arm.rotateX(Math.PI / 2 + 0.5);
+    arm.translate(Math.cos(a) * 0.04, -0.38 + Math.sin(a) * 0.04, 0.16);
+    setAttr(arm, 'aBend', () => 1);
+    parts.push(arm);
+  }
+  return finalize(parts, (x, y, z) => [Math.min(0.99, Math.max(0.01, z + 0.5)), Math.min(0.99, Math.max(0.01, y + 0.5))]);
+}
+
+/** Plesiosaur (Futabasaurus-like): barrel body, long neck and small head forward (+z), four paddles that flap. */
+export function buildPlesiosaur(): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const body = new THREE.SphereGeometry(0.5, 20, 14);
+  body.scale(0.32, 0.22, 0.42);
+  body.translate(0, 0, -0.12);
+  parts.push(body);
+  // neck: tapering tube along a gentle upward curve
+  const neckPts: THREE.Vector3[] = [];
+  for (let i = 0; i <= 10; i++) { const t = i / 10; neckPts.push(new THREE.Vector3(0, 0.02 + t * t * 0.06, 0.06 + t * 0.42)); }
+  const neck = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(neckPts), 20, 0.035, 8);
+  const np = neck.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < np.count; i++) {
+    const t = Math.min(1, Math.max(0, (np.getZ(i) - 0.06) / 0.42));
+    const sc = 1.9 - t * 1.1;
+    np.setX(i, np.getX(i) * sc);
+    np.setY(i, (np.getY(i) - (0.02 + t * t * 0.06)) * sc + 0.02 + t * t * 0.06);
+  }
+  neck.computeVertexNormals();
+  setAttr(neck, 'aBend', (_x, _y, z) => Math.max(0, z - 0.1) * 0.6);
+  parts.push(neck);
+  const head = new THREE.SphereGeometry(0.04, 10, 8);
+  head.scale(0.8, 0.7, 1.6);
+  head.translate(0, 0.085, 0.53);
+  setAttr(head, 'aBend', () => 0.26);
+  parts.push(head);
+  const tail = new THREE.ConeGeometry(0.06, 0.26, 10);
+  tail.rotateX(-Math.PI / 2);
+  tail.translate(0, 0, -0.44);
+  setAttr(tail, 'aBend', () => 0.6);
+  parts.push(tail);
+  for (const side of [-1, 1])
+    for (const [zc, len] of [[0.04, 0.3], [-0.24, 0.26]] as const) {
+      const f = flatPoly([[0, 0.05], [len * 0.5, 0.03], [len, -0.04], [len * 0.92, -0.08], [len * 0.4, -0.05], [0, -0.05]], (a, b) => [side * (0.12 + a), -0.04 - a * 0.12, zc + b]);
+      setAttr(f, 'aFlap', (x) => Math.min(1, (Math.abs(x) - 0.1) * 3) * (zc > 0 ? 1 : 0.8));
+      parts.push(f);
+    }
+  return finalize(parts, (x, y, z) => [Math.min(0.99, Math.max(0.01, z + 0.5)), Math.min(0.99, Math.max(0.01, y * 2 + 0.5))]);
+}
+
+/** Anomalocaris: flat segmented body with rows of side lobes (flap), fan tail, and two spiny frontal appendages (+z). */
+export function buildAnomalocaris(): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const body = new THREE.SphereGeometry(0.5, 18, 10);
+  body.scale(0.2, 0.08, 0.8);
+  parts.push(body);
+  const head = new THREE.SphereGeometry(0.1, 12, 8);
+  head.scale(1.2, 0.7, 1);
+  head.translate(0, 0.01, 0.38);
+  parts.push(head);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.SphereGeometry(0.03, 8, 6);
+    eye.translate(side * 0.11, 0.05, 0.36);
+    eye.userData.eye = true;
+    parts.push(eye);
+    for (let k = 0; k < 11; k++) {
+      const z = 0.3 - k * 0.062;
+      const w = 0.16 * (1 - Math.abs(k - 3) / 13);
+      const lobe = flatPoly([[0, 0.028], [w, 0.03], [w * 1.08, -0.02], [0, -0.03]], (a, b) => [side * (0.08 + a), 0, z + b]);
+      setAttr(lobe, 'aFlap', (x) => Math.min(1, (Math.abs(x) - 0.07) * 6));
+      parts.push(lobe);
+    }
+    // frontal appendage: curled, segmented, with spines
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 8; i++) { const t = i / 8; pts.push(new THREE.Vector3(side * (0.05 + 0.02 * t), -0.02 - Math.sin(t * 2.6) * 0.1, 0.45 + Math.sin(t * 1.8) * 0.16)); }
+    parts.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 12, 0.013, 6));
+  }
+  const fan = flatPoly([[0, 0.02], [0.14, -0.1], [0.06, -0.14], [0, -0.06], [-0.06, -0.14], [-0.14, -0.1]], (a, b) => [a, 0, -0.4 + b]);
+  setAttr(fan, 'aBend', () => 1);
+  parts.push(fan);
+  return finalize(parts, (x, _y, z) => [Math.min(0.99, Math.max(0.01, x + 0.5)), Math.min(0.99, Math.max(0.01, z * 0.9 + 0.5))]);
+}

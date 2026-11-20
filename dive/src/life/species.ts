@@ -17,7 +17,8 @@ export type SpeciesDef = {
   size: number;
   desc: string;
   hint: string;
-  rarity: 1 | 2 | 3;
+  /** 1 common .. 3 rare, 4 = legendary (prehistoric survivors: seldom present on a dive) */
+  rarity: 1 | 2 | 3 | 4;
   kind: Kind;
   fish?: FishShape;
   ray?: RayShape;
@@ -443,7 +444,8 @@ import { MORE_FISH } from './species4';
 import { FISH_300 } from './species5';
 import { INVERTS_2 } from './species6';
 import { COLD_SPECIES } from './species7';
-SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES);
+import { WILD_SPECIES } from './species8';
+SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES, ...WILD_SPECIES);
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
 export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];

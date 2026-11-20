@@ -167,7 +167,7 @@ export class Missions {
     if (kind === 'photo') {
       const sp = c.nearbySpecies();
       if (!sp) return;
-      const base = [0, 300, 900, 2400][sp.rarity];
+      const base = [0, 300, 900, 2400, 8000][sp.rarity];
       this.active = { kind, t: MISSION.photo.time, time: MISSION.photo.time, need: 1, got: 0, reward: base * MISSION.photo.rewardMult, title: `雑誌の依頼：${sp.name}をB以上で撮影`, target: sp };
       c.toast(`【依頼】海洋雑誌から「${sp.name}の写真がほしい！」 ${MISSION.photo.time}秒以内にB評価以上で撮ろう`, 'warn', 4.5);
     } else if (kind === 'urchin') {

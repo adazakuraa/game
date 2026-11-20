@@ -94,7 +94,7 @@ const HAB: Record<Habitat, { behavior: SpeciesDef['behavior']; region: Region; s
 };
 
 export type FishSpec = {
-  id: string; name: string; sci: string; zone: ZoneId; d: [number, number]; size: number; r?: 1 | 2 | 3;
+  id: string; name: string; sci: string; zone: ZoneId; d: [number, number]; size: number; r?: 1 | 2 | 3 | 4;
   body: Sh; look: Look; hab: Habitat; n: number; g?: number; desc: string;
   region?: Region; speed?: number; flee?: number; spread?: number; swim?: [number, number, number]; metal?: number; photoRange?: number; glow?: number; behavior?: SpeciesDef['behavior']; pitch?: number;
   aggro?: SpeciesDef['aggro'];

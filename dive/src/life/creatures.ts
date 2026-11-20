@@ -676,7 +676,7 @@ export class Creatures {
 
   /** Chance that a group shows up on a given dive, by rarity. */
   private presence(rarity: number): number {
-    return rarity >= 3 ? 0.3 : rarity === 2 ? 0.6 : 0.9;
+    return rarity >= 4 ? 0.07 : rarity === 3 ? 0.3 : rarity === 2 ? 0.6 : 0.9;
   }
 
   /**
@@ -777,7 +777,7 @@ export class Creatures {
       if (near && !rt.mesh && rt.def.kind !== 'none') {
         // lazy build, a few species per frame so a dive never stalls on texture painting
         // (the budget counts build time only, and at least one species is built every frame)
-        if (built > 0 && buildMs > this.buildBudgetMs) near = false;
+        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id) near = false;
         else {
           const t0 = performance.now();
           this.buildMesh(rt);

@@ -6,8 +6,8 @@ import type { PhotoTarget } from '../life/creatures';
  * All tuning values live here.
  */
 export const PHOTO = {
-  /** 【写真の基本報酬】by rarity ★1..★3 (yen) */
-  base: [0, 300, 900, 2400],
+  /** 【写真の基本報酬】by rarity ★1..★3, ★4 = legendary (yen) */
+  base: [0, 300, 900, 2400, 8000],
   /** 【評価の重み】size in frame / side view / centring / clarity */
   weight: { size: 0.36, side: 0.26, centre: 0.16, clear: 0.22 },
   /** 【画面占有の目標】fraction of frame height at which size scores full marks */
