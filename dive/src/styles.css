@@ -278,3 +278,7 @@ button.gear-item.can { border-color: var(--ok); color: var(--ink); animation: bl
 .t-goal { margin-top: 8px; font-size: 13px; font-weight: 700; color: var(--ink); }
 .t-goal b { font-family: var(--num); color: var(--warn); }
 .t-goal .ok { color: var(--ok); }
+.gear { grid-template-columns: repeat(4, 1fr); }
+button.gear-item.locked { opacity: 0.5; }
+button.gear-item.locked .req { color: var(--ink-dim); }
+@media (width <= 420px) { .gear { grid-template-columns: repeat(3, 1fr); } }

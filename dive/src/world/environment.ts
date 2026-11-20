@@ -12,6 +12,7 @@ const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
   dropoff: [0.01, 0.12, 0.32, 56],
   offshore: [0.006, 0.09, 0.3, 64],
   deep: [0.004, 0.06, 0.2, 60],
+  cold: [0.02, 0.15, 0.17, 26],
 };
 
 /** Water volume visuals: fog, lighting by depth, surface with Snell's window, god rays, marine snow, bubbles. */

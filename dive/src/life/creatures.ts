@@ -230,6 +230,8 @@ export type PhotoTarget = {
   side: number;
   /** the individual is circling / charging the diver right now */
   danger: boolean;
+  /** sharp-photo distance used for this subject (lens dependent) */
+  clear: number;
 };
 
 /**
@@ -246,13 +248,16 @@ function fleeDir(away: THREE.Vector3, vel: THREE.Vector3, radialW: number, out: 
   return out.normalize();
 }
 
-export type CreatureEvent = { type: 'warn' | 'charge' | 'hit'; def: SpeciesDef; p: THREE.Vector3 };
+export type CreatureEvent = { type: 'warn' | 'charge' | 'hit' | 'repel'; def: SpeciesDef; p: THREE.Vector3 };
 
 export class Creatures {
   /** encounters for the game layer (warnings, charges, bites); drained every frame */
   events: CreatureEvent[] = [];
   /** time budget per frame for lazily building species meshes (raised while a loading screen is up) */
   buildBudgetMs = 6;
+  /** gear effects set by the game: rebreather (no bubbles) shrinks flight distance; shark shield turns charges away */
+  stealth = 1;
+  shield = false;
   /** test-only: pin agent 0 of a species */
   pin: { id: string; p: THREE.Vector3; yaw: number } | null = null;
   readonly group = new THREE.Group();
@@ -286,6 +291,7 @@ export class Creatures {
     else if (reg === 'sandSpots') p = fromList(homes.sandSpots);
     else if (reg === 'grassSpots') p = fromList(homes.grassSpots);
     else if (reg === 'bommieSpots') p = fromList(homes.bommieSpots);
+    else if (reg === 'coldSpots') p = fromList(homes.coldSpots);
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;
@@ -457,7 +463,7 @@ export class Creatures {
         a.p.y = heightAt(a.p.x, a.p.z) + (def.kind === 'lobster' ? 0.05 : 0.35 + r() * 0.4);
         a.fixed = true;
       } else if (def.behavior === 'static') {
-        const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots';
+        const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots';
         const spread = onTop ? 1.2 : 3;
         a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * spread, 0, (r() - 0.5) * spread));
         a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
@@ -650,7 +656,7 @@ export class Creatures {
       if (a.g !== gi) continue;
       if (def.behavior === 'static') {
         a.p.copy(p);
-        const spread = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' ? 1.2 : 3;
+        const spread = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots' ? 1.2 : 3;
         a.p.x += (r() - 0.5) * spread; a.p.z += (r() - 0.5) * spread;
         a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
         a.gx = undefined;
@@ -691,6 +697,22 @@ export class Creatures {
       // always keep at least one group of common species
       if (rt.def.rarity === 1 && rt.groups.every((g) => g.absent)) rt.groups[0].absent = false;
     }
+  }
+
+  /** Fish finder: nearest individual of each not-yet-photographed species within `radius`. */
+  sonar(p: THREE.Vector3, radius: number, known: (id: string) => boolean): { x: number; z: number; rare: boolean }[] {
+    const out: { x: number; z: number; rare: boolean }[] = [];
+    for (const rt of this.list) {
+      if (!rt.active || known(rt.def.id) || rt.def.kind === 'none') continue;
+      let best: Agent | null = null, bd = radius;
+      for (const a of rt.agents) {
+        if (rt.groups[a.g].absent) continue;
+        const d = a.p.distanceTo(p);
+        if (d < bd) { bd = d; best = a; }
+      }
+      if (best) out.push({ x: best.p.x, z: best.p.z, rare: rt.def.rarity >= 2 });
+    }
+    return out;
   }
 
   /** Put one group of a species at a spot (first-dive showpiece). */
@@ -761,7 +783,7 @@ export class Creatures {
       const def = rt.def;
       // Flight distance shrinks for a slow diver (fish tolerate a gentle approach), and a slow diver
       // mostly makes them swim across the view (side-on) instead of turning tail.
-      const fleeR = def.flee * (0.4 + 0.6 * pFast);
+      const fleeR = def.flee * (0.4 + 0.6 * pFast) * this.stealth;
       const radialW = 0.25 + 0.75 * pFast;
 
       // ---- group centers
@@ -888,7 +910,8 @@ export class Creatures {
           const mode = a.mode ?? 0;
           const homeD = Math.hypot(player.x - g.home.x, player.z - g.home.z);
           if (mode === 0) {
-            const trig = ag.kind === 'territory' ? dPlayer < ag.range && homeD < ag.range * 1.8 : dPlayer < ag.range;
+            const rng = ag.range * (ag.kind === 'territory' ? this.stealth * 0.4 + 0.6 : 1);
+            const trig = ag.kind === 'territory' ? dPlayer < rng && homeD < rng * 1.8 : dPlayer < rng;
             if (trig && a.modeT <= 0) {
               a.mode = ag.kind === 'territory' ? 2 : 1;
               a.modeT = ag.kind === 'territory' ? 1.2 : 5 + r() * 6;
@@ -908,7 +931,11 @@ export class Creatures {
               if (a.modeT - dt <= 0) this.events.push({ type: 'charge', def, p: a.p.clone() });
             } else {
               tx = player.x; ty = player.y - 0.1; tz = player.z; charging = true;
-              if (dPlayer < def.size * 0.45 + 0.55) {
+              if (this.shield && dPlayer < def.size * 0.45 + 1.8) {
+                // electric shark shield: the charge veers off just short of the diver
+                this.events.push({ type: 'repel', def, p: a.p.clone() });
+                a.mode = 3; a.modeT = ag.kind === 'territory' ? 3 : 6;
+              } else if (dPlayer < def.size * 0.45 + 0.55) {
                 this.events.push({ type: 'hit', def, p: a.p.clone() });
                 a.mode = 3; a.modeT = ag.kind === 'territory' ? 3 : 6;
               } else if (a.modeT < -3.5 || (ag.kind === 'territory' && homeD > ag.range * 2.4)) { a.mode = 3; a.modeT = 3; }
@@ -994,7 +1021,7 @@ export class Creatures {
    * large enough in frame, close enough to be sharp through the water, not hidden by terrain,
    * and lit (in the dark deep: inside the dive light's beam or bioluminescent).
    */
-  findTarget(cam: THREE.PerspectiveCamera, o: { clear: number; dark: boolean; lightOn: boolean; cropX: number; cropY: number }): PhotoTarget | null {
+  findTarget(cam: THREE.PerspectiveCamera, o: { clear: number; dark: boolean; lightOn: boolean; cropX: number; cropY: number; beam?: number; macro?: boolean; wide?: boolean }): PhotoTarget | null {
     const fwd = _v.set(0, 0, -1).applyQuaternion(cam.quaternion);
     const cp = cam.position;
     const fovV = (cam.fov * Math.PI) / 180;
@@ -1015,14 +1042,16 @@ export class Creatures {
         if (Math.abs(ndc.x) > o.cropX || Math.abs(ndc.y) > o.cropY) continue;
         // how big is it in the frame?
         const span = a.s * (def.kind === 'jelly' || def.kind === 'inv' ? 1.0 : 0.8);
-        const frac = (2 * Math.atan(span / 2 / Math.max(dist, 0.05))) / fovV;
+        // macro lens magnifies small subjects; wide lens fits big animals from farther away
+        const frac = ((2 * Math.atan(span / 2 / Math.max(dist, 0.05))) / fovV) * (o.macro && def.size < 0.2 ? 1.7 : 1);
         if (frac < 0.025) continue;
+        const clear = o.clear * (o.wide && def.size >= 1 ? 1.35 : 1);
         let reason: PhotoTarget['reason'] = 'ok';
         if (frac < 0.06) reason = 'small';
-        if (dist > o.clear) reason = 'murky';
+        if (dist > clear) reason = 'murky';
         if (o.dark) {
           const glows = !!def.mat?.glow;
-          const inBeam = o.lightOn && _v2.angleTo(fwd) < 0.5 && dist < 14;
+          const inBeam = o.lightOn && _v2.angleTo(fwd) < 0.5 * (o.beam ?? 1) && dist < 14 * (o.beam ?? 1);
           if (!inBeam && !(glows && dist < 9)) reason = 'dark';
         }
         if (reason === 'ok' && this.occluded(cp, a.p)) reason = 'hidden';
@@ -1036,7 +1065,7 @@ export class Creatures {
             const c = Math.abs(f.dot(_v2) / Math.max(dist, 1e-3));
             side = Math.sqrt(Math.max(0, 1 - c * c));
           }
-          best = { rt, agent: a, dist, angle: _v2.angleTo(fwd), inRange: reason === 'ok', reason, frac, centred: Math.max(0, centred), side, danger: !!a.aggro && (a.mode === 1 || a.mode === 2) };
+          best = { rt, agent: a, dist, angle: _v2.angleTo(fwd), inRange: reason === 'ok', reason, frac, centred: Math.max(0, centred), side, danger: !!a.aggro && (a.mode === 1 || a.mode === 2), clear };
         }
       }
     }

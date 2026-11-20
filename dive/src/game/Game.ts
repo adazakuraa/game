@@ -63,6 +63,8 @@ export class Game {
   /** hit-stop: world freezes for a beat after a good shot */
   private freezeT = 0;
   private lastEncounter = -100;
+  private coldWarned = -100;
+  private cold = 0;
   private dprCap = 1.5;
   private frameAvg = 16;
   private paused = false;
@@ -107,7 +109,7 @@ export class Game {
     mark('creatures');
     this.scene.add(this.creatures.group);
     this.audio.onExhale = () => {
-      if (this.state === 'diving') this.env.exhale(this.camera, this.ads ? 0 : 1);
+      if (this.state === 'diving') this.env.exhale(this.camera, this.ads || this.has('rebreather') ? 0 : 1);
     };
 
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
@@ -144,7 +146,7 @@ export class Game {
         if (!sv.owned) {
           // saves from the species-count unlock era keep the gear they had
           const n = Object.keys(sv.found).length;
-          sv.owned = SHOP.filter((g) => n >= LEGACY_NEED[g.id]).map((g) => g.id);
+          sv.owned = SHOP.filter((g) => n >= (LEGACY_NEED[g.id] ?? 1e9)).map((g) => g.id);
           sv.money = 0;
         }
         return sv;
@@ -171,16 +173,26 @@ export class Game {
     return !!this.save.owned?.includes(id);
   }
 
+  /** Dex completion in percent. */
+  private get dexPct(): number {
+    return (this.foundCount / SPECIES.length) * 100;
+  }
+
+  /** Species still needed before an item comes into stock. */
+  private stockGap(g: (typeof SHOP)[number]): number {
+    return Math.max(0, Math.ceil((g.need / 100) * SPECIES.length) - this.foundCount);
+  }
+
   /** Next gear the player can aim for, and how far away it is (the reward hanging in front of them). */
-  private nextGoal(): { name: string; need: number } | null {
+  private nextGoal(): { name: string; need: number; species: number } | null {
     const money = this.save.money ?? 0;
     const g = SHOP.find((x) => !this.has(x.id));
-    return g ? { name: g.name, need: Math.max(0, g.price - money) } : null;
+    return g ? { name: g.name, need: Math.max(0, g.price - money), species: this.stockGap(g) } : null;
   }
 
   private buy(id: GearId): void {
     const g = SHOP.find((x) => x.id === id)!;
-    if (this.has(id) || (this.save.money ?? 0) < g.price) return;
+    if (this.has(id) || (this.save.money ?? 0) < g.price || this.stockGap(g) > 0) return;
     this.save.money = (this.save.money ?? 0) - g.price;
     (this.save.owned ??= []).push(id);
     this.writeSave();
@@ -232,7 +244,7 @@ export class Game {
   private renderTitle(): void {
     const n = this.foundCount;
     $('t-dex').textContent = `${n}/${SPECIES.length}`;
-    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8' };
+    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6' };
     const pts = $('points');
     pts.innerHTML = '';
     for (const dp of DIVE_POINTS) {
@@ -243,7 +255,7 @@ export class Game {
       b.className = 'pt';
       b.type = 'button';
       b.disabled = locked;
-      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : '12m'}</span>
+      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : '12m'}</span>
         <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `写真の稼ぎで「大気圧潜水服」を買うと行ける` : dp.sub}</div></span>
         <span class="pr"><b>${got}</b>/${zoneSpecies.length}<span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
       b.addEventListener('click', () => this.startDive(dp));
@@ -252,23 +264,30 @@ export class Game {
     const gear = $('gear');
     const money = this.save.money ?? 0;
     const goal = this.nextGoal();
-    $('t-goal').innerHTML = goal
-      ? goal.need > 0
-        ? `所持金 <b>${yen(money)}</b>　「${goal.name}」まであと <b>${yen(goal.need)}</b>　— いい写真ほど高く売れる`
-        : `<span class="ok">「${goal.name}」が買える！ 下のショップへ</span>`
-      : `所持金 <b>${yen(money)}</b>　装備コンプリート`;
+    const goalText = (gl: NonNullable<ReturnType<Game['nextGoal']>>) =>
+      gl.species > 0
+        ? `「${gl.name}」入荷まで図鑑あと <b>${gl.species}種</b>${gl.need > 0 ? `・<b>${yen(gl.need)}</b>` : ''}`
+        : gl.need > 0
+          ? `「${gl.name}」まであと <b>${yen(gl.need)}</b>`
+          : `<span class="ok">「${gl.name}」が買える！ 下のショップへ</span>`;
+    $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.dexPct.toFixed(1)}%</b><br>` + (goal ? goalText(goal) : '装備コンプリート');
     gear.innerHTML =
-      `<div class="shop-head"><span>写真の稼ぎ <b>${yen(money)}</b></span>${goal ? `<span class="goal">${goal.need > 0 ? `「${goal.name}」まであと <b>${yen(goal.need)}</b>` : `「${goal.name}」が買える！`}</span>` : '<span class="goal">装備コンプリート！</span>'}</div>` +
+      `<div class="shop-head"><span>ダイブショップ　所持金 <b>${yen(money)}</b></span><span class="goal">図鑑 ${this.dexPct.toFixed(1)}%</span></div>` +
       SHOP.map((u) => {
         const on = this.has(u.id);
-        const can = !on && money >= u.price;
-        return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24">${u.icon}</svg></div>${u.name}<span class="req">${on ? '入手済み' : can ? `購入 ${yen(u.price)}` : yen(u.price)}</span><span class="gdesc">${u.desc}</span></button>`;
+        const gap = this.stockGap(u);
+        const stocked = gap === 0;
+        const can = !on && stocked && money >= u.price;
+        const req = on ? '入手済み' : !stocked ? `図鑑${u.need}%で入荷<br>（あと${gap}種）` : can ? `購入 ${yen(u.price)}` : yen(u.price);
+        return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24">${u.icon}</svg></div>${stocked || on ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${stocked || on ? u.desc : '図鑑を埋めると入荷する'}</span></button>`;
       }).join('');
     gear.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((b) =>
       b.addEventListener('click', () => {
         const id = b.dataset.buy as GearId;
         if (this.has(id)) return;
-        if ((this.save.money ?? 0) < SHOP.find((x) => x.id === id)!.price) { this.toast('写真で稼いで買おう。いい写真ほど高く売れる'); return; }
+        const g = SHOP.find((x) => x.id === id)!;
+        if (this.stockGap(g) > 0) { this.toast(`図鑑をあと${this.stockGap(g)}種埋めると入荷する`); return; }
+        if ((this.save.money ?? 0) < g.price) { this.toast('写真で稼いで買おう。いい写真ほど高く売れる'); return; }
         this.buy(id);
       }),
     );
@@ -435,7 +454,11 @@ export class Game {
       window.setTimeout(() => (this.creatures.buildBudgetMs = 6), 2500);
       this.creatures.primeAround(this.camera.position);
       this.env.lightOn = this.ads;
-      this.env.lightPower = this.ads ? 1.6 : 1;
+      this.env.lightPower = this.ads || this.has('light') ? 1.6 : 1;
+      this.creatures.stealth = this.has('rebreather') ? 0.5 : 1;
+      this.creatures.shield = this.has('shield');
+      if (this.minimap) this.minimap.blips = [];
+      this.coldWarned = -100;
       $('btn-light').classList.toggle('on', this.env.lightOn);
       $('btn-boost').classList.toggle('hidden', !this.has('scooter'));
       $('title').classList.add('hidden');
@@ -481,6 +504,10 @@ export class Game {
         if (this.time - this.lastEncounter < 4) continue;
         this.lastEncounter = this.time;
         this.toast(shark ? `${name}がこちらの周りを回り始めた…` : `${name}の縄張りに入った！ 威嚇されている`, 'warn', 3);
+      } else if (e.type === 'repel') {
+        this.toast(`シャークシールドが作動！ ${name}が向きを変えた`, 'warn', 2.5);
+        this.shake = Math.max(this.shake, 0.3);
+        continue;
       } else if (e.type === 'charge') {
         this.audio.warn();
         this.toast(shark ? `${name}が突っ込んでくる！` : `${name}が突進してくる！ 離れて！`, 'danger', 2.5);
@@ -548,12 +575,14 @@ export class Game {
       ? shots.map(([id, f]) => `<div class="res-card"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
     if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
-    const affordable = SHOP.filter((g) => !this.has(g.id) && moneyBefore < g.price && this.save.money! >= g.price);
+    const stockedNow = SHOP.filter((g) => !this.has(g.id) && Math.ceil((g.need / 100) * SPECIES.length) > before && this.stockGap(g) === 0);
+    const affordable = SHOP.filter((g) => !this.has(g.id) && this.stockGap(g) === 0 && this.save.money! >= g.price && (moneyBefore < g.price || stockedNow.includes(g)));
     const goal = this.nextGoal();
-    $('res-unlock').innerHTML = affordable.length
-      ? affordable.map((g) => `「${g.name}」が買えるようになった！ ボートのショップへ`).join('<br>')
-      : goal ? `<span class="res-goal">所持金 ${yen(this.save.money!)}　「${goal.name}」まであと ${yen(goal.need)}</span>` : '';
-    if (affordable.length || earn > 0) this.audio.chime(affordable.length > 0);
+    $('res-unlock').innerHTML = [
+      ...stockedNow.map((g) => `ダイブショップに「${g.name}」が入荷した！（${g.desc}）`),
+      ...affordable.map((g) => `「${g.name}」が買えるようになった！ ボートのショップへ`),
+    ].join('<br>') || (goal ? `<span class="res-goal">所持金 ${yen(this.save.money!)}　次の目標「${goal.name}」${goal.species > 0 ? `入荷まで図鑑あと${goal.species}種` : `まであと${yen(goal.need)}`}</span>` : '');
+    if (affordable.length || stockedNow.length || earn > 0) this.audio.chime(affordable.length + stockedNow.length > 0);
   }
 
   private toTitle(): void {
@@ -663,7 +692,15 @@ export class Game {
     // air
     const d = Math.max(0, -p.y);
     const moving = this.vel.length() > 0.5 ? 1.15 : 1;
-    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8);
+    // cold cove without a drysuit: shivering triples air use
+    const inCold = !this.ads && zoneAt(p.x, p.z) === 'cold';
+    this.cold = inCold && !this.has('drysuit') ? 1 : 0;
+    if (this.cold && this.time - this.coldWarned > 15) {
+      this.coldWarned = this.time;
+      this.audio.warn();
+      this.toast('水温2℃！ 寒さで震えてエアの減りが3倍に（ドライスーツがあれば平気）', 'danger', 3.5);
+    }
+    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? 3 : 1);
     this.air = Math.max(0, this.air - rate * dt);
     this.audio.breathRate = this.ads ? 0.8 : 1 + (this.air < 50 ? 0.4 : 0) + (boosting ? 0.3 : 0);
     this.diveTime += dt;
@@ -686,7 +723,7 @@ export class Game {
     const cropX = Math.min(0.62, (0.8 * 4) / (3 * aspect));
     const cropY = Math.min(0.8, (cropX * aspect * 3) / 4);
     cam.updateMatrixWorld();
-    this.target = this.creatures.findTarget(cam, { clear, dark: d > 140, lightOn: this.env.lightOn, cropX, cropY });
+    this.target = this.creatures.findTarget(cam, { clear, dark: d > 140, lightOn: this.env.lightOn, cropX, cropY, beam: this.has('light') ? 1.6 : 1, macro: this.has('macro'), wide: this.has('wide') });
     if (inp.consume('shutter')) {
       this.captureReq = this.target;
       this.audio.shutter();
@@ -776,8 +813,8 @@ export class Game {
     const hdg = ((-this.yaw * 180) / Math.PI + 180 + 720) % 360; // 0 = offshore(+z)
     const dirs = ['沖', '沖東', '東', '岸東', '岸', '岸西', '西', '沖西'];
     $('heading').textContent = `${dirs[Math.round(hdg / 45) % 8]} ${Math.round(hdg)}°`;
-    $('depth-warn').classList.toggle('hidden', this.ads || (d < 40 && this.currentF < 0.1));
-    $('depth-warn').textContent = this.currentF >= 0.1 ? 'ダウンカレント' : d > 52 ? '限界深度に接近' : '窒素酔い注意';
+    $('depth-warn').classList.toggle('hidden', this.ads || (d < 40 && this.currentF < 0.1 && !this.cold));
+    $('depth-warn').textContent = this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い注意';
     const frac = this.air / this.airMax;
     $('air-value').textContent = String(Math.ceil(this.air));
     $('air-ring').style.strokeDashoffset = String(169.6 * (1 - frac));
@@ -788,6 +825,8 @@ export class Game {
     const secs = Math.max(0, (this.air - 0) / rate);
     $('air-time').textContent = `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
     $('narc').style.opacity = String(this.narc * 0.8);
+    if (this.minimap && this.has('sonar') && this.frame % 20 === 0)
+      this.minimap.blips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
     this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
 
@@ -907,6 +946,7 @@ export class Game {
       wall: { x: 0, y: -16, z: 330, yaw: Math.PI, pitch: -0.45 },
       wreck: { x: WRECK.x - 12, y: -32, z: WRECK.z - 22, yaw: Math.PI * 0.85, pitch: -0.3 },
       offshore: { x: 0, y: -12, z: 520, yaw: Math.PI, pitch: 0.05 },
+      cold: { x: -300, y: -7, z: 170, yaw: Math.PI * 0.9, pitch: -0.2 },
       surface: { x: 0, y: -4, z: 480, yaw: Math.PI, pitch: 0.75 },
       deep: { x: VENT.x - 14, y: heightAt(VENT.x - 14, VENT.z - 22) + 6, z: VENT.z - 22, yaw: Math.PI * 0.8, pitch: -0.15, light: true },
     };

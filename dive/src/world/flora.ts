@@ -515,13 +515,15 @@ export type Homes = {
   grassSpots: THREE.Vector3[];
   /** surfaces of coral colonies on the bommies */
   bommieSpots: THREE.Vector3[];
+  /** boulder tops in the cold cove */
+  coldSpots: THREE.Vector3[];
 };
 
 export class Flora {
   readonly group = new THREE.Group();
   private sets: ScatterSet[] = [];
   private mats: THREE.Material[] = [];
-  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [] };
+  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [] };
   boat: THREE.Group;
   carpetCount = 0;
   private landmarks: THREE.Object3D[] = [];
@@ -796,6 +798,7 @@ export class Flora {
       [170, [-200, 200, 325, 400], (x, z) => zoneAt(x, z) === 'dropoff' || z > reefEdgeZ(x) - 6, 0.6, 2.6],
       [25, [-200, 200, -60, 120], (x, z) => zoneAt(x, z) === 'lagoon', 0.4, 1.2],
       [200, [-200, 200, 720, 1080], (x, z) => zoneAt(x, z) === 'deep', 1.2, 5],
+      [300, [-425, -215, -40, 360], (x, z) => zoneAt(x, z) === 'cold', 0.8, 3.8],
     ];
     rockGs.forEach((g, gi) => {
       const items: ScatterItem[] = [];
@@ -805,7 +808,8 @@ export class Flora {
           const s = s0 + r() * r() * (s1 - s0);
           const tone = 0.42 + r() * 0.25;
           items.push({ m: placeMatrix(x, z, new THREE.Vector3(s * (0.8 + r() * 0.5), s * (0.6 + r() * 0.5), s), r, 0.7, s * 0.25), c: new THREE.Color(tone, tone * 0.97, tone * 0.92) });
-          if (reg[2] === 30) {
+          if (reg[0] === -425) this.homes.coldSpots.push(new THREE.Vector3(x, heightAt(x, z) + s * 0.6, z));
+          else if (reg[2] === 30) {
             if (s > 2.4) { this.homes.crevices.push(new THREE.Vector3(x, heightAt(x, z) + 0.3, z)); this.homes.creviceR.push(s); }
             this.homes.rockSpots.push(new THREE.Vector3(x, heightAt(x, z) + s * 0.6, z));
           }
@@ -817,7 +821,30 @@ export class Flora {
     // ---- kelp / sargassum in rocky zone
     const kelpG = bladeTuft(5, 5, 2.4, 0.16, 7, 0.8);
     const kelp = sample(700, [0, 210, 40, 345], (x, z) => rockyWeight(x, z) > 0.5 && heightAt(x, z) > -22);
+    // cold cove kelp forest (tall, dense)
+    kelp.push(...sample(2200, [-425, -215, -40, 330], (x, z) => zoneAt(x, z) === 'cold' && heightAt(x, z) > -22, 3));
     add(kelpG, kelpMat, kelp.map(([x, z]) => ({ m: placeMatrix(x, z, 0.7 + r() * 0.8, r, 0.3, 0.1), c: color(0.12 + r() * 0.04, 0.5, 0.45 + r() * 0.15) })), 50, 30);
+
+    // ---- cold cove: drift ice on the surface (seen from below as bright slabs with dark gaps)
+    const iceG = new THREE.IcosahedronGeometry(1, 1);
+    {
+      const pa = iceG.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < pa.count; i++) {
+        const y = pa.getY(i);
+        pa.setY(i, y > 0 ? y * 0.35 : y * 0.9 + 0.05 * Math.sin(pa.getX(i) * 7));
+      }
+      iceG.computeVertexNormals();
+    }
+    const iceMat = underwaterMaterial(new THREE.MeshStandardMaterial({ color: 0xe8f6ff, roughness: 0.35, emissive: 0x16303a }), { key: 'ice' });
+    const ice: ScatterItem[] = [];
+    for (const [x, z] of sample(140, [-425, -235, -30, 300], (x, z) => zoneAt(x, z) === 'cold', 12)) {
+      const w = 2.5 + r() * 7, d = 2.5 + r() * 7, th = 0.5 + r() * 1.1;
+      const m = new THREE.Matrix4().compose(new THREE.Vector3(x, -0.15 - th * 0.25, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * 6.28), new THREE.Vector3(w, th, d));
+      ice.push({ m, c: color(0.55, 0.15, 0.92 + r() * 0.06) });
+      // floes are solid to swim into, but not a "surface" for bottom animals
+      addCollider({ x, z, r: Math.min(w, d) * 0.75, y0: -0.15 - th * 1.2, y1: 0.5 });
+    }
+    add(iceG, iceMat, ice, 120, 60);
 
     // ---- sponges on wall/shelf/rocky
     const spG = spongeGeometry();

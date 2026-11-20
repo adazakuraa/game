@@ -4,7 +4,7 @@ import type { Paint } from './paint';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
 export type Kind = 'fish' | 'ray' | 'jelly' | 'squid' | 'octopus' | 'dumbo' | 'turtle' | 'lobster' | 'isopod' | 'nudi' | 'gardenEel' | 'inv' | 'none';
-export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots';
+export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots' | 'coldSpots';
 /** Micro-habitat: where in the 3D reef structure a species lives and how it reacts. */
 export type Habitat = 'coralHover' | 'coralPick' | 'reefRoam' | 'midwater' | 'wall' | 'under' | 'perch' | 'burrow' | 'sandForage' | 'seagrass' | 'surface' | 'cleaner' | 'rockyRoam';
 
@@ -442,7 +442,8 @@ import { INVERTS } from './species3';
 import { MORE_FISH } from './species4';
 import { FISH_300 } from './species5';
 import { INVERTS_2 } from './species6';
-SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2);
+import { COLD_SPECIES } from './species7';
+SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES);
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
 export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];

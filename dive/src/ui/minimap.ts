@@ -13,6 +13,7 @@ const ZONE_LABELS = [
   { x: 0, z: 410, label: 'ドロップオフ' },
   { x: 0, z: 600, label: '沖の大海原' },
   { x: 0, z: 840, label: '深海' },
+  { x: -320, z: 180, label: '流氷の入り江' },
 ];
 
 /**
@@ -118,6 +119,9 @@ export class Minimap {
     return Math.atan2(Math.sin(yaw), -Math.cos(yaw));
   }
 
+  /** fish-finder blips, set by the game when the sonar is owned */
+  blips: { x: number; z: number; rare: boolean }[] = [];
+
   update(x: number, z: number, yaw: number, boat: { x: number; z: number } | null, force = false): void {
     if (!force && this.frame++ % 4 !== 0) return;
     const c = this.mini;
@@ -144,6 +148,15 @@ export class Minimap {
       g.fillStyle = '#ff9a3c';
       g.beginPath();
       g.arc(sx, sy, size * 0.035, 0, Math.PI * 2);
+      g.fill();
+    }
+    // fish-finder blips (sonar gear): unphotographed species nearby
+    for (const b of this.blips) {
+      const [lx, ly] = this.px(b.x, b.z);
+      const sx = (lx - px) * sc + size / 2, sy = (ly - py) * sc + size / 2;
+      g.fillStyle = b.rare ? 'rgba(255,200,60,0.95)' : 'rgba(120,255,170,0.85)';
+      g.beginPath();
+      g.arc(sx, sy, size * (b.rare ? 0.03 : 0.022), 0, Math.PI * 2);
       g.fill();
     }
     for (const l of LANDMARKS) {

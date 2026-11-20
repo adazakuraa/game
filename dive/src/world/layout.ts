@@ -1,9 +1,9 @@
 import { clamp, fbm2, lerp, ridged2, simplex2, smoothstep } from '../utils/noise';
 
 // World axes: y up (surface y=0), z increases offshore, x along the shore.
-export const WORLD = { minX: -210, maxX: 210, minZ: -70, maxZ: 1080 };
+export const WORLD = { minX: -430, maxX: 210, minZ: -70, maxZ: 1080 };
 
-export type ZoneId = 'lagoon' | 'reef' | 'rocky' | 'dropoff' | 'offshore' | 'deep';
+export type ZoneId = 'lagoon' | 'reef' | 'rocky' | 'dropoff' | 'offshore' | 'deep' | 'cold';
 
 export const ZONE_NAMES: Record<ZoneId, string> = {
   lagoon: '浅瀬ラグーン',
@@ -12,6 +12,7 @@ export const ZONE_NAMES: Record<ZoneId, string> = {
   dropoff: 'ドロップオフ',
   offshore: '沖の大海原',
   deep: '深海',
+  cold: '流氷の入り江',
 };
 
 export const VENT = { x: 28, z: 965 };
@@ -26,6 +27,14 @@ export function rockyWeight(x: number, z: number): number {
 
 export function reefEdgeZ(x: number): number {
   return 338 + 12 * simplex2(x * 0.018, 5.5) + 5 * simplex2(x * 0.07, 1.2);
+}
+
+/**
+ * Cold cove weight: a separate northern bay west of the reef (x < -220), reached by its own dive point.
+ * Water about 2 C: a drysuit is needed or the air runs out fast.
+ */
+export function coldWeight(x: number, z: number): number {
+  return (1 - smoothstep(-238, -212, x)) * (1 - smoothstep(330, 390, z));
 }
 
 /** Bottom height (negative = below surface). */
@@ -97,6 +106,16 @@ export function heightAt(x: number, z: number): number {
   // wreck scour pit
   const wd = Math.hypot(x - WRECK.x, z - WRECK.z);
   if (wd < 30) h -= (1 - wd / 30) ** 2 * 1.5;
+  const cw = coldWeight(x, z);
+  if (cw > 0) {
+    // cold cove: boulder field sloping from a cobble shore (west) and the bay mouth (north) to ~26 m
+    const shore = smoothstep(-425, -330, x);
+    const d0 = lerp(2.5, 24, smoothstep(-10, 320, z)) * (0.35 + 0.65 * shore) + 1.5;
+    const rr = ridged2(x * 0.045 + 7, z * 0.045, 4);
+    const big = fbm2(x * 0.012 + 2, z * 0.012, 3);
+    const hc = -d0 + rr * 6 + big * 4 - 2 + 0.8 * simplex2(x * 0.28, z * 0.28);
+    h = lerp(h, hc, cw);
+  }
   return Math.min(h, -0.9);
 }
 
@@ -109,6 +128,7 @@ export function bommieAt(x: number, z: number): number {
 }
 
 export function zoneAt(x: number, z: number): ZoneId {
+  if (coldWeight(x, z) > 0.5) return 'cold';
   const edge = reefEdgeZ(x);
   if (z > 720) return 'deep';
   if (z > 480) return 'offshore';
@@ -148,7 +168,7 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     sand *= 1 - turf;
     reefHard = turf;
   }
-  const rw = rockyWeight(x, z);
+  const rw = Math.max(rockyWeight(x, z), coldWeight(x, z) * 0.9);
   const rockT = clamp(Math.max(rw * (0.35 + 0.6 * smoothstep(-0.25, 0.25, fbm2(x * 0.04 + 3, z * 0.04, 2))), smoothstep(0.25, 0.6, slope)), 0, 1);
   if (rockT > 0) {
     const alg = smoothstep(-40, -6, h) * smoothstep(0.0, 0.5, n + 0.3);
@@ -196,5 +216,6 @@ export const DIVE_POINTS: DivePoint[] = [
   { id: 'reef', name: 'サンゴ礁', sub: '水深 6–15m・色とりどりの魚', x: -30, z: 215 },
   { id: 'rocky', name: '岩礁', sub: '水深 8–25m・岩の隙間に潜む', x: 112, z: 200 },
   { id: 'dropoff', name: 'ドロップオフ／沖', sub: '水深 15m〜・大物と出会う', x: 0, z: 470 },
+  { id: 'cold', name: '流氷の入り江', sub: '水温2℃・ドライスーツが無いとエアがすぐ尽きる', x: -300, z: 130 },
   { id: 'deep', name: '深海', sub: '水深 170–430m・大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },
 ];
