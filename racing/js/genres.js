@@ -10,11 +10,22 @@ import { BIKE_COURSES } from './sim/bikedata.js';
 import { BikeGame } from './game/bike.js';
 import { store } from './store.js';
 import { fmt } from './game/common.js';
+import { MEDALS, medalOf } from './garage.js';
 
 const trackCache = {};
 function track(def) {
   if (!trackCache[def.id]) trackCache[def.id] = new Track(def);
   return trackCache[def.id];
+}
+
+// タイムアタックの記録とメダル（コースカード用）
+function taRec(def) {
+  const rec = store.get('ta12.' + def.id, null);
+  const t = rec ? rec.time : Infinity;
+  const m = medalOf(t, def.medals);
+  const icon = m >= 0 ? `<i class="medal m${m}"></i>` : '';
+  const goal = def.medals ? ` · 金 ${fmt(def.medals[0])}` : '';
+  return `${icon}ベスト ${isFinite(t) ? fmt(t) : '--:--.---'}${goal}`;
 }
 
 export const GENRES = [
@@ -31,7 +42,7 @@ export const GENRES = [
     meta: (def, tr, s) => ({
       sub: `${def.en} · ${(tr.length / 1000).toFixed(2)} km`,
       rec: s.mode === 'ta'
-        ? `ベスト(1・2周目) ${(store.get('ta12.' + def.id, null) || {}).time ? fmt(store.get('ta12.' + def.id, null).time) : '--:--.---'}`
+        ? taRec(def)
         : `最高順位 ${store.get('rank.' + def.id + '.' + s.difficulty, null) ? store.get('rank.' + def.id + '.' + s.difficulty, null) + '位' : '—'}（${DIFFICULTY[s.difficulty].label}）`,
     }),
     hint: (s) => (s.mode === 'race'

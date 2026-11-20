@@ -108,6 +108,8 @@ export class GameBase {
     $('#hDelta').className = 't-delta';
     $('#hBestL').textContent = 'BEST';
     $('#hCount').className = 'count';
+    $('#hTarget').className = 't-sub t-target';
+    $('#hDraft').classList.remove('on');
     $('#hNotes').classList.remove('show');
     $('#fTcs').textContent = 'TCS';
     $('#fAbs').textContent = 'ABS';
@@ -224,7 +226,11 @@ export class GameBase {
     f.curbT -= dt;
     if ((c.onCurb || c.offTrack) && (c.speed || 0) > 8 && f.curbT <= 0) { this.vibrate(c.offTrack ? 18 : 10); f.curbT = 0.12; }
     if (c.impact > 3) this.vibrate(Math.min(80, c.impact * 8));
-    this.speedFx(dt, c.speed || 0);
+    this.speedFx(dt, c.speed || 0, (c.draft || 0) * 0.35);
+    const dEl = $('#hDraft');
+    const dk = c.draft || 0;
+    dEl.classList.toggle('on', dk > 0.15 && (c.speed || 0) > 20);
+    dEl.style.setProperty('--k', dk.toFixed(2));
   }
 
   vibrate(ms) {

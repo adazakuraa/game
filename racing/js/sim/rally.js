@@ -1,5 +1,6 @@
 // ラリー: 一本道のステージをタイムで競う。ライバルは「走った時間」だけが記録として存在する（実際の車は走らない）
 import { Car } from './car.js';
+import { Recovery } from './recovery.js';
 import { BotDriver } from './bot.js';
 import { DRIVERS } from './race.js';
 
@@ -139,6 +140,11 @@ export class RallyRun {
     }
     c.step(dt, inp);
     if (c.impact > 2) this.events.push({ type: 'wall', power: c.impact });
+    if (this.state === 'racing') {
+      this.recovery ??= new Recovery(this.track);
+      const rv = this.recovery.update(dt, c, inp);
+      if (rv) this.events.push({ type: rv });
+    }
     this.progress += wrapDelta(c.s - this.prevS, this.track.length);
     this.prevS = c.s;
     if (this.state === 'racing') {

@@ -1,6 +1,7 @@
 // レース進行: スタート、周回・順位・タイム計測、車同士の接触
 import { Car } from './car.js';
 import { AICar } from './ai.js';
+import { Recovery } from './recovery.js';
 import { BotDriver } from './bot.js';
 
 // factor: トップ CPU の周回タイム ÷ 上手な自動ドライバーの周回タイム
@@ -288,6 +289,17 @@ export class Race extends RaceBase {
       if (!this.bot) this.bot = new BotDriver(p.car, this.track, 0.9);
       inp = this.bot.update();
     }
+    // スリップストリーム（前方 30m 以内・横のずれ 1.6m 以内。近いほど効く）
+    if (this.mode === 'race') {
+      const myP = this.progress(p);
+      let k = 0;
+      for (const e of this.entries) {
+        if (e === p) continue;
+        const gap = this.progress(e) - myP;
+        if (gap > 4 && gap < 30 && Math.abs(e.ai.d - p.car.d) < 1.6) k = Math.max(k, 1 - (gap - 4) / 26);
+      }
+      p.car.draft = (p.car.draft || 0) + (k - (p.car.draft || 0)) * Math.min(1, dt * 4);
+    } else p.car.draft = 0;
     if (!started) {
       // スタート前: 回転だけ上げられる
       p.car.rpm += ((1100 + input.throttle * 6000) - p.car.rpm) * Math.min(1, dt * 6);
@@ -295,6 +307,12 @@ export class Race extends RaceBase {
     } else {
       p.car.step(dt, inp);
       if (p.car.impact > 2) this.events.push({ type: 'wall', power: p.car.impact });
+      // 動けない・逆走が続いたら自動でコースに戻す
+      if (!p.finished) {
+        this.recovery ??= new Recovery(this.track);
+        const rv = this.recovery.update(dt, p.car, inp);
+        if (rv) this.events.push({ type: rv });
+      }
     }
 
     // AI

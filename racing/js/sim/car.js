@@ -239,7 +239,8 @@ export class Car {
     }
 
     // 抵抗
-    const Fdrag = 0.5 * 1.2 * c.CdA * u * Math.abs(u);
+    // スリップストリーム: 前の車の真後ろでは空気抵抗が減る（draft 0..1 はレース側が設定）
+    const Fdrag = 0.5 * 1.2 * c.CdA * (1 - 0.4 * (this.draft || 0)) * u * Math.abs(u);
     const Froll = (0.015 * W + surfDrag * Math.abs(u)) * (Math.abs(u) > 0.2 ? sgn : u / 0.2);
     // 勾配
     const slopeF = proj.slope * Math.cos(this.psi - proj.hd);

@@ -293,6 +293,18 @@ export function raceReward(info) {
 // タイムアタック: 周回ごと。新記録で加算。1回の挑戦で報酬が出る周回数には上限がある
 export const TA_LAP_COINS = 20;
 export const TA_BEST_COINS = 80;
+// タイムアタックのメダル（1・2周目の合計で判定）。初めて取ったときにコイン
+export const MEDALS = [
+  { id: 'gold', name: 'GOLD', jp: '金', color: '#ffd000', coins: 300 },
+  { id: 'silver', name: 'SILVER', jp: '銀', color: '#d8e0ea', coins: 150 },
+  { id: 'bronze', name: 'BRONZE', jp: '銅', color: '#e08a4a', coins: 80 },
+];
+// 取れたメダルの番号（0=金 1=銀 2=銅）。取れていなければ -1
+export function medalOf(time, medals) {
+  if (!medals || !isFinite(time)) return -1;
+  for (let i = 0; i < medals.length; i++) if (time <= medals[i]) return i;
+  return -1;
+}
 
 // ラリー: ステージの順位に応じた報酬。長いステージなので周回レースより少し多め
 export function stageReward(info) {

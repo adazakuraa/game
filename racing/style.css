@@ -93,12 +93,26 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .t-sub { font-size: 12px; color: var(--sub); }
 .t-sub span { margin-right: 6px; font-size: 10px; letter-spacing: 0.1em; }
 .t-sub b { color: var(--ink); font-weight: 700; }
+.t-target { display: none; }
+.t-target.show { display: block; }
+.medal { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px; margin-right: 4px; box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.25); }
+.medal.m0 { background: radial-gradient(circle at 35% 30%, #fff6b0, #ffd000 55%, #b88a00); }
+.medal.m1 { background: radial-gradient(circle at 35% 30%, #ffffff, #c9d3de 55%, #7d8794); }
+.medal.m2 { background: radial-gradient(circle at 35% 30%, #ffd9b8, #d9844a 55%, #8a4a1c); }
+.medal-big { display: flex; justify-content: center; align-items: center; gap: 10px; font-size: 22px; font-weight: 900; font-style: italic; letter-spacing: 0.08em; margin: 2px 0 6px; }
+.medal-big .medal { width: 34px; height: 34px; vertical-align: middle; animation: pop 0.6s ease; }
 .t-delta { font-size: 14px; font-weight: 800; min-height: 18px; }
 .t-delta.neg { color: var(--ok); }
 .t-delta.pos { color: var(--accent); }
 #minimap { width: 120px; height: 120px; margin-top: 6px; opacity: 0.95; }
 .hud-top { position: absolute; top: calc(8px + var(--st)); left: 50%; transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; }
 .hud-btn { width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.45); font-size: 16px; font-weight: 900; }
+/* スリップストリーム中の表示（効き具合をバーで） */
+.draft { position: absolute; left: 50%; bottom: calc(86px + var(--sb)); transform: translateX(-50%); padding: 3px 12px 6px; border-radius: 99px; background: rgba(40, 160, 255, 0.25); border: 1px solid rgba(120, 200, 255, 0.7); color: #bfe6ff; font-size: 12px; font-weight: 900; font-style: italic; letter-spacing: 0.12em; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+.draft.on { opacity: 1; }
+.draft i { position: absolute; left: 10px; right: 10px; bottom: 2px; height: 2px; border-radius: 2px; background: #6fd0ff; transform-origin: left; transform: scaleX(var(--k, 0)); }
+#hud .pos.up { animation: posUp 0.6s cubic-bezier(.2, 1.6, .4, 1); transform-origin: left top; }
+@keyframes posUp { 0% { transform: scale(1.5); color: #3ddc84; } 100% { transform: scale(1); } }
 .gauge { position: absolute; left: 50%; bottom: calc(10px + var(--sb)); transform: translateX(-50%); text-align: center; width: 220px; }
 .rpm { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.15); overflow: hidden; margin-bottom: 4px; }
 .rpm i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #3ddc84 0%, #ffd000 70%, #ff3b2f 90%); border-radius: 3px; }

@@ -80,6 +80,13 @@ export class RallyGame extends GameBase {
         this.countdown(ev.n);
       } else if (ev.type === 'go') {
         this.countdown(0);
+      } else if (ev.type === 'recover') {
+        this.showMsg('コースに戻ります', 1.2, '#fff', true);
+        this.resetCamera?.();
+        C.audio.beep(520, 0.15, 0.2);
+      } else if (ev.type === 'wrongway') {
+        this.showMsg('逆走！', 1.4, '#ff3b2f', true);
+        this.subMsg('このまま続くとコースに戻します', 2);
       } else if (ev.type === 'wall') {
         if (ev.power > 3) {
           if (r.time - this.lastIncident > 1.2) this.incidents++;

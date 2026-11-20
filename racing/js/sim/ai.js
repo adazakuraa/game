@@ -70,12 +70,14 @@ export class AICar {
     const hw = tr.halfW - 1.2;
     let wantD = lineD;
 
-    // 前方の車を確認
+    // 前方の車を確認（スリップストリームも同じ範囲で判定）
     let blocker = null, bgap = 1e9;
+    let draft = 0;
     for (const o of others) {
       if (o.self === this) continue;
       let gap = o.progress - myProgress;
       if (gap <= 0 || gap > 30) continue;
+      if (gap > 4 && Math.abs(o.d - this.d) < 1.6) draft = Math.max(draft, 1 - (gap - 4) / 26);
       if (Math.abs(o.d - this.d) < 2.3 && gap < bgap) { bgap = gap; blocker = o; }
     }
     if (blocker) {
@@ -97,6 +99,9 @@ export class AICar {
       }
     }
     if (this.passTimer > 0) this.passTimer -= dt;
+    // 直線（目標速度が高い所）では、スリップストリームで少しだけ伸びる
+    this.draft = draft;
+    if (draft > 0 && vt > 50) vt += draft * 1.8;
     wantD = Math.max(-hw, Math.min(hw, wantD));
 
     // 横方向
@@ -108,7 +113,7 @@ export class AICar {
 
     // 縦方向
     if (this.v < vt) {
-      const a = this.spec.accel(this.v, tr.grip);
+      const a = this.spec.accel(this.v, tr.grip) * (1 + 0.5 * (this.draft || 0));
       this.v = Math.min(vt, this.v + Math.max(a, 0) * dt);
       this.throttle = 1;
       this.braking = 0;

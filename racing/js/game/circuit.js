@@ -5,7 +5,7 @@ import { World } from '../render/world.js';
 import { buildCar } from '../render/carmodel.js';
 import { Effects } from '../render/effects.js';
 import { store } from '../store.js';
-import { garage, raceReward, TA_LAP_COINS, TA_BEST_COINS } from '../garage.js';
+import { garage, raceReward, TA_LAP_COINS, TA_BEST_COINS, MEDALS, medalOf } from '../garage.js';
 import { GameBase } from './base.js';
 import { C, $, fmt, drawTrackMap, isTouch } from './common.js';
 
@@ -91,7 +91,7 @@ export class CircuitGame extends GameBase {
     this.best2 = opts.mode === 'ta' && this.ghostData ? this.ghostData.time : Infinity;
     $('#hBest').textContent = fmt(opts.mode === 'ta' ? this.best2 : Infinity);
     $('#hLast').textContent = fmt(0);
-    if (opts.mode === 'ta') { $('#hBestL').textContent = '2周BEST'; $('#hLaps').textContent = '2'; }
+    if (opts.mode === 'ta') { $('#hBestL').textContent = '2周BEST'; $('#hLaps').textContent = '2'; this.updateTarget(); }
     C.input.setMode(opts.steer);
     C.input.sens = opts.sens;
     $('#hMsg').classList.remove('show');
@@ -164,14 +164,37 @@ export class CircuitGame extends GameBase {
           const c = r.player.car;
           this.fx.sparks(c.x, c.y, c.z, c.vx, c.vz, 10);
         }
+      } else if (ev.type === 'recover') {
+        this.showMsg('コースに戻ります', 1.2, '#fff', true);
+        this.resetCamera?.();
+        C.audio.beep(520, 0.15, 0.2);
+      } else if (ev.type === 'wrongway') {
+        this.showMsg('逆走！', 1.4, '#ff3b2f', true);
+        this.subMsg('このまま続くとコースに戻します', 2);
       } else if (ev.type === 'lap') {
         this.onLap(ev);
       } else if (ev.type === 'taFinish') {
         this.finishedAt = performance.now();
         const res = this.taResult;
+        // メダル（初めて届いた段階ぶんのコイン）
+        const md = this.track.def.medals;
+        if (res && md) {
+          const m = medalOf(ev.total, md);
+          const pk = 'medalPaid.' + this.track.def.id;
+          const paid = store.get(pk, 3);
+          let bonus = 0;
+          if (m >= 0) for (let i = m; i < paid; i++) bonus += MEDALS[i].coins;
+          if (m >= 0 && m < paid) store.set(pk, m);
+          res.medal = m;
+          res.medalBonus = bonus;
+          if (bonus) { garage.addCoins(bonus); this.taCoins = (this.taCoins || 0) + bonus; setTimeout(() => this.toastCoins(bonus), 900); }
+          if (m >= 0) { C.audio.beep(1047, 0.12, 0.22); setTimeout(() => C.audio.beep(1568, 0.35, 0.24), 120); }
+          this.updateTarget();
+        }
         if (this.ghost) this.ghost.root.visible = false;
         $('#hDelta').textContent = '';
-        this.showMsg(res && res.newBest ? 'NEW RECORD!' : 'FINISH', 4, res && res.newBest ? '#ffd000' : '#fff');
+        const mm = res && res.medal >= 0 ? MEDALS[res.medal] : null;
+        this.showMsg(mm ? `${mm.name} MEDAL!` : res && res.newBest ? 'NEW RECORD!' : 'FINISH', 4, mm ? mm.color : res && res.newBest ? '#ffd000' : '#fff');
         this.subMsg('2周 ' + fmt(ev.total), 4);
         setTimeout(() => { if (C.game() === this) this.showResults(); }, 3500);
       } else if (ev.type === 'finish') {
@@ -240,6 +263,40 @@ export class CircuitGame extends GameBase {
     this.taCoins = (this.taCoins || 0) + coins;
     garage.addCoins(coins);
     this.toastCoins(coins);
+  }
+
+  // タイムアタックの次の目標（まだ取っていない一つ上のメダル）を右上に出す
+  updateTarget() {
+    const md = this.track.def.medals;
+    const el = $('#hTarget');
+    if (!md) { el.className = 't-sub t-target'; return; }
+    const b = medalOf(this.best2, md);
+    const i = b < 0 ? 2 : Math.max(0, b - 1);
+    const M = MEDALS[i];
+    el.innerHTML = `<span>${b === 0 ? '獲得済' : '目標'}</span><i class="medal m${i}"></i><b style="color:${M.color}">${fmt(md[i])}</b>`;
+    el.className = 't-sub t-target show';
+  }
+
+  // 追い抜きをほめる: 順位が 0.6 秒続いたら確定し、上がっていれば演出
+  praiseOvertake(dt, pos) {
+    const r = this.race;
+    if (r.state !== 'racing' || r.player.finished) { this.posAck = pos; return; }
+    if (this.posAck == null) this.posAck = pos;
+    if (pos !== this.posCand) { this.posCand = pos; this.posHold = 0; }
+    this.posHold += dt;
+    if (this.posHold < 0.6 || pos === this.posAck) return;
+    const gained = this.posAck - pos;
+    this.posAck = pos;
+    if (gained <= 0) return;
+    if (pos === 1) {
+      this.showMsg('トップ浮上！', 1.6, '#ffd000', true);
+      C.audio.beep(784, 0.12, 0.22); setTimeout(() => C.audio.beep(1047, 0.12, 0.22), 110); setTimeout(() => C.audio.beep(1319, 0.3, 0.24), 220);
+    } else {
+      this.showMsg(gained > 1 ? `${gained}台抜き！ P${pos}` : `OVERTAKE！ P${pos}`, 1.2, '#3ddc84', true);
+      C.audio.beep(660, 0.1, 0.2); setTimeout(() => C.audio.beep(990, 0.22, 0.22), 100);
+    }
+    const el = $('#hud .pos');
+    el.classList.remove('up'); void el.offsetWidth; el.classList.add('up');
   }
 
   updateCamera(dt, snap = false) {
@@ -320,6 +377,7 @@ export class CircuitGame extends GameBase {
       const st = r.standings();
       const pos = st.indexOf(r.player) + 1;
       $('#hPos').textContent = pos;
+      this.praiseOvertake(dt, pos);
       // 上位と自分の周辺
       const rows = st.map((e, i) => {
         const col = '#' + e.color.toString(16).padStart(6, '0');
@@ -390,10 +448,20 @@ export class CircuitGame extends GameBase {
     if (this.opts.mode === 'ta') {
       const x = this.taResult;
       if (!x) return;
+      const md = this.track.def.medals || [];
+      let medalHtml = '';
+      if (md.length) {
+        const m = x.medal ?? -1;
+        const got = m >= 0 ? `<div class="medal-big" style="color:${MEDALS[m].color}"><i class="medal m${m}"></i>${MEDALS[m].name} MEDAL${x.medalBonus ? `<span style="font-size:14px;color:#ffd24a"> 初獲得 +${x.medalBonus}</span>` : ''}</div>` : '';
+        const nx = m < 0 ? 2 : m - 1;
+        const next = m === 0 ? 'すべてのメダルを獲得！' : `次の目標 ${MEDALS[nx].jp}（${fmt(md[nx])}）まで あと ${(x.total - md[nx]).toFixed(3)} 秒`;
+        medalHtml = got + `<div class="res-sub">${next}</div>`;
+      }
       const diff = x.prevBest == null ? '初記録' : x.newBest ? `自己ベスト更新（−${(x.prevBest - x.total).toFixed(3)}）` : `自己ベスト ${fmt(x.prevBest)}（+${(x.total - x.prevBest).toFixed(3)}）`;
       $('#resTitle').textContent = this.track.def.name;
       $('#resBody').innerHTML = `
         <div class="res-big" style="color:${x.newBest ? '#ffd000' : '#fff'}">${fmt(x.total)}</div>
+        ${medalHtml}
         <div class="res-sub">タイムアタック · 1・2周目の合計 · ${diff}</div>
         <div class="laps-list">${x.laps.map((l, i) => `<span>L${i + 1} ${fmt(l)}</span>`).join('')}</div>
         <div class="coin-rows"><div class="r total"><span>獲得コイン</span><span><i class="coin"></i>+${this.taCoins || 0}</span></div></div>
