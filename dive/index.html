@@ -45,6 +45,7 @@
             <span><b id="dex-count">0</b>/<span id="dex-total">33</span></span>
             <i id="dex-new" class="hidden">+0</i>
           </button>
+          <div id="cash" class="glass chip" aria-label="今回のダイブの写真の売上"><b id="cash-val">¥0</b></div>
         </div>
         <div id="reticle"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div id="ret-label"></div></div>
         <div id="toast"></div>
@@ -75,7 +76,9 @@
             <div class="disc-tag" id="disc-tag">新種発見</div>
             <div class="disc-name" id="disc-name"></div>
             <div class="disc-sci" id="disc-sci"></div>
+            <div class="disc-pay" id="disc-pay"></div>
           </div>
+          <div class="disc-grade hidden" id="disc-grade"></div>
         </div>
         <div id="help" class="hidden">
           <div><b>左側をドラッグ</b> 移動（見ている方向へ泳ぐ）</div>
@@ -97,6 +100,7 @@
             <div class="brand-kicker">DIVE LOG</div>
             <h1>BLUE<span>DEPTHS</span></h1>
             <p>海へ潜り、出会った生き物を写真に収めよう</p>
+            <div class="t-goal" id="t-goal"></div>
           </header>
           <div class="panel" id="points"></div>
           <div class="row-actions">

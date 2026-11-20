@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { evaluateShot, LEGACY_NEED, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
 import { Environment } from '../world/environment';
@@ -12,16 +13,11 @@ import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
 import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
 
-type Save = { found: Record<string, { photo: string; depth: number; t: number }>; dives: number; maxDepth: number; muted?: boolean };
+type Save = { found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
+type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
 
 const SAVE_KEY = 'blue-depths-save-v1';
-const UNLOCKS = [
-  { id: 'fins', need: 5, name: 'ロングフィン', desc: '泳ぐ速さ +30%', icon: '<path d="M7 3h4l1 8 4 8-3 2-5-7z"/>' },
-  { id: 'tank', need: 12, name: '大型タンク', desc: 'エア容量 1.5倍', icon: '<rect x="8" y="5" width="8" height="16" rx="3"/><rect x="10.5" y="2" width="3" height="3"/>' },
-  { id: 'scooter', need: 22, name: '水中スクーター', desc: '高速移動ボタン', icon: '<path d="M3 12l7-5v3h8l3 2-3 2h-8v3z"/>' },
-  { id: 'ads', need: 35, name: '大気圧潜水服', desc: '深海へ潜れる', icon: '<circle cx="12" cy="7" r="4"/><path d="M6 21v-6a6 6 0 0 1 12 0v6z"/>' },
-] as const;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -45,7 +41,7 @@ export class Game {
   private airMax = 200;
   private diveTime = 0;
   private diveMaxDepth = 0;
-  private pending = new Map<string, { photo: string; depth: number }>();
+  private pending = new Map<string, Shot>();
   private diveShots = 0;
   private point: DivePoint = DIVE_POINTS[1];
   private ads = false;
@@ -63,6 +59,9 @@ export class Game {
   private currentF = 0;
   private currentWarned = -100;
   private shake = 0;
+  private lastClear = 20;
+  /** hit-stop: world freezes for a beat after a good shot */
+  private freezeT = 0;
   private lastEncounter = -100;
   private dprCap = 1.5;
   private frameAvg = 16;
@@ -140,11 +139,20 @@ export class Game {
   private loadSave(): Save {
     try {
       const raw = localStorage.getItem(SAVE_KEY);
-      if (raw) return JSON.parse(raw) as Save;
+      if (raw) {
+        const sv = JSON.parse(raw) as Save;
+        if (!sv.owned) {
+          // saves from the species-count unlock era keep the gear they had
+          const n = Object.keys(sv.found).length;
+          sv.owned = SHOP.filter((g) => n >= LEGACY_NEED[g.id]).map((g) => g.id);
+          sv.money = 0;
+        }
+        return sv;
+      }
     } catch {
       /* storage unavailable */
     }
-    return { found: {}, dives: 0, maxDepth: 0 };
+    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0 };
   }
 
   private writeSave(): void {
@@ -159,9 +167,26 @@ export class Game {
     return Object.keys(this.save.found).length;
   }
 
-  private has(unlock: (typeof UNLOCKS)[number]['id']): boolean {
-    const u = UNLOCKS.find((x) => x.id === unlock)!;
-    return this.foundCount >= u.need;
+  private has(id: GearId): boolean {
+    return !!this.save.owned?.includes(id);
+  }
+
+  /** Next gear the player can aim for, and how far away it is (the reward hanging in front of them). */
+  private nextGoal(): { name: string; need: number } | null {
+    const money = this.save.money ?? 0;
+    const g = SHOP.find((x) => !this.has(x.id));
+    return g ? { name: g.name, need: Math.max(0, g.price - money) } : null;
+  }
+
+  private buy(id: GearId): void {
+    const g = SHOP.find((x) => x.id === id)!;
+    if (this.has(id) || (this.save.money ?? 0) < g.price) return;
+    this.save.money = (this.save.money ?? 0) - g.price;
+    (this.save.owned ??= []).push(id);
+    this.writeSave();
+    this.audio.chime(true);
+    this.toast(`「${g.name}」を購入！ ${g.desc}`, '', 3);
+    this.renderTitle();
   }
 
   private resize(): void {
@@ -219,16 +244,34 @@ export class Game {
       b.type = 'button';
       b.disabled = locked;
       b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : '12m'}</span>
-        <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `図鑑${UNLOCKS[3].need}種で大気圧潜水服を入手` : dp.sub}</div></span>
+        <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `写真の稼ぎで「大気圧潜水服」を買うと行ける` : dp.sub}</div></span>
         <span class="pr"><b>${got}</b>/${zoneSpecies.length}<span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
       b.addEventListener('click', () => this.startDive(dp));
       pts.appendChild(b);
     }
     const gear = $('gear');
-    gear.innerHTML = UNLOCKS.map((u) => {
-      const on = n >= u.need;
-      return `<div class="gear-item ${on ? 'on' : ''}"><div class="gi"><svg viewBox="0 0 24 24">${u.icon}</svg></div>${u.name}<span class="req">${on ? '入手済み' : `図鑑 ${u.need}種`}</span></div>`;
-    }).join('');
+    const money = this.save.money ?? 0;
+    const goal = this.nextGoal();
+    $('t-goal').innerHTML = goal
+      ? goal.need > 0
+        ? `所持金 <b>${yen(money)}</b>　「${goal.name}」まであと <b>${yen(goal.need)}</b>　— いい写真ほど高く売れる`
+        : `<span class="ok">「${goal.name}」が買える！ 下のショップへ</span>`
+      : `所持金 <b>${yen(money)}</b>　装備コンプリート`;
+    gear.innerHTML =
+      `<div class="shop-head"><span>写真の稼ぎ <b>${yen(money)}</b></span>${goal ? `<span class="goal">${goal.need > 0 ? `「${goal.name}」まであと <b>${yen(goal.need)}</b>` : `「${goal.name}」が買える！`}</span>` : '<span class="goal">装備コンプリート！</span>'}</div>` +
+      SHOP.map((u) => {
+        const on = this.has(u.id);
+        const can = !on && money >= u.price;
+        return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24">${u.icon}</svg></div>${u.name}<span class="req">${on ? '入手済み' : can ? `購入 ${yen(u.price)}` : yen(u.price)}</span><span class="gdesc">${u.desc}</span></button>`;
+      }).join('');
+    gear.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const id = b.dataset.buy as GearId;
+        if (this.has(id)) return;
+        if ((this.save.money ?? 0) < SHOP.find((x) => x.id === id)!.price) { this.toast('写真で稼いで買おう。いい写真ほど高く売れる'); return; }
+        this.buy(id);
+      }),
+    );
   }
 
   private toast(text: string, kind: '' | 'warn' | 'danger' = '', dur = 2.2): void {
@@ -382,6 +425,11 @@ export class Game {
       this.creatures.reshuffle(this.camera.position);
       this.creatures.events.length = 0;
       this.placeCurrents();
+      if (this.save.dives === 0 && !this.ads) {
+        // first dive: something showy within the first minute (a sea turtle just ahead, 5-6 m down)
+        const tz = dp.z + 11, tx = dp.x + 2;
+        this.creatures.placeNear('turtle', new THREE.Vector3(tx, Math.max(heightAt(tx, tz) + 1.5, -6), tz));
+      }
       // the new site's species are built while the screen is still fading in
       this.creatures.buildBudgetMs = 40;
       window.setTimeout(() => (this.creatures.buildBudgetMs = 6), 2500);
@@ -459,9 +507,16 @@ export class Game {
     if (this.state !== 'diving' && this.state !== 'paused') return;
     const before = this.foundCount;
     const shots = [...this.pending.entries()];
-    if (reason === 'surface') {
-      for (const [id, f] of shots) if (!this.save.found[id]) this.save.found[id] = { ...f, t: Date.now() };
+    // discoveries are never lost (being rescued costs money instead: the penalty fits the mistake)
+    for (const [id, f] of shots) {
+      const old = this.save.found[id];
+      if (!old || f.score > (old.score ?? -1)) this.save.found[id] = { photo: f.photo, depth: f.depth, score: f.score, t: Date.now() };
     }
+    const gross = shots.reduce((a, [, f]) => a + f.value, 0);
+    const earn = reason === 'surface' ? gross : Math.round((gross * PHOTO.blackoutKeep) / 10) * 10;
+    const moneyBefore = this.save.money ?? 0;
+    this.save.money = moneyBefore + earn;
+    this.save.earned = (this.save.earned ?? 0) + earn;
     this.save.dives += 1;
     this.save.maxDepth = Math.max(this.save.maxDepth, this.diveMaxDepth);
     this.writeSave();
@@ -478,15 +533,27 @@ export class Game {
     $('res-title').textContent = reason === 'surface' ? '無事に浮上しました' : 'エア切れで気絶… 救助されました';
     const m = Math.floor(this.diveTime / 60);
     const s = Math.floor(this.diveTime % 60);
-    $('res-stats').innerHTML = `<div>潜水時間<b>${m}:${String(s).padStart(2, '0')}</b></div><div>最大水深<b>${this.diveMaxDepth.toFixed(1)}m</b></div><div>新種<b>${reason === 'surface' ? after - before : 0}</b></div>`;
+    $('res-stats').innerHTML = `<div>潜水時間<b>${m}:${String(s).padStart(2, '0')}</b></div><div>新種<b>${after - before}</b></div><div>写真の売上<b id="res-earn">¥0</b></div>`;
+    // count the earnings up quickly (praise the result)
+    const t0 = performance.now();
+    const step = () => {
+      const k = Math.min(1, (performance.now() - t0) / 900);
+      const el = document.getElementById('res-earn');
+      if (el) el.textContent = yen(earn * (1 - (1 - k) ** 3));
+      if (k < 1 && this.state === 'result') requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
     const list = $('res-list');
     list.innerHTML = shots.length
-      ? shots.map(([id, f]) => `<div class="res-card ${reason === 'blackout' ? 'lost' : ''}"><img src="${f.photo}" alt=""><div>${SPECIES_BY_ID.get(id)!.name}</div></div>`).join('')
+      ? shots.map(([id, f]) => `<div class="res-card"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
-    if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', '<div class="res-empty">気絶したため、今回の写真は失われました。エア残量に気をつけて早めに浮上しよう。</div>');
-    const newly = UNLOCKS.filter((u) => before < u.need && after >= u.need);
-    $('res-unlock').innerHTML = newly.map((u) => `新装備「${u.name}」を入手！ ${u.desc}`).join('<br>');
-    if (newly.length) this.audio.chime(true);
+    if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
+    const affordable = SHOP.filter((g) => !this.has(g.id) && moneyBefore < g.price && this.save.money! >= g.price);
+    const goal = this.nextGoal();
+    $('res-unlock').innerHTML = affordable.length
+      ? affordable.map((g) => `「${g.name}」が買えるようになった！ ボートのショップへ`).join('<br>')
+      : goal ? `<span class="res-goal">所持金 ${yen(this.save.money!)}　「${goal.name}」まであと ${yen(goal.need)}</span>` : '';
+    if (affordable.length || earn > 0) this.audio.chime(affordable.length > 0);
   }
 
   private toTitle(): void {
@@ -500,6 +567,8 @@ export class Game {
   private updateDexChip(): void {
     const newOnes = [...this.pending.keys()].filter((k) => !this.save.found[k]).length;
     $('dex-count').textContent = String(this.foundCount + newOnes);
+    const earn = [...this.pending.values()].reduce((a, f) => a + f.value, 0);
+    $('cash-val').textContent = yen(earn);
     const n = $('dex-new');
     n.textContent = '+' + newOnes;
     n.classList.toggle('hidden', newOnes === 0);
@@ -611,6 +680,7 @@ export class Game {
     // photo target & shutter
     // sharp-photo distance: where water haze stays under ~50 % (FogExp2), shortened by narcosis
     const clear = (0.83 / this.env.fog.density) * (1 - this.narc * 0.3);
+    this.lastClear = clear;
     const src = this.renderer.domElement;
     const aspect = src.width / src.height;
     const cropX = Math.min(0.62, (0.8 * 4) / (3 * aspect));
@@ -657,20 +727,25 @@ export class Game {
       return;
     }
     const known = !!this.save.found[def.id];
-    const already = this.pending.has(def.id);
     const depth = -t.agent.p.y;
-    if (!known && !already) {
-      this.pending.set(def.id, { photo, depth });
-      this.showDiscover(def.id, photo, true);
-      this.audio.chime(def.rarity >= 3);
-      this.updateDexChip();
-    } else {
-      if (already) this.pending.set(def.id, { photo, depth });
-      this.showDiscover(def.id, photo, false);
-    }
+    const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2);
+    // a known species pays a share unless this beats the best photo on record
+    const best = this.save.found[def.id]?.score ?? -1;
+    const value = known && ev.score <= best ? Math.round((ev.value * PHOTO.repeatShare) / 10) * 10 : ev.value;
+    const prev = this.pending.get(def.id);
+    const shot: Shot = { photo, depth, score: ev.score, grade: ev.grade.g, value, isNew: !known };
+    const kept = !prev || shot.value > prev.value;
+    if (kept) this.pending.set(def.id, shot);
+    this.showDiscover(def.id, photo, !known && !prev, ev, kept ? value : 0, prev && !kept ? prev : undefined, known && ev.score > best && best >= 0);
+    if (!known && !prev) this.audio.chime(def.rarity >= 3);
+    else if (ev.grade.g === 'S') this.audio.chime(true);
+    this.updateDexChip();
+    // hit-stop + small kick: the shot "lands"
+    this.freezeT = ev.grade.g === 'S' ? 0.2 : ev.grade.g === 'A' ? 0.13 : 0.07;
+    this.shake = Math.max(this.shake, ev.grade.g === 'S' ? 0.5 : 0.25);
   }
 
-  private showDiscover(id: string, photo: string, isNew: boolean): void {
+  private showDiscover(id: string, photo: string, isNew: boolean, ev?: ReturnType<typeof evaluateShot>, paid = 0, better?: Shot, record = false): void {
     const s = SPECIES_BY_ID.get(id)!;
     const el = $('discover');
     el.classList.remove('hidden');
@@ -679,7 +754,14 @@ export class Game {
     void el.offsetWidth;
     el.style.animation = '';
     $<HTMLImageElement>('disc-photo').src = photo;
-    $('disc-tag').textContent = isNew ? (s.rarity >= 3 ? '★ 激レア発見！' : '新種発見！ 浮上して図鑑に登録') : '撮影成功（登録済み）';
+    $('disc-tag').textContent = isNew ? (s.rarity >= 3 ? '★ 激レア発見！' : '新種発見！') : record ? '自己ベスト更新！' : '撮影成功（登録済み）';
+    const gEl = $('disc-grade');
+    if (ev) {
+      gEl.className = 'disc-grade g' + ev.grade.g;
+      gEl.innerHTML = `<b>${ev.grade.g}</b><span>${ev.grade.word}</span>`;
+      gEl.classList.remove('hidden');
+      $('disc-pay').textContent = paid > 0 ? `+${yen(paid)}${ev.bonus.length ? '　' + ev.bonus.join(' ') : ''}` : better ? `今回の${better.grade}判定の方が高値` : '';
+    } else gEl.classList.add('hidden');
     $('disc-name').textContent = s.name;
     $('disc-sci').textContent = s.sci;
     this.discoverTimer = isNew ? 4.5 : 2.5;
@@ -723,8 +805,15 @@ export class Game {
     $('btn-shutter').classList.toggle('ready', !!t && t.inRange && !this.save.found[t.rt.def.id] && !this.pending.has(t.rt.def.id));
     if (t) {
       const known = this.save.found[t.rt.def.id] || this.pending.has(t.rt.def.id);
-      const why: Record<string, string> = { small: '小さすぎる・もっと近づく', murky: '濁って霞んでいる・近づく', dark: '暗くて写らない・ライトで照らす', hidden: '岩陰に隠れている', ok: known ? '撮影済み' : '撮影できる！' };
-      lab.innerHTML = `${known ? t.rt.def.name : '？？？'}<small>${why[t.reason]}</small>`;
+      const why: Record<string, string> = { small: '小さすぎる・もっと近づく', murky: '濁って霞んでいる・近づく', dark: '暗くて写らない・ライトで照らす', hidden: '岩陰に隠れている', ok: '' };
+      let sub = why[t.reason];
+      if (t.inRange) {
+        // live grade: the player sees closer / side-on / centred pays more before pressing the shutter
+        const ev = evaluateShot(t, this.lastClear, -t.agent.p.y, this.currentF > 0.2);
+        const hint = t.side < 0.6 ? '横から狙うと↑' : t.frac < 0.2 ? '寄ると↑' : t.centred < 0.6 ? '中央で↑' : '';
+        sub = `<span class="g${ev.grade.g}">評価 ${ev.grade.g}</span>${t.danger ? ' <span class="gS">危険手当！</span>' : ''}${hint ? '　' + hint : ''}`;
+      }
+      lab.innerHTML = `${known ? t.rt.def.name : '？？？'}<small>${sub}</small>`;
     } else lab.textContent = '';
 
     if (this.toastTimer > 0) {
@@ -739,7 +828,8 @@ export class Game {
 
   private tick(): void {
     const rawDt = this.clock.getDelta();
-    const dt = Math.min(rawDt, 0.05);
+    let dt = Math.min(rawDt, 0.05);
+    if (this.freezeT > 0) { this.freezeT -= rawDt; dt = 0; }
     this.frame++;
     if (this.frame <= 6) ((window as unknown as Record<string, Record<string, number>>).__BOOT_MS__)['f' + this.frame] = Math.round(rawDt * 1000);
     // adaptive resolution

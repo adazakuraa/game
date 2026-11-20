@@ -51,6 +51,7 @@ const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster
 const _m = new THREE.Matrix4();
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _qt = new THREE.Quaternion();
 const _sc = new THREE.Vector3();
@@ -221,7 +222,15 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   });
 }
 
-export type PhotoTarget = { rt: SpeciesRuntime; agent: Agent; dist: number; angle: number; inRange: boolean; reason: 'ok' | 'small' | 'murky' | 'dark' | 'hidden'; frac: number };
+export type PhotoTarget = {
+  rt: SpeciesRuntime; agent: Agent; dist: number; angle: number; inRange: boolean; reason: 'ok' | 'small' | 'murky' | 'dark' | 'hidden'; frac: number;
+  /** 0..1: how close to the middle of the frame */
+  centred: number;
+  /** 0..1: 1 = perfect side view (fish), always 1 for animals without a "side" */
+  side: number;
+  /** the individual is circling / charging the diver right now */
+  danger: boolean;
+};
 
 /**
  * Escape direction from away-vector `away` (player -> fish): a mix of a horizontal tangent (on the side the fish
@@ -684,6 +693,16 @@ export class Creatures {
     }
   }
 
+  /** Put one group of a species at a spot (first-dive showpiece). */
+  placeNear(id: string, p: THREE.Vector3): void {
+    const rt = this.list.find((r) => r.def.id === id);
+    if (!rt) return;
+    const g = rt.groups[0];
+    g.absent = false;
+    g.home.copy(p); g.c.copy(p); g.t.copy(p); g.v.set(0, 0, 0);
+    for (const a of rt.agents) if (a.g === 0) { a.p.copy(p).add(a.off); a.v.set(0, 0, 0); }
+  }
+
   /** After a teleport (dive start): populate the surroundings immediately. */
   primeAround(player: THREE.Vector3): void {
     for (const rt of this.list) {
@@ -717,15 +736,21 @@ export class Creatures {
     this.time += dt;
     const r = this.rnd;
     const pFast = Math.min(1, playerVel.length() / 1.4);
-    const buildStart = performance.now(); // 0 = drifting / slow, 1 = finning hard
+    let buildMs = 0, built = 0; // 0 = drifting / slow, 1 = finning hard
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
       if (this.pin && this.pin.id === rt.def.id) near = true;
       if (near && !rt.mesh && rt.def.kind !== 'none') {
         // lazy build, a few species per frame so a dive never stalls on texture painting
-        if (performance.now() - buildStart > this.buildBudgetMs) near = false;
-        else this.buildMesh(rt);
+        // (the budget counts build time only, and at least one species is built every frame)
+        if (built > 0 && buildMs > this.buildBudgetMs) near = false;
+        else {
+          const t0 = performance.now();
+          this.buildMesh(rt);
+          buildMs += performance.now() - t0;
+          built++;
+        }
       }
       rt.active = near;
       if (rt.mesh) rt.mesh.visible = near;
@@ -1005,7 +1030,13 @@ export class Creatures {
         const score = (reason === 'ok' ? 3 : 0) + Math.min(frac, 0.5) * 4 + centred + (def.rarity - 1) * 0.1;
         if (score > bestScore) {
           bestScore = score;
-          best = { rt, agent: a, dist, angle: _v2.angleTo(fwd), inRange: reason === 'ok', reason, frac };
+          let side = 1;
+          if (def.kind === 'fish' || def.kind === 'turtle') {
+            const f = _v3.set(0, 0, 1).applyQuaternion(a.q);
+            const c = Math.abs(f.dot(_v2) / Math.max(dist, 1e-3));
+            side = Math.sqrt(Math.max(0, 1 - c * c));
+          }
+          best = { rt, agent: a, dist, angle: _v2.angleTo(fwd), inRange: reason === 'ok', reason, frac, centred: Math.max(0, centred), side, danger: !!a.aggro && (a.mode === 1 || a.mode === 2) };
         }
       }
     }
