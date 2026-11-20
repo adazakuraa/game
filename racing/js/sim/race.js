@@ -1,19 +1,22 @@
 // レース進行: スタート、周回・順位・タイム計測、車同士の接触
 import { Car } from './car.js';
+import { STAGE_START } from './track.js';
 import { AICar } from './ai.js';
 import { Recovery } from './recovery.js';
 import { BotDriver } from './bot.js';
 
 // factor: トップ CPU の周回タイム ÷ 上手な自動ドライバーの周回タイム
 export const DIFFICULTY = {
-  easy: { label: 'かんたん', factor: 1.15, spread: 0.012 },
-  normal: { label: 'ふつう', factor: 1.03, spread: 0.008 },
-  hard: { label: 'むずかしい', factor: 1.0, spread: 0.006 },
+  // factor: 上手な自動ドライバーの周回タイムに対する、先頭 CPU の速さ（小さいほど速い）
+  easy: { label: 'かんたん', factor: 1.03, spread: 0.008 }, // 以前の「ふつう」
+  normal: { label: 'ふつう', factor: 1.0, spread: 0.006 }, // 以前の「むずかしい」
+  hard: { label: 'むずかしい', factor: 0.985, spread: 0.004 },
 };
 
 // コースごとに「上手なドライバー」の周回タイムと CPU の基準タイムを測る
 export function calibrate(track) {
   if (track.calib) return track.calib;
+  if (track.stageEnd) return (track.calib = calibrateSection(track));
   const dt = 1 / 120;
   const car = new Car(track);
   car.assist = true;
@@ -43,6 +46,37 @@ export function calibrate(track) {
   const aiLap = crosses.length === 2 ? crosses[1] - crosses[0] : track.profileLapTime;
   track.calib = { botLap, aiLap };
   return track.calib;
+}
+
+export { STAGE_START };
+
+// セクションコース: スタートライン（走りながら通過）からゴールまでの時間で、上手な自動ドライバーと CPU を比べる
+function calibrateSection(track) {
+  const dt = 1 / 120;
+  const S0 = STAGE_START, end = track.stageEnd;
+  const car = new Car(track);
+  car.assist = true;
+  car.reset(10, track.sampleArr(track.line, 10));
+  const bot = new BotDriver(car, track, 1.0);
+  let t = 0, t0 = null;
+  while (t < 900 && car.s < end) {
+    car.step(dt, bot.update());
+    t += dt;
+    if (t0 == null && car.s >= S0) t0 = t;
+  }
+  const botLap = t - (t0 ?? 0);
+  const ai = new AICar(track, 1.0, 1);
+  ai.noise.fill(0);
+  ai.lineBias = 0;
+  ai.place(10, 0);
+  t = 0; t0 = null;
+  while (t < 900 && ai.s < end) {
+    ai.update(dt, [], 0, true);
+    t += dt;
+    if (t0 == null && ai.s >= S0) t0 = t;
+  }
+  const aiLap = t - (t0 ?? 0);
+  return { botLap, aiLap };
 }
 
 export const DRIVERS = [
@@ -130,7 +164,7 @@ class RaceBase {
   results() {
     const st = this.standings();
     const L = this.track.length;
-    const total = this.laps * L;
+    const total = this.stage ? this.track.stageEnd - this.START : this.laps * L;
     return st.map((e, i) => {
       let time = e.finishTime, est = false;
       if (!e.finished) {
@@ -207,7 +241,10 @@ export class Race extends RaceBase {
     this.track = track;
     this.opts = opts;
     this.mode = opts.mode;
-    this.laps = opts.mode === 'race' ? opts.laps : 999;
+    // セクションコース（スタートとゴールが別の場所）: 1本走り切ったらゴール
+    this.stage = !!track.stageEnd;
+    this.START = this.stage ? STAGE_START : 0;
+    this.laps = this.stage ? 1 : opts.mode === 'race' ? opts.laps : 999;
     this.time = 0; // 総経過
     this.raceTime = 0; // スタートからの時間
     this.state = 'grid'; // grid -> countdown -> racing -> finished
@@ -215,7 +252,7 @@ export class Race extends RaceBase {
     this.entries = [];
     this.finishOrder = [];
     this.events = [];
-    const L = track.length;
+    const L = this.stage ? this.START : track.length; // グリッドの基準（スタートラインの位置）
     const player = new Car(track);
     player.assist = opts.assist;
     const pe = { kind: 'player', name: 'YOU', color: opts.playerColor, num: 1, car: player, lap: 0, prevS: 0, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 };
@@ -229,20 +266,25 @@ export class Race extends RaceBase {
       const paces = DRIVERS.map((_, i) => top - i * diff.spread);
       // 速い順に並べずに少し混ぜる
       const order = [0, 2, 1, 3, 5, 4, 6];
+      // セクションコースは1本勝負なので、プレイヤーは中団（5番手）から
+      const pSlot = this.stage ? 4 : n;
+      this.gridSlot = pSlot;
       for (let g = 0; g < n; g++) {
         const di = order[g];
         const ai = new AICar(track, paces[di], 1000 + di * 77);
-        const s = L - 12 - g * 8;
-        ai.place(s, g % 2 === 0 ? 3 : -3);
+        const slot = g < pSlot ? g : g + 1;
+        const s = L - 12 - slot * 8;
+        ai.place(s, slot % 2 === 0 ? 3 : -3);
         this.entries.push({ kind: 'ai', ...DRIVERS[di], ai, lap: 0, prevS: ai.s, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 });
       }
-      const ps = L - 12 - n * 8;
-      player.reset(ps, n % 2 === 0 ? 3 : -3);
+      const ps = L - 12 - pSlot * 8;
+      player.reset(ps, pSlot % 2 === 0 ? 3 : -3);
       pe.prevS = player.s;
       this.entries.push(pe);
     } else {
       // タイムアタックもレースと同じグリッド位置・スタートシグナルから
-      const n = DRIVERS.length;
+      // タイムアタックもレースと同じグリッド位置（セクションコースは5番手の位置）
+      const n = this.stage ? 4 : DRIVERS.length;
       player.reset(L - 12 - n * 8, n % 2 === 0 ? 3 : -3);
       pe.prevS = player.s;
       this.entries.push(pe);
@@ -254,6 +296,30 @@ export class Race extends RaceBase {
     this.recording = [];
     this.recT = 0;
     this.taTiming = false;
+  }
+
+  progress(e) {
+    if (this.stage) return this.pose(e).s - this.START;
+    return super.progress(e);
+  }
+
+  // セクションコースのゴール
+  finishStage(e) {
+    const t = this.raceTime;
+    e.finished = true;
+    e.finishTime = t;
+    e.laps.push(t);
+    e.best = t;
+    if (this.mode === 'ta') {
+      this.events.push({ type: 'lap', entry: e, time: t, best: true, frames: this.recording });
+      this.events.push({ type: 'taFinish', total: t });
+      return;
+    }
+    this.finishOrder.push(e);
+    if (e.kind === 'player') {
+      this.state = 'finished';
+      this.events.push({ type: 'finish', position: this.finishOrder.length });
+    }
   }
 
   startCountdown() {
@@ -274,7 +340,7 @@ export class Race extends RaceBase {
         this.state = 'racing';
         this.raceTime = 0;
         this.events.push({ type: 'go' });
-        for (const e of this.entries) e.lapStart = 0;
+        for (const e of this.entries) { e.lapStart = 0; if (this.stage) e.lap = 1; }
         this.recording = [];
         this.recT = 0;
         if (this.mode === 'ta') this.taTiming = true;
@@ -288,6 +354,8 @@ export class Race extends RaceBase {
     if (p.finished || this.opts.autopilot) {
       if (!this.bot) this.bot = new BotDriver(p.car, this.track, 0.9);
       inp = this.bot.update();
+      // セクションコースのゴール後はブレーキで止まる（道はゴールの先 150m まで）
+      if (this.stage && p.finished) inp = { ...inp, throttle: 0, brake: 1 };
     }
     // スリップストリーム（前方 30m 以内・横のずれ 1.6m 以内。近いほど効く）
     if (this.mode === 'race') {
@@ -323,14 +391,17 @@ export class Race extends RaceBase {
       });
       for (const e of this.entries) {
         if (e.kind !== 'ai') continue;
-        e.ai.update(dt, others, this.progress(e), started);
+        // セクションコースのゴール後はその場で止まる
+        e.ai.update(dt, others, this.progress(e), started, this.stage && e.finished ? 0 : null);
       }
       this.collide();
     }
 
-    // 周回判定
+    // 周回判定（セクションコースはゴール地点の通過）
     const L = this.track.length;
-    for (const e of this.entries) {
+    if (this.stage) {
+      if (started) for (const e of this.entries) if (!e.finished && this.pose(e).s >= this.track.stageEnd && this.pose(e).s < this.track.stageEnd + 300) this.finishStage(e);
+    } else for (const e of this.entries) {
       const s = this.pose(e).s;
       if (e.prevS > L * 0.75 && s < L * 0.25) {
         e.lap++;

@@ -30,6 +30,7 @@ export class Track {
     this.grip = def.grip ?? 1;
     this.build(def);
     this.buildSurfaces(def);
+    this.buildZones(def);
     this.buildRacingLine();
     this.buildSpeedProfile(def.spec || CAR_SPEC);
     this.buildHash();
@@ -402,19 +403,37 @@ export class Track {
     return arr[i0] + (arr[i1] - arr[i0]) * t;
   }
 
-  surfaceAt(d, curbHere) {
+  surfaceAt(d, curbHere, i = -1) {
     // 返り値: grip倍率, 抵抗係数, 種別
     const a = Math.abs(d);
     if (a <= this.halfW) return SURF.asphalt;
     if (curbHere && a <= this.halfW + 1.3) return SURF.curb;
-    if (this.def.scenery === 'city') return SURF.asphalt;
-    if (this.def.scenery === 'desert') return SURF.sand;
-    if (this.def.scenery === 'alpine') return SURF.snow;
+    const sc = i >= 0 && this.zoneArr ? this.zoneArr[i] : this.def.scenery;
+    if (sc === 'city') return SURF.asphalt;
+    if (sc === 'desert') return SURF.sand;
+    if (sc === 'alpine') return SURF.snow;
     return SURF.grass;
+  }
+
+  // 区間ごとの景色（コース外の路面に使う）。def.zones はゴールまで（周回なら全周）の長さに対する割合
+  buildZones(def) {
+    if (!def.zones) return;
+    const len = this.stageEnd || this.length;
+    this.zoneArr = new Array(this.N);
+    for (let i = 0; i < this.N; i++) {
+      const f = (i * this.ds) / len;
+      let k = def.zones[def.zones.length - 1][2];
+      for (const [a, b, kind] of def.zones) if (f >= a && f < b) { k = kind; break; }
+      if (f < def.zones[0][0]) k = def.zones[0][2];
+      this.zoneArr[i] = k;
+    }
   }
 }
 
 // 路面の種類（ラリー）とグリップ
+// セクションコース（スタートとゴールが別の場所）のスタートライン位置（m）。グリッドはこの手前に並ぶ
+export const STAGE_START = 130;
+
 export const SURFACE_KINDS = ['tarmac', 'gravel', 'dirt', 'snow', 'ice', 'sand', 'cobble'];
 export const SURFACE_GRIP = { tarmac: 1, gravel: 0.74, dirt: 0.8, snow: 0.5, ice: 0.3, sand: 0.64, cobble: 0.86 };
 

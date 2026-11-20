@@ -81,7 +81,7 @@ export class CircuitGame extends GameBase {
     this.mini = $('#minimap');
     this.miniBg = document.createElement('canvas');
     this.miniBg.width = this.miniBg.height = 200;
-    this.miniP = drawTrackMap(this.miniBg, track, { w: 5, pad: 14, color: 'rgba(255,255,255,0.85)' });
+    this.miniP = drawTrackMap(this.miniBg, track, { w: 5, pad: 14, color: 'rgba(255,255,255,0.85)', ...(track.stageEnd ? { range: [0, track.stageN] } : {}) });
     this.resetCamera();
     $('#hLaps').textContent = opts.mode === 'race' ? opts.laps : '∞';
     $('#hTot').textContent = this.race.entries.length;
@@ -91,7 +91,8 @@ export class CircuitGame extends GameBase {
     this.best2 = opts.mode === 'ta' && this.ghostData ? this.ghostData.time : Infinity;
     $('#hBest').textContent = fmt(opts.mode === 'ta' ? this.best2 : Infinity);
     $('#hLast').textContent = fmt(0);
-    if (opts.mode === 'ta') { $('#hBestL').textContent = '2周BEST'; $('#hLaps').textContent = '2'; this.updateTarget(); }
+    if (opts.mode === 'ta') { $('#hBestL').textContent = this.race.stage ? 'BEST' : '2周BEST'; $('#hLaps').textContent = '2'; this.updateTarget(); }
+    if (this.race.stage) $('#hLapBox').innerHTML = 'SECTION <span id="hLap">1</span>/<span id="hLaps">3</span>';
     C.input.setMode(opts.steer);
     C.input.sens = opts.sens;
     $('#hMsg').classList.remove('show');
@@ -238,6 +239,8 @@ export class CircuitGame extends GameBase {
     // タイムアタック: 1・2周目の合計で記録する
     $('#hLast').textContent = fmt(ev.time);
     let newBest = false;
+    // セクションコースは1本で記録（前の周を 0 秒・空として扱う）
+    if (r.stage && !this.prevLap) this.prevLap = { time: 0, frames: [], stage: true };
     if (!this.prevLap) {
       this.prevLap = { time: ev.time, frames: ev.frames };
       this.showMsg('FINAL LAP', 1.1, '#ffb000', true);
@@ -246,11 +249,12 @@ export class CircuitGame extends GameBase {
       const prev = this.prevLap;
       const total = prev.time + ev.time;
       const saved = store.get(this.taKey, null);
-      this.taResult = { laps: [prev.time, ev.time], total, prevBest: saved ? saved.time : null };
+      const laps = prev.stage ? [ev.time] : [prev.time, ev.time];
+      this.taResult = { laps, total, prevBest: saved ? saved.time : null };
       if (!saved || total < saved.time) {
         newBest = true;
         const frames = prev.frames.concat(ev.frames).map((v) => Math.round(v * 100) / 100);
-        store.set(this.taKey, { time: total, laps: [prev.time, ev.time], frames });
+        store.set(this.taKey, { time: total, laps, frames });
         this.ghostData = { time: total, frames };
         this.ghostProgress();
         if (!this.ghost) this.makeGhost();
@@ -368,7 +372,14 @@ export class CircuitGame extends GameBase {
     $('#fAbs').classList.toggle('on', this.opts.assist && c.braking > 0.5 && c.slipF > 0.07);
     const isRace = this.opts.mode === 'race';
     const lap = Math.max(1, Math.min(r.laps, r.player.lap));
-    $('#hLap').textContent = isRace ? lap : Math.min(2, Math.max(1, r.player.laps.length + 1));
+    if (r.stage) {
+      // セクションコースは全長を3区間に分けて表示
+      const f = Math.max(0, r.progress(r.player)) / (this.track.stageEnd - r.START);
+      const sec = Math.min(3, 1 + Math.floor(f * 3));
+      $('#hLap').textContent = sec;
+      if (sec !== this.lastSec && this.lastSec && r.state === 'racing' && !r.player.finished) this.showMsg(sec === 3 ? 'FINAL SECTION' : `SECTION ${sec}`, 1.1, sec === 3 ? '#ffb000' : '#fff', true);
+      this.lastSec = sec;
+    } else $('#hLap').textContent = isRace ? lap : Math.min(2, Math.max(1, r.player.laps.length + 1));
     let t = 0;
     if (isRace) t = r.state === 'racing' || r.state === 'finished' ? (r.player.finished ? r.player.finishTime : r.raceTime) : 0;
     else t = r.player.finished ? r.player.finishTime : r.taTiming ? r.raceTime : 0;
@@ -388,7 +399,7 @@ export class CircuitGame extends GameBase {
     } else if (this.ghostData && r.taTiming && !r.player.finished) {
       // ゴーストとの差: 計測区間（連続2周）の中で、同じ距離を進んだ時刻を比べる
       const tw = r.raceTime;
-      const my = r.progress(r.player);
+      const my = r.stage ? r.player.car.s : r.progress(r.player);
       const g = this.ghostProg;
       if (g && g.length > 1 && my >= g[0] && my <= g[g.length - 1]) {
         let lo = 0, hi = g.length - 1;
@@ -462,7 +473,7 @@ export class CircuitGame extends GameBase {
       $('#resBody').innerHTML = `
         <div class="res-big" style="color:${x.newBest ? '#ffd000' : '#fff'}">${fmt(x.total)}</div>
         ${medalHtml}
-        <div class="res-sub">タイムアタック · 1・2周目の合計 · ${diff}</div>
+        <div class="res-sub">タイムアタック · ${r.stage ? 'スタートからゴールまで' : '1・2周目の合計'} · ${diff}</div>
         <div class="laps-list">${x.laps.map((l, i) => `<span>L${i + 1} ${fmt(l)}</span>`).join('')}</div>
         <div class="coin-rows"><div class="r total"><span>獲得コイン</span><span><i class="coin"></i>+${this.taCoins || 0}</span></div></div>
         <div class="res-sub">所持コイン ${garage.coins}</div>`;

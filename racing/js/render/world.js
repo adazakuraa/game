@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { Sky } from '../../vendor/Sky.js';
 import * as T from './textures.js';
 import { mergeGeos } from './carmodel.js';
+import { STAGE_START } from '../sim/track.js';
 
 function rng(seed) {
   let a = seed >>> 0;
@@ -70,8 +71,36 @@ export class World {
     if (this.night) this.buildStreetLights();
   }
 
-  // 道を作る範囲（周回コースは全周。ラリーはゴールまで）
-  get lastIndex() { return this.track.N; }
+  // 道を作る範囲（周回コースは全周。一本道のコースはゴールの先 150m まで）
+  get lastIndex() {
+    const tr = this.track;
+    return tr.stageEnd ? Math.min(tr.N - 1, tr.stageN + Math.ceil(150 / tr.ds)) : tr.N;
+  }
+  // スタートラインの位置（周回コースは s=0、セクションコースは STAGE_START）
+  get startS() { return this.track.stageEnd ? STAGE_START : 0; }
+  // 任意地点の区間（コースの最寄り点で判定。粗いサンプルで十分）
+  zoneXZ(x, z) {
+    const tr = this.track;
+    if (!this.zoneSamples) {
+      this.zoneSamples = [];
+      for (let i = 0; i < this.lastIndex; i += 6) this.zoneSamples.push(i);
+    }
+    let best = 0, bd = Infinity;
+    for (const i of this.zoneSamples) {
+      const d = (tr.x[i] - x) ** 2 + (tr.z[i] - z) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return this.zoneAt(best);
+  }
+  // 区間（ゾーン）ごとの景色。def.zones = [[開始割合, 終了割合, 景色], ...]（ゴールまでの長さに対する割合）
+  zoneAt(i) {
+    const z = this.def.zones;
+    if (!z) return this.def.scenery;
+    const tr = this.track;
+    const f = (i * tr.ds) / (tr.stageEnd || tr.length);
+    for (const [a, b, kind] of z) if (f >= a && f < b) return kind;
+    return f < z[0][0] ? z[0][2] : z[z.length - 1][2];
+  }
 
   // ---------- 空・光 ----------
   buildSky() {
@@ -167,12 +196,12 @@ export class World {
   // ---------- 路面 ----------
   buildRoad() {
     const tr = this.track;
-    const N = tr.N;
+    const N = tr.N, M = this.lastIndex;
     const tiles = Math.max(1, Math.round(tr.length / 30));
     const vScale = tiles / tr.length;
     const across = 6;
     const pos = [], uv = [], idx = [], col = [];
-    for (let i = 0; i <= N; i++) {
+    for (let i = 0; i <= M; i++) {
       const j = i % N;
       const lx = tr.tz[j], lz = -tr.tx[j];
       for (let k = 0; k <= across; k++) {
@@ -185,7 +214,7 @@ export class World {
         col.push(1, 1, 1);
       }
     }
-    for (let i = 0; i < N; i++) {
+    for (let i = 0; i < M; i++) {
       for (let k = 0; k < across; k++) {
         const a = i * (across + 1) + k, b = a + 1, c = a + across + 1, d = c + 1;
         idx.push(a, b, c, b, d, c);
@@ -218,9 +247,9 @@ export class World {
     const cp = [], cu = [], ci = [];
     for (const side of [1, -1]) {
       let run = null;
-      for (let i = 0; i <= N; i++) {
+      for (let i = 0; i <= M; i++) {
         const j = i % N;
-        const on = tr.curb[j] && i < N;
+        const on = tr.curb[j] && i < M;
         if (on) {
           const lx = tr.tz[j], lz = -tr.tx[j];
           const base = cp.length / 3;
@@ -250,11 +279,11 @@ export class World {
   // 路肩の外側の帯（舗装 or 砂利）
   edgeStrip(dFrom, dTo, mat, yOff = 0.01) {
     const tr = this.track;
-    const N = tr.N;
+    const N = tr.N, M = this.lastIndex;
     const pos = [], uv = [], idx = [];
     for (const side of [1, -1]) {
       const base0 = pos.length / 3;
-      for (let i = 0; i <= N; i++) {
+      for (let i = 0; i <= M; i++) {
         const j = i % N;
         const lx = tr.tz[j], lz = -tr.tx[j];
         const wl = side > 0 ? tr.wallL[j] : tr.wallR[j];
@@ -263,7 +292,7 @@ export class World {
         pos.push(tr.x[j] + lx * b, tr.y[j] + yOff, tr.z[j] + lz * b);
         uv.push(0, (i * tr.ds) / 8, Math.abs(b - a) / 8, (i * tr.ds) / 8);
       }
-      for (let i = 0; i < N; i++) {
+      for (let i = 0; i < M; i++) {
         const a = base0 + i * 2, b = a + 1, c = a + 2, d = a + 3;
         if (side > 0) idx.push(a, c, b, b, c, d);
         else idx.push(a, b, c, b, d, c);
@@ -283,7 +312,7 @@ export class World {
   // ---------- 壁・ガードレール ----------
   buildWalls() {
     const tr = this.track;
-    const N = tr.N;
+    const N = tr.N, M = this.lastIndex;
     const city = this.def.scenery === 'city';
     if (city) {
       // 舗装されたランオフ
@@ -304,7 +333,7 @@ export class World {
       const baseF = posF.length / 3;
       let u = 0;
       let px = null, pz = null;
-      for (let i = 0; i <= N; i++) {
+      for (let i = 0; i <= M; i++) {
         const j = i % N;
         const lx = tr.tz[j], lz = -tr.tx[j];
         const w = (side > 0 ? tr.wallL[j] : tr.wallR[j]) * side;
@@ -322,7 +351,7 @@ export class World {
           uv.push(u / 4, 0, u / 4, 1);
         }
       }
-      for (let i = 0; i < N; i++) {
+      for (let i = 0; i < M; i++) {
         const a = base0 + i * 2, b = a + 1, c = a + 2, d = a + 3;
         if (side > 0) idx.push(a, b, c, b, d, c);
         else idx.push(a, c, b, b, c, d);
@@ -366,7 +395,7 @@ export class World {
       let n = 0;
       const step = Math.max(1, Math.round(4 / tr.ds));
       for (const side of [1, -1]) {
-        for (let i = 0; i < tr.N && n < count; i += step) {
+        for (let i = 0; i < M && n < count; i += step) {
           const w = (side > 0 ? tr.wallL[i] : tr.wallR[i]) * side + side * 0.1;
           m.makeRotationY(tr.hd[i]);
           m.setPosition(tr.x[i] + tr.tz[i] * w, tr.y[i], tr.z[i] - tr.tx[i] * w);
@@ -392,6 +421,7 @@ export class World {
     let n = 0;
     for (const c of tr.corners) {
       if (c.vEntry - c.vApex < 15) continue;
+      if (c.apex > this.lastIndex - 40) continue;
       const side = -c.side; // 外側
       for (let o = -30; o <= 10 && n < max - 3; o++) {
         const i = (c.apex + o * 2 + tr.N) % tr.N;
@@ -429,7 +459,7 @@ export class World {
     const res = this.quality >= 2 ? 6 : 9;
     const nx = Math.ceil(W / res), nz = Math.ceil(H / res);
     const sc = this.def.scenery;
-    const amp = { country: 18, mountain: 70, city: 0, desert: 14, forest: 22, alpine: 60 }[sc];
+    const amp = this.def.terrainAmp ?? { country: 18, mountain: 70, city: 0, desert: 14, forest: 22, alpine: 60 }[sc];
     // 各頂点から最寄りのコース点（半径 RAD 内）をスタンプ方式で求める
     const RAD = 140;
     const nv = (nx + 1) * (nz + 1);
@@ -489,11 +519,32 @@ export class World {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    g.setIndex(idx);
+    const GROUND = { country: 'grass', mountain: 'mountain', city: 'city', desert: 'sand', forest: 'forest', alpine: 'snow' };
+    const groundMat = (k) => {
+      const kind = GROUND[k];
+      const gt = T.groundTextures(kind);
+      return new THREE.MeshStandardMaterial({ map: gt.map, normalMap: gt.normal, vertexColors: true, roughness: kind === 'city' ? 0.8 : 0.95, envMapIntensity: this.rain ? 0.9 : 0.4 });
+    };
+    let mat;
+    if (this.def.zones) {
+      // 区間ごとに地面の素材を変える（三角形をゾーン別のグループに並べ替える）
+      const kinds = [...new Set(this.def.zones.map((z) => z[2]))];
+      const vz = new Uint8Array(nv);
+      for (let v = 0; v < nv; v++) {
+        const k = bestI[v] >= 0 ? this.zoneAt(bestI[v]) : this.zoneXZ(pos[v * 3], pos[v * 3 + 2]);
+        vz[v] = kinds.indexOf(k);
+      }
+      const buckets = kinds.map(() => []);
+      for (let t = 0; t < idx.length; t += 3) buckets[vz[idx[t]]].push(idx[t], idx[t + 1], idx[t + 2]);
+      const sorted = [];
+      buckets.forEach((b, k) => { g.addGroup(sorted.length, b.length, k); for (const v of b) sorted.push(v); });
+      g.setIndex(sorted);
+      mat = kinds.map(groundMat);
+    } else {
+      g.setIndex(idx);
+      mat = groundMat(sc);
+    }
     g.computeVertexNormals();
-    const kind = { country: 'grass', mountain: 'mountain', city: 'city', desert: 'sand', forest: 'forest', alpine: 'snow' }[sc];
-    const gt = T.groundTextures(kind);
-    const mat = new THREE.MeshStandardMaterial({ map: gt.map, normalMap: gt.normal, vertexColors: true, roughness: kind === 'city' ? 0.8 : 0.95, envMapIntensity: this.rain ? 0.9 : 0.4 });
     const terrain = new THREE.Mesh(g, mat);
     terrain.receiveShadow = true;
     this.scene.add(terrain);
@@ -539,7 +590,8 @@ export class World {
     const tr = this.track;
     const hw = tr.halfW;
     // スタートライン（チェッカー）
-    const p0 = tr.pointAt(0, 0, {});
+    const S0 = this.startS;
+    const p0 = tr.pointAt(S0, 0, {});
     const line = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2, 1.4), new THREE.MeshStandardMaterial({ map: T.checkerTexture(), roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -2 }));
     line.rotation.x = -Math.PI / 2;
     const lineGroup = new THREE.Group();
@@ -550,7 +602,7 @@ export class World {
     // グリッド枠
     const gm = new THREE.MeshBasicMaterial({ color: 0xe8e8e8, polygonOffset: true, polygonOffsetFactor: -2 });
     for (let g = 0; g < 8; g++) {
-      const s = tr.length - 12 - g * 8 + 2.6;
+      const s = (tr.stageEnd ? S0 : tr.length) - 12 - g * 8 + 2.6;
       const d = g % 2 === 0 ? 3 : -3;
       const p = tr.pointAt(s, d, {});
       const grp = new THREE.Group();
@@ -566,10 +618,10 @@ export class World {
       this.scene.add(grp);
     }
     // ガントリー（スタートシグナル）
-    const gp = tr.pointAt(4, 0, {});
+    const gp = tr.pointAt(S0 + 4, 0, {});
     const gantry = new THREE.Group();
     const metal = new THREE.MeshStandardMaterial({ color: 0x30343a, metalness: 0.7, roughness: 0.4 });
-    const span = Math.min(tr.wallL[0], tr.wallR[0]) + 0.6;
+    const span = Math.min(tr.wallL[gp.i], tr.wallR[gp.i]) + 0.6;
     for (const sx of [span, -span]) {
       const post = new THREE.Mesh(new THREE.BoxGeometry(0.5, 7.2, 0.5), metal);
       post.position.set(sx, 3.6, 0);
@@ -604,7 +656,7 @@ export class World {
     this.scene.add(gantry);
 
     // ピットビル・グランドスタンド（ループの外側に配置）
-    const sMid = 60;
+    const sMid = S0 + 60;
     const pm = tr.pointAt(sMid, 0, {});
     let outside = 1;
     for (const side of [1, -1]) {
@@ -663,6 +715,65 @@ export class World {
     }
     this.scene.add(building);
     void wallO; void wt; void pm;
+    if (tr.stageEnd) this.buildGoal();
+  }
+
+  // セクションコースのゴール: チェッカーのライン、FINISH のゲート、先の停止エリア
+  buildGoal() {
+    const tr = this.track;
+    const pg = tr.pointAt(tr.stageEnd, 0, {});
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(tr.halfW * 2, 1.4).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: T.checkerTexture(), roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -2 }));
+    line.position.set(pg.x, pg.y + 0.09, pg.z);
+    line.rotation.y = pg.hd;
+    this.scene.add(line);
+    this.arch(tr.stageEnd, 'FINISH', '#d01818');
+    const red = new THREE.MeshStandardMaterial({ color: 0xd22, roughness: 0.6 });
+    const white = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.6 });
+    for (let s = tr.stageEnd + 10; s < tr.stageEnd + 140; s += 14) {
+      for (const side of [1, -1]) {
+        const p = tr.pointAt(s, 0, {});
+        const w = (side > 0 ? tr.wallL[p.i] : tr.wallR[p.i]) - 0.6;
+        const q = tr.pointAt(s, side * w, {});
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.1, 0.12), Math.floor(s / 14) % 2 ? red : white);
+        post.position.set(q.x, q.y + 0.55, q.z);
+        this.scene.add(post);
+      }
+    }
+    // 道の終わりの壁
+    const pe = tr.pointAt(tr.stageEnd + 148, 0, {});
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(tr.halfW * 2 + 6, 1.2, 0.8), new THREE.MeshStandardMaterial({ map: T.checkerTexture(), roughness: 0.7 }));
+    wall.position.set(pe.x, pe.y + 0.6, pe.z);
+    wall.rotation.y = pe.hd;
+    this.scene.add(wall);
+  }
+
+  arch(s, text, color) {
+    const tr = this.track;
+    const p = tr.pointAt(s, 0, {});
+    const span = Math.min(tr.wallL[p.i], tr.wallR[p.i]) + 0.3;
+    const g = new THREE.Group();
+    const metal = new THREE.MeshStandardMaterial({ color: 0x30343a, metalness: 0.7, roughness: 0.4 });
+    for (const sx of [span, -span]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.5, 7.2, 0.5), metal);
+      post.position.set(sx, 3.6, 0);
+      post.castShadow = true;
+      g.add(post);
+    }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(span * 2 + 0.5, 1.8, 0.6), metal);
+    beam.position.y = 6.6;
+    beam.castShadow = true;
+    g.add(beam);
+    const ban = new THREE.Mesh(new THREE.PlaneGeometry(span * 2 - 0.4, 1.6), new THREE.MeshStandardMaterial({ map: T.bannerTextureText(text, color), roughness: 0.5 }));
+    ban.position.set(0, 6.6, -0.32);
+    ban.rotation.y = Math.PI;
+    g.add(ban);
+    const ban2 = ban.clone();
+    ban2.position.z = 0.32;
+    ban2.rotation.y = 0;
+    g.add(ban2);
+    g.position.set(p.x, p.y, p.z);
+    g.rotation.y = p.hd;
+    this.scene.add(g);
   }
 
   // ---------- ブレーキング看板 ----------
@@ -671,6 +782,7 @@ export class World {
     const postMat = new THREE.MeshStandardMaterial({ color: 0x777777, metalness: 0.6, roughness: 0.5 });
     for (const c of tr.corners) {
       if (c.vEntry - c.vApex < 14) continue;
+      if (c.apex > this.lastIndex - 40 || (tr.stageEnd && c.apex * tr.ds < this.startS + 160)) continue;
       // ターンイン地点: 頂点から手前で速度が頂点+20% になる位置
       let ti = c.apex;
       for (let o = 0; o < 200; o++) {
@@ -706,7 +818,9 @@ export class World {
     const tr = this.track;
     const b = this.bounds;
     let placed = 0, tries = 0;
-    while (placed < count && tries < count * 30) {
+    const zf = this.zoneFilter;
+    const maxTries = (count * 30) / (zf ? Math.max(0.15, Math.min(1, this.zoneShare)) : 1);
+    while (placed < count && tries < maxTries) {
       tries++;
       const x = b.minX + this.rand() * (b.maxX - b.minX);
       const z = b.minZ + this.rand() * (b.maxZ - b.minZ);
@@ -720,15 +834,36 @@ export class World {
         const wall = d > 0 ? tr.wallL[i] : tr.wallR[i];
         if (dist < wall + minDist) continue;
         // スタート付近の建物と重ならないように
-        if ((i * tr.ds < 210 || i * tr.ds > tr.length - 120) && Math.sign(d) === this.pitSide && dist < wall + 50) continue;
+        const rs = i * tr.ds - this.startS;
+        if ((tr.stageEnd ? rs > -120 && rs < 210 : rs < 210 || rs > tr.length - 120) && Math.sign(d) === this.pitSide && dist < wall + 50) continue;
       }
+      if (zf && (nr ? this.zoneAt(nr.i) : this.zoneXZ(x, z)) !== zf) continue;
       fn(x, this.heightAt(x, z), z, nr);
       placed++;
     }
   }
 
   buildScenery() {
-    const sc = this.def.scenery;
+    const zones = this.def.zones;
+    if (zones) {
+      // 区間ごとに、その区間の長さに応じた量の景色を置く
+      const kinds = [...new Set(zones.map((z) => z[2]))];
+      for (const k of kinds) {
+        this.zoneFilter = k;
+        // 長いコースでは景色の量も増やす（普通のサーキット 1 周 ≒ 2.6km 分を基準に）
+        const lenK = Math.max(1, (this.track.stageEnd || this.track.length) / 2600);
+        this.zoneShare = zones.filter((z) => z[2] === k).reduce((a, z) => a + (z[1] - z[0]), 0) * lenK;
+        this.buildSceneryFor(k);
+      }
+      this.zoneFilter = null;
+      this.zoneShare = 1;
+    } else this.buildSceneryFor(this.def.scenery);
+    // 広告看板（コース沿い）
+    this.buildBillboards();
+  }
+
+  buildSceneryFor(sc) {
+    const share = this.zoneFilter ? this.zoneShare : 1;
     const q = this.quality;
     const m4 = new THREE.Matrix4();
     const quat = new THREE.Quaternion();
@@ -737,7 +872,7 @@ export class World {
     const col = new THREE.Color();
     if (sc === 'country' || sc === 'forest' || sc === 'mountain' || sc === 'alpine') {
       const pine = sc !== 'country';
-      const count = { country: 700, forest: 2600, mountain: 1800, alpine: 1500 }[sc] * (q >= 2 ? 1 : 0.55);
+      const count = Math.round({ country: 700, forest: 2600, mountain: 1800, alpine: 1500 }[sc] * (q >= 2 ? 1 : 0.55) * share);
       // 木: 幹 + 葉（円錐 or 球の集合）
       const trunkGeo = new THREE.CylinderGeometry(0.18, 0.3, 4, 6);
       trunkGeo.translate(0, 2, 0);
@@ -789,10 +924,10 @@ export class World {
       leaves.receiveShadow = true;
       this.scene.add(trunks, leaves);
       // 岩
-      this.buildRocks(sc === 'mountain' || sc === 'alpine' ? 260 : 80, sc === 'alpine' ? 0xc8ced6 : 0x8a8a84);
+      this.buildRocks(Math.round((sc === 'mountain' || sc === 'alpine' ? 260 : 80) * share), sc === 'alpine' ? 0xc8ced6 : 0x8a8a84);
     }
     if (sc === 'desert') {
-      this.buildRocks(420, 0xb07850, true);
+      this.buildRocks(Math.round(420 * share), 0xb07850, true);
       // サボテン
       const parts = [];
       const c1 = new THREE.CylinderGeometry(0.35, 0.4, 5, 8);
@@ -807,7 +942,7 @@ export class World {
       parts.push(c3);
       const cg = mergeGeos(parts);
       const cmat = new THREE.MeshStandardMaterial({ color: 0x4e6b34, roughness: 0.8 });
-      const cnt = 220;
+      const cnt = Math.max(1, Math.round(220 * share));
       const cac = new THREE.InstancedMesh(cg, cmat, cnt);
       let n = 0;
       this.scatter(cnt, 8, 1e9, (x, y, z) => {
@@ -820,9 +955,7 @@ export class World {
       cac.castShadow = true;
       this.scene.add(cac);
     }
-    if (sc === 'city') this.buildCity();
-    // 広告看板（コース沿い）
-    this.buildBillboards();
+    if (sc === 'city') this.buildCity(share);
   }
 
   buildRocks(count, color, big = false) {
@@ -851,7 +984,7 @@ export class World {
     this.scene.add(inst);
   }
 
-  buildCity() {
+  buildCity(share = 1) {
     const tr = this.track;
     const wt = T.windowTexture(this.night);
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -860,7 +993,7 @@ export class World {
     const mat = new THREE.MeshStandardMaterial({ map: wt.map, emissiveMap: wt.emissive, emissive: this.night ? 0xffffff : 0x000000, emissiveIntensity: this.night ? 1.2 : 0, roughness: 0.55, metalness: 0.3 });
     mat.map.repeat.set(2, 3);
     wt.emissive.repeat.set(2, 3);
-    const count = this.quality >= 2 ? 520 : 300;
+    const count = Math.max(1, Math.round((this.quality >= 2 ? 520 : 300) * share));
     const inst = new THREE.InstancedMesh(geo, mat, count);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3();
     const col = new THREE.Color();
@@ -882,7 +1015,8 @@ export class World {
     inst.castShadow = true;
     inst.receiveShadow = true;
     this.scene.add(inst);
-    // 遠景のスカイライン
+    // 遠景のスカイライン（区間の一部が街のときは作らない）
+    if (this.zoneFilter) { this.buildSea(); return; }
     const sky = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: 0x1b2230, emissiveMap: wt.emissive, emissive: this.night ? 0xffffff : 0, emissiveIntensity: this.night ? 0.8 : 0, roughness: 0.8 }), 160);
     for (let k = 0; k < 160; k++) {
       const a = (k / 160) * Math.PI * 2 + this.rand() * 0.03;
@@ -893,7 +1027,11 @@ export class World {
       sky.setMatrixAt(k, m4);
     }
     this.scene.add(sky);
-    // 海（港）
+    this.buildSea();
+  }
+
+  // 海（港）
+  buildSea() {
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x0a1622, metalness: 0.1, roughness: 0.15, envMapIntensity: 1.5 }));
     sea.position.set(this.center.x, -1.5, this.center.z);
     this.scene.add(sea);
@@ -905,7 +1043,8 @@ export class World {
     const frame = new THREE.MeshStandardMaterial({ color: 0x3a3d42, metalness: 0.6, roughness: 0.5 });
     const city = this.def.scenery === 'city';
     const every = city ? 70 : 110;
-    for (let s = 150; s < tr.length - 60; s += every + this.rand() * 60) {
+    const sEnd = tr.stageEnd ? tr.stageEnd + 100 : tr.length - 60;
+    for (let s = this.startS + 150; s < sEnd; s += every + this.rand() * 60) {
       const p = tr.pointAt(s, 0, {});
       const i = p.i;
       const side = this.rand() < 0.5 ? 1 : -1;
@@ -946,7 +1085,7 @@ export class World {
     headGeo.translate(0, 8.9, 2.3);
     const poleG = mergeGeos([poleGeo, armGeo]);
     const spacing = 34;
-    const n = Math.floor(tr.length / spacing);
+    const n = Math.floor((tr.stageEnd ? tr.stageEnd + 140 : tr.length) / spacing);
     const poles = new THREE.InstancedMesh(poleG, new THREE.MeshStandardMaterial({ color: 0x3a3e44, metalness: 0.7, roughness: 0.4 }), n);
     const heads = new THREE.InstancedMesh(headGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffd9a0, emissiveIntensity: 3 }), n);
     const m4 = new THREE.Matrix4();

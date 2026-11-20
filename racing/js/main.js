@@ -87,6 +87,7 @@ function buildMenu() {
       settings.sel[g.id] = i;
       saveSettings();
       list.querySelectorAll('.card').forEach((c, k) => c.classList.toggle('on', k === i));
+      syncSegs();
     };
     list.appendChild(card);
   });
@@ -128,7 +129,9 @@ function syncSegs() {
   const race = !g.hasMode || settings.mode === 'race';
   $('#modeSeg').style.display = g.hasMode ? '' : 'none';
   $('#diffOpt').style.display = race ? '' : 'none';
-  $('#lapsOpt').style.display = race && g.laps ? '' : 'none';
+  // セクションコース（スタートとゴールが別）は周回数を選ばない
+  const curDef = g.events[selIndex(g)];
+  $('#lapsOpt').style.display = race && g.laps && !curDef.stage ? '' : 'none';
   $('#menuHint').textContent = g.hint(settings);
   const notes = {
     slide: '画面左側を指で左右にスライドしてハンドル操作（アナログ）。',

@@ -119,10 +119,10 @@ export class Car {
     // 車体の左右方向を中心線の左法線へ射影
     const latDot = lx * proj.lx + lz * proj.lz;
     const hw = c.trackW / 2;
-    const sFL = tr.surfaceAt(projF.d + hw * latDot, projF.curb);
-    const sFR = tr.surfaceAt(projF.d - hw * latDot, projF.curb);
-    const sRL = tr.surfaceAt(projR.d + hw * latDot, projR.curb);
-    const sRR = tr.surfaceAt(projR.d - hw * latDot, projR.curb);
+    const sFL = tr.surfaceAt(projF.d + hw * latDot, projF.curb, projF.i);
+    const sFR = tr.surfaceAt(projF.d - hw * latDot, projF.curb, projF.i);
+    const sRL = tr.surfaceAt(projR.d + hw * latDot, projR.curb, projR.i);
+    const sRR = tr.surfaceAt(projR.d - hw * latDot, projR.curb, projR.i);
     this.wheelSurf[0] = sFL.type; this.wheelSurf[1] = sFR.type;
     this.wheelSurf[2] = sRL.type; this.wheelSurf[3] = sRR.type;
     const baseMu = c.mu * tr.gripArr[proj.i];

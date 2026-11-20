@@ -38,16 +38,16 @@ export const GENRES = [
     laps: [2, 3, 5],
     defaultLaps: 3,
     makeTrack: track,
-    mapOpts: () => ({}),
+    mapOpts: (def, tr) => (tr.stageEnd ? { range: [0, tr.stageN] } : {}),
     meta: (def, tr, s) => ({
-      sub: `${def.en} · ${(tr.length / 1000).toFixed(2)} km`,
+      sub: tr.stageEnd ? `${def.en} · セクション ${((tr.stageEnd - 130) / 1000).toFixed(2)} km` : `${def.en} · 1周 ${(tr.length / 1000).toFixed(2)} km`,
       rec: s.mode === 'ta'
         ? taRec(def)
         : `最高順位 ${store.get('rank.' + def.id + '.' + s.difficulty, null) ? store.get('rank.' + def.id + '.' + s.difficulty, null) + '位' : '—'}（${DIFFICULTY[s.difficulty].label}）`,
     }),
     hint: (s) => (s.mode === 'race'
-      ? '最後尾スタート。CPU 7台を抜いて優勝を目指そう。ブレーキングとライン取りが鍵。'
-      : 'ひとりで2周。スタートからの1・2周目の合計タイムが記録になる。自己ベストの2周がゴーストとして走る。'),
+      ? '周回コースは最後尾、セクションコース（スタートとゴールが別）は5番手からスタート。CPU 7台を抜いて優勝を目指そう。'
+      : 'ひとりで走る。周回コースは1・2周目の合計、セクションコースはゴールまでのタイムが記録。自己ベストの走りがゴーストになる。'),
     tips: [
       'コーナーの手前の 150 / 100 / 50 の看板がブレーキの目安。',
       'アウト・イン・アウト。コーナーの出口でアクセルを早く踏めるラインを。',
