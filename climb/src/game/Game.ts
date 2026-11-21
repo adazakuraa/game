@@ -335,16 +335,21 @@ export class Game {
     document.getElementById('restart-btn')!.addEventListener('click', () => this.startRun());
     document.getElementById('quit-btn')!.addEventListener('click', () => this.toTitle());
     document.getElementById('result-primary')!.addEventListener('click', () => {
-      if (this.coach) this.withLoading(() => this.newExpedition('everest'));
-      else if (this.state === 'summit') this.beginDescent();
+      if (this.coach) {
+        // never silently overwrite an expedition in progress
+        const sv = readSave();
+        this.withLoading(() => { if (sv) { this.loadSave(sv); this.startRun(); } else this.newExpedition('everest'); });
+      } else if (this.state === 'summit') this.beginDescent();
       else if (this.state === 'camp') this.withLoading(() => this.departNextStage());
       else if (this.state === 'won') this.withLoading(() => this.newExpedition(this.selected));
       else if (this.checkpoint) this.resumeCheckpoint();
       else this.startRun();
     });
     document.getElementById('result-camp')!.addEventListener('click', () => {
-      if (this.coach) this.withLoading(() => this.newExpedition('k2'));
-      else this.startRun();
+      if (this.coach) {
+        const sv = readSave();
+        if (!sv) this.withLoading(() => this.newExpedition('k2'));
+      } else this.startRun();
     });
     document.getElementById('result-rest')!.addEventListener('click', () => this.restDay());
     document.getElementById('result-secondary')!.addEventListener('click', () => this.toTitle());
@@ -1766,13 +1771,13 @@ export class Game {
       `${w.def.name} 山頂 ${w.def.summitAltitude.toLocaleString('en-US')}m`,
       'オーストラリア本土の最高峰に立った。操作と画面の見かたは、もう身についている。次は本物の山へ。',
       'win',
-      'エベレスト遠征へ',
+      readSave() ? '遠征の続きへ' : 'エベレスト遠征へ',
       this.legResult ? this.resultRows(this.legResult, '登頂までの時間') : [],
     );
     if (this.legResult) this.showGrade(this.legResult, Game.praiseFor(this.legResult.grade));
     const k2 = document.getElementById('result-camp')!;
     k2.textContent = 'K2 遠征へ';
-    k2.classList.remove('hidden');
+    k2.classList.toggle('hidden', !!readSave());
     document.getElementById('result-secondary')!.textContent = 'タイトルへ';
   }
 

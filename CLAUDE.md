@@ -11,11 +11,11 @@
 
 | フォルダ | タイトル | アーティファクト URL | 最新コードのブランチ | `main` との関係 |
 | --- | --- | --- | --- | --- |
-| `climb/` | DEATH ZONE 8000（高所登山） | https://claude.ai/artifact/Y6AmowkXBB8HND5EP9osHX | `ccr-1b79a73c-q3y30y` | main より 32 コミット先（キャンプ・犬・遺品・評価など） |
+| `climb/` | DEATH ZONE 8000（高所登山） | https://claude.ai/artifact/Y6AmowkXBB8HND5EP9osHX | `ccr-03145bfa-7bai31` | main より先（キャンプ・犬・遺品・評価・コジオスコのチュートリアルなど） |
 | `racing/` | APEX LINE（GT・ラリー・ロードバイク） | https://claude.ai/artifact/UB1cbzTRiNqA9dTLkbRodb | `ccr-13bfe4f4-cpifvy` | main より先（ラリー・バイク・ガレージ・ドリフト・性能パーツ・金メダル基準の難易度・ジャンプ着地のカメラなど） |
 | `dive/` | BLUE DEPTHS（ダイビング図鑑） | https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk | `main`（= `ccr-15ad1488-xpaney`） | 同じ |
 | `kanken/` | 漢検ランダム漢字 | （未公開） | `main` | 同じ |
-| このドキュメント | README.md / CLAUDE.md / scripts/ | — | `ccr-79abba39-cmnsno` | main より先（未マージ） |
+| このドキュメント | README.md / CLAUDE.md / scripts/ | — | `ccr-03145bfa-7bai31` | main より先（未マージ） |
 
 **この表は古くなる**。実際の最新は次のコマンドで確かめる（フォルダごとに、最新コミットを含むリモートブランチを表示）：
 
@@ -77,7 +77,7 @@ bash scripts/latest-branches.sh climb      # 1 つだけ
 ### climb/ — DEATH ZONE 8000（Three.js + TypeScript + Vite、port 5188）
 
 一人称でエベレスト南東稜・K2 アブルッツィ稜を登る。酸素流量と SpO₂、体温・凍傷、HACE、フィックスロープのクリップ／付け替え、滑落停止、天候、セラック崩落、キャンプ（食事・報奨金）、犬、遺品と記録帳、区間評価と自己ベスト、チェックポイント再開。
-説明: `climb/README.md`、設計と桜井流レビュー: `climb/DESIGN.md`。以下は最新ブランチ `ccr-1b79a73c-q3y30y` の構成。
+説明: `climb/README.md`、設計と桜井流レビュー: `climb/DESIGN.md`。以下は最新ブランチ `ccr-03145bfa-7bai31` の構成。
 
 | ファイル | 役割 |
 | --- | --- |
@@ -109,7 +109,7 @@ bash scripts/latest-branches.sh climb      # 1 つだけ
 | `tests/visual.spec.ts` | Playwright の見た目確認。`bot-playtest.template.ts` は自動プレイのひな形 |
 | `scripts/make-artifact.mjs` | ビルドを 1 ファイルの HTML にまとめる |
 
-テスト用フック: `window.__THREE_GAME_TEST_HOOKS__.setState(name)` で `title` / `night-start` / `active-play` / `ridge` / `k2-bottleneck` / `storm` / `fail` / `summit` に直接移動できる。
+テスト用フック: `window.__THREE_GAME_TEST_HOOKS__.setState(name)` で `title` / `night-start` / `active-play` / `ridge` / `k2-bottleneck` / `storm` / `fail` / `summit`、チュートリアルの `tutorial` / `tutorial-summit` に直接移動できる。
 
 ### racing/ — APEX LINE（Three.js + 素の JS ES モジュール、ビルドなし）
 
