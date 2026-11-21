@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { Missions } from './missions';
+import { Kitchen, type LandSave } from './kitchen';
+import { BIG_KG, DISH, FISHING, edibleInfo, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
 import { evaluateShot, LEGACY_NEED, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
@@ -14,7 +16,7 @@ import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
 import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
 
-type Save = { found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
+type Save = LandSave & { found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
 
@@ -66,8 +68,18 @@ export class Game {
   private freezeT = 0;
   private lastEncounter = -100;
   private coldWarned = -100;
-  /** night dive chosen on the boat */
-  private nightMode = false;
+  /** camera or spear in hand */
+  private tool: 'camera' | 'spear' = 'camera';
+  private reload = 0;
+  private diveCatch: Catch[] = [];
+  private spearT: ReturnType<Creatures['findSpearTarget']> = null;
+  private spearFx!: THREE.Mesh;
+  private spearAnim = -1;
+  private spearTo = new THREE.Vector3();
+  /** dish eaten before this dive */
+  private buff: DishId | null = null;
+  private kitchen!: Kitchen;
+  private nightAnnounced = 0;
   private missions!: Missions;
   /** request rewards earned this dive */
   private bonuses: { label: string; value: number }[] = [];
@@ -117,18 +129,27 @@ export class Game {
     this.scene.add(this.creatures.group);
     this.missions = new Missions();
     this.scene.add(this.missions.group);
+    this.spearFx = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 6).rotateX(Math.PI / 2).translate(0, 0, -0.5), new THREE.MeshStandardMaterial({ color: 0xc8ccd0, metalness: 0.8, roughness: 0.3 }));
+    this.spearFx.visible = false;
+    this.spearFx.frustumCulled = false;
+    this.scene.add(this.spearFx);
+    this.kitchen = new Kitchen({
+      save: this.save,
+      write: () => this.writeSave(),
+      toast: (t, k, d) => this.toast(t, k ?? '', d),
+      chime: (big) => this.audio.chime(big),
+      changed: () => this.renderTitle(),
+      known: (id) => !!this.save.found[id],
+    });
+    this.kitchen.ensureOrders();
     this.audio.onExhale = () => {
       if (this.state === 'diving') this.env.exhale(this.camera, this.ads || this.has('rebreather') ? 0 : 1);
     };
 
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
-    $('night-toggle').addEventListener('click', () => {
-      this.nightMode = !this.nightMode;
-      $('night-toggle').setAttribute('aria-pressed', String(this.nightMode));
-      $('night-label').textContent = `ナイトダイブ：${this.nightMode ? 'ON' : 'OFF'}`;
-      this.audio.unlock();
-    });
+    $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
+    $('res-kitchen').addEventListener('click', () => { this.toTitle(); this.kitchen.open(); });
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.installHooks();
@@ -195,19 +216,20 @@ export class Game {
 
   /** Species still needed before an item comes into stock. */
   private stockGap(g: (typeof SHOP)[number]): number {
+    if (g.rep) return repLevel(this.save.rep ?? 0) >= g.rep ? 0 : 1;
     return Math.max(0, Math.ceil((g.need / 100) * SPECIES.length) - this.foundCount);
   }
 
   /** Next gear the player can aim for, and how far away it is (the reward hanging in front of them). */
   private nextGoal(): { name: string; need: number; species: number } | null {
     const money = this.save.money ?? 0;
-    const g = SHOP.find((x) => !this.has(x.id));
+    const g = SHOP.find((x) => !this.has(x.id) && !x.rep);
     return g ? { name: g.name, need: Math.max(0, g.price - money), species: this.stockGap(g) } : null;
   }
 
   private buy(id: GearId): void {
     const g = SHOP.find((x) => x.id === id)!;
-    if (this.has(id) || (this.save.money ?? 0) < g.price || this.stockGap(g) > 0) return;
+    if (this.has(id) || (this.save.money ?? 0) < g.price || this.stockGap(g) > 0 || (g.req && !this.has(g.req))) return;
     this.save.money = (this.save.money ?? 0) - g.price;
     (this.save.owned ??= []).push(id);
     this.writeSave();
@@ -235,6 +257,7 @@ export class Game {
     this.input.bindButton($('btn-boost'), 'boost', true);
     this.input.bindButton($('btn-shutter'), 'shutter');
     this.input.bindButton($('btn-light'), 'light');
+    this.input.bindButton($('btn-tool'), 'tool');
     $('btn-pause').addEventListener('click', () => this.setPaused(true));
     $('resume').addEventListener('click', () => this.setPaused(false));
     $('abort').addEventListener('click', () => this.endDive('surface'));
@@ -276,6 +299,10 @@ export class Game {
       b.addEventListener('click', () => this.startDive(dp));
       pts.appendChild(b);
     }
+    this.renderDaytime();
+    const ready = this.kitchen.readyCount();
+    const lv = repLevel(this.save.rep ?? 0);
+    $('k-badge').textContent = `評判Lv${lv}・注文${this.save.orders?.length ?? 0}件${ready ? `（${ready}件 作れる！）` : ''}${(this.save.story ?? 0) < lv ? '・新しい話' : ''}`;
     const gear = $('gear');
     const money = this.save.money ?? 0;
     const goal = this.nextGoal();
@@ -292,20 +319,43 @@ export class Game {
         const on = this.has(u.id);
         const gap = this.stockGap(u);
         const stocked = gap === 0;
-        const can = !on && stocked && money >= u.price;
-        const req = on ? '入手済み' : !stocked ? `図鑑${u.need}%で入荷<br>（あと${gap}種）` : can ? `購入 ${yen(u.price)}` : yen(u.price);
-        return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24">${u.icon}</svg></div>${stocked || on ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${stocked || on ? u.desc : '図鑑を埋めると入荷する'}</span></button>`;
+        const needReq = !!u.req && !this.has(u.req);
+        const can = !on && stocked && money >= u.price && !needReq;
+        const req = on ? '入手済み' : !stocked ? (u.rep ? `食堂の評判Lv${u.rep}で入荷` : `図鑑${u.need}%で入荷<br>（あと${gap}種）`) : needReq ? `先に${SHOP.find((x) => x.id === u.req)!.name}` : can ? `購入 ${yen(u.price)}` : yen(u.price);
+        return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24">${u.icon}</svg></div>${stocked || on || u.rep ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${stocked || on || u.rep ? u.desc : '図鑑を埋めると入荷する'}</span></button>`;
       }).join('');
     gear.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((b) =>
       b.addEventListener('click', () => {
         const id = b.dataset.buy as GearId;
         if (this.has(id)) return;
         const g = SHOP.find((x) => x.id === id)!;
-        if (this.stockGap(g) > 0) { this.toast(`図鑑をあと${this.stockGap(g)}種埋めると入荷する`); return; }
+        if (this.stockGap(g) > 0) { this.toast(g.rep ? `しおさい亭の評判がLv${g.rep}になると入荷する` : `図鑑をあと${this.stockGap(g)}種埋めると入荷する`); return; }
+        if (g.req && !this.has(g.req)) { this.toast(`先に「${SHOP.find((x) => x.id === g.req)!.name}」が必要`); return; }
         if ((this.save.money ?? 0) < g.price) { this.toast('写真で稼いで買おう。いい写真ほど高く売れる'); return; }
         this.buy(id);
       }),
     );
+  }
+
+  /** Time of day on the boat: night falls with time spent diving; later the player may choose. */
+  private renderDaytime(): void {
+    const c = this.save.clock ?? 0;
+    const free = repLevel(this.save.rep ?? 0) >= FISHING.nightFreeLevel;
+    const left = Math.max(0, FISHING.duskAt - c);
+    const el = $('daytime');
+    const now = `<span class="dt-now">${this.save.day ?? 1}日目・<b>${timeLabel(c)}</b></span>`;
+    const buff = this.save.buff ? `<small>まかない：${DISH[this.save.buff].name}（${DISH[this.save.buff].short}）が次のダイブに効く</small>` : '';
+    if (free) {
+      const night = nightOf(c) >= 0.5;
+      el.innerHTML = `${now}<button type="button" class="btn sec" data-time="day" aria-pressed="${!night}">☀ 昼の海</button><button type="button" class="btn sec" data-time="night" aria-pressed="${night}">☾ 夜の海</button><small>評判が上がり、潜る時間帯を選べるようになった。</small>${buff}`;
+      el.querySelectorAll<HTMLButtonElement>('[data-time]').forEach((b) => b.addEventListener('click', () => {
+        this.save.clock = b.dataset.time === 'night' ? FISHING.duskAt + FISHING.duskLen : Math.min(this.save.clock ?? 0, 0);
+        this.writeSave();
+        this.renderTitle();
+      }));
+    } else {
+      el.innerHTML = `${now}<small>${c < FISHING.duskAt ? `潜っている時間があと約${Math.ceil(left / 60)}分たつと日が暮れて、夜の海になる。` : '日が暮れた。夜の海では夜行性の生き物が出てくる。食堂で休むと朝になる。'}（食堂の評判Lv${FISHING.nightFreeLevel}で、昼・夜を自由に選べる）</small>${buff}`;
+    }
   }
 
   private toast(text: string, kind: '' | 'warn' | 'danger' = '', dur = 2.2): void {
@@ -439,7 +489,10 @@ export class Game {
     window.setTimeout(() => {
       this.point = dp;
       this.ads = dp.requires === 'ads';
-      this.airMax = this.ads ? 220 : this.has('tank') ? 300 : 200;
+      // the dish eaten in the diner powers up this one dive
+      this.buff = this.ads ? null : this.save.buff ?? null;
+      if (this.buff) { this.save.buff = null; this.writeSave(); }
+      this.airMax = (this.ads ? 220 : this.has('tank') ? 300 : 200) * (this.buff === 'nabe' ? 1.2 : 1);
       this.air = this.airMax;
       this.diveTime = 0;
       this.diveMaxDepth = 0;
@@ -456,6 +509,7 @@ export class Game {
       this.ensureMinimap();
       this.flora.boat.visible = !this.ads;
       this.terrain.prime(dp.x, dp.z, 80);
+      this.creatures.night = !this.ads && nightOf(this.save.clock ?? 0) >= 0.5;
       this.creatures.reshuffle(this.camera.position);
       this.creatures.events.length = 0;
       this.placeCurrents();
@@ -471,8 +525,14 @@ export class Game {
       this.env.lightOn = this.ads;
       this.env.lightPower = this.ads || this.has('light') ? 1.6 : 1;
       this.creatures.stealth = this.has('rebreather') ? 0.5 : 1;
-      this.env.night = this.nightMode && !this.ads ? 1 : 0;
-      this.creatures.night = this.env.night > 0;
+      this.env.night = this.ads ? 0 : nightOf(this.save.clock ?? 0);
+      this.creatures.night = this.env.night >= 0.5;
+      this.nightAnnounced = this.env.night >= 0.5 ? 2 : (this.save.clock ?? 0) >= FISHING.duskAt ? 1 : 0;
+      this.tool = 'camera';
+      this.reload = 0;
+      this.diveCatch = [];
+      this.spearFx.visible = false;
+      $('hud').classList.remove('spear');
       if (this.env.night) { this.env.lightOn = true; $('btn-light').classList.add('on'); }
       this.creatures.shield = this.has('shield');
       if (this.minimap) this.minimap.blips = [];
@@ -496,7 +556,7 @@ export class Game {
         $('help').classList.remove('hidden');
         window.setTimeout(() => $('help').classList.add('hidden'), 7000);
       }
-      this.toast(this.ads ? '大気圧潜水服で深海へ降下中…' : `${dp.name}にエントリー`, '', 3);
+      this.toast(this.ads ? '大気圧潜水服で深海へ降下中…' : `${dp.name}にエントリー${this.env.night >= 0.5 ? '（夜の海）' : ''}${this.buff ? `　まかないの${DISH[this.buff].name}：${DISH[this.buff].short}` : ''}`, '', 3);
     }, 650);
   }
 
@@ -566,7 +626,11 @@ export class Game {
     this.save.earned = (this.save.earned ?? 0) + earn;
     this.save.dives += 1;
     this.save.maxDepth = Math.max(this.save.maxDepth, this.diveMaxDepth);
+    // the catch goes into the cooler at the diner; a blackout loses it to the sea
+    const caught = reason === 'surface' ? this.diveCatch : [];
+    (this.save.cooler ??= []).push(...caught);
     this.writeSave();
+    this.setTool('camera');
     const after = this.foundCount;
     this.state = 'result';
     this.paused = true;
@@ -595,6 +659,16 @@ export class Game {
       ? shots.map(([id, f]) => `<div class="res-card"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
     if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">依頼達成：${b.label}<b>${yen(b.value)}</b></div>`).join(''));
+    if (this.diveCatch.length) {
+      list.insertAdjacentHTML('beforeend', reason === 'surface'
+        ? this.diveCatch.map((c) => `<div class="res-catch">獲物：${SPECIES_BY_ID.get(c.id)!.name}<b>${fmtKg(c.kg)}</b></div>`).join('')
+        : `<div class="res-empty">気絶したときに獲物（${this.diveCatch.length}匹）は海に流されてしまった。</div>`);
+    }
+    this.diveCatch = [];
+    const ready = this.kitchen.readyCount();
+    $('res-kitchen').classList.toggle('hidden', !caught.length);
+    $('res-kitchen').textContent = ready ? `しおさい亭で料理する（${ready}件の注文が作れる！）` : 'しおさい亭で料理する';
+    if (!shots.length && !this.bonuses.length && caught.length) list.querySelector('.res-empty')?.remove();
     this.missions.reset();
     if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
     const stockedNow = SHOP.filter((g) => !this.has(g.id) && Math.ceil((g.need / 100) * SPECIES.length) > before && this.stockGap(g) === 0);
@@ -640,12 +714,13 @@ export class Game {
     if (inp.consume('map')) this.toggleMap(!this.minimap?.open);
     if (inp.consume('menu')) this.setPaused(true);
     if (inp.consume('surface') && this.canSurface()) this.endDive('surface');
+    if (inp.consume('tool')) this.setTool(this.tool === 'camera' ? 'spear' : 'camera');
 
     const cam = this.camera;
     const fwd = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const boosting = inp.boost && this.has('scooter');
-    let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1);
+    let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.buff === 'shioyaki' ? 1.15 : 1);
     if (boosting) speed = 6;
     const want = new THREE.Vector3().addScaledVector(fwd, inp.moveY * speed).addScaledVector(right, inp.moveX * speed * 0.7);
     if (inp.up) want.y += speed * 0.75;
@@ -728,10 +803,25 @@ export class Game {
     if (this.cold && this.time - this.coldWarned > 15) {
       this.coldWarned = this.time;
       this.audio.warn();
-      this.toast('水温2℃！ 寒さで震えてエアの減りが3倍に（ドライスーツがあれば平気）', 'danger', 3.5);
+      this.toast(this.buff === 'nitsuke' ? '水温2℃！ まかないの煮付けのおかげで少しはましだが、エアの減りが1.5倍に' : '水温2℃！ 寒さで震えてエアの減りが3倍に（ドライスーツがあれば平気）', 'danger', 3.5);
     }
-    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? 3 : 1);
+    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : 1);
     this.air = Math.max(0, this.air - rate * dt);
+    // the day goes on while diving: dusk, then night
+    if (!this.ads) {
+      this.save.clock = (this.save.clock ?? 0) + dt;
+      const n = nightOf(this.save.clock);
+      this.env.night = n;
+      if (this.nightAnnounced === 0 && this.save.clock >= FISHING.duskAt) {
+        this.nightAnnounced = 1;
+        this.toast('日が傾いてきた… 海が暗くなっていく', 'warn', 3.5);
+      } else if (this.nightAnnounced === 1 && n >= 0.5) {
+        this.nightAnnounced = 2;
+        this.creatures.nightFall(p);
+        this.audio.chime(true);
+        this.toast('夜の海になった。ライトをつけよう — 夜行性の生き物が動き出す', 'warn', 4);
+      }
+    }
     this.audio.breathRate = this.ads ? 0.8 : 1 + (this.air < 50 ? 0.4 : 0) + (boosting ? 0.3 : 0);
     this.diveTime += dt;
     this.diveMaxDepth = Math.max(this.diveMaxDepth, d);
@@ -763,8 +853,13 @@ export class Game {
     const cropX = Math.min(0.62, (0.8 * 4) / (3 * aspect));
     const cropY = Math.min(0.8, (cropX * aspect * 3) / 4);
     cam.updateMatrixWorld();
-    this.target = this.creatures.findTarget(cam, { clear, dark: d > 140 || this.env.night > 0 || this.env.shade > 0, lightOn: this.env.lightOn, cropX, cropY, beam: this.has('light') ? 1.6 : 1, macro: this.has('macro'), wide: this.has('wide') });
-    if (inp.consume('shutter')) {
+    this.target = this.creatures.findTarget(cam, { clear, dark: d > 140 || this.env.night >= 0.5 || this.env.shade > 0, lightOn: this.env.lightOn, cropX, cropY, beam: this.has('light') ? 1.6 : 1, macro: this.has('macro'), wide: this.has('wide') });
+    this.reload = Math.max(0, this.reload - dt);
+    if (this.tool === 'spear') {
+      this.spearT = this.creatures.findSpearTarget(cam, this.spearTool.range);
+      this.updateSpearFx(dt);
+      if (inp.consume('shutter')) this.fireSpear();
+    } else if (inp.consume('shutter')) {
       this.captureReq = this.target;
       this.audio.shutter();
       const f = $('flash');
@@ -772,6 +867,97 @@ export class Game {
       void f.offsetWidth;
       f.classList.add('go');
     }
+  }
+
+  // ------------------------------------------------------------------ spearfishing
+  private get spearTool() {
+    return this.has('speargun') ? FISHING.tools.gun : FISHING.tools.hand;
+  }
+  private get bagCap(): number {
+    return FISHING.bag[this.has('bigcooler') ? 2 : this.has('cooler') ? 1 : 0];
+  }
+  private get bagKg(): number {
+    return this.diveCatch.reduce((a, c) => a + c.kg, 0);
+  }
+
+  private setTool(t: 'camera' | 'spear'): void {
+    this.tool = t;
+    $('hud').classList.toggle('spear', t === 'spear');
+    $('tool-label').textContent = t === 'spear' ? 'カメラ' : '銛';
+    $('btn-shutter').setAttribute('aria-label', t === 'spear' ? '銛を突く' : 'シャッター');
+    if (t === 'spear' && !this.save.dives && !this.diveCatch.length) this.toast(`${this.spearTool.name}に持ち替えた。魚に${this.spearTool.range}mまで近づいて突こう`, '', 3);
+    this.spearFx.visible = false;
+  }
+
+  /** Why the current spear target cannot be taken, or null if it can. */
+  private spearBlock(t: NonNullable<Game['spearT']>): string | null {
+    const def = t.rt.def;
+    const e = edibleInfo(def);
+    if (!e.ok) return e.reason;
+    const kg = weightOf(def, t.agent.s);
+    const T = this.spearTool;
+    if (kg < FISHING.minKg) return '小さすぎる。逃がしてあげよう';
+    if (kg > T.maxKg) return `${fmtKg(kg)}の大物。手銛では仕留めきれない（水中銃が必要）`;
+    if (this.bagKg + kg > this.bagCap) return `クーラーに入らない（あと${fmtKg(Math.max(0, this.bagCap - this.bagKg))}）`;
+    if (t.dist > T.range) return `届かない — あと${(t.dist - T.range).toFixed(1)}m近づく`;
+    return null;
+  }
+
+  private hitChance(t: NonNullable<Game['spearT']>): number {
+    const T = this.spearTool;
+    const p = 0.95 - (t.ang / 0.3) * 0.4 - (t.dist / T.range) * 0.3 - Math.min(1, t.speed) * 0.3 + (this.buff === 'karaage' ? 0.15 : 0);
+    return clamp(p, 0.05, 0.95);
+  }
+
+  private fireSpear(): void {
+    if (this.reload > 0) return;
+    const T = this.spearTool;
+    const cam = this.camera;
+    const t = this.spearT;
+    const fwd = this.tmpDir.set(0, 0, -1).applyQuaternion(cam.quaternion);
+    this.spearTo.copy(cam.position).addScaledVector(fwd, T.range);
+    this.spearAnim = 0;
+    this.reload = T.reload;
+    this.audio.shutter();
+    if (!t) return;
+    const block = this.spearBlock(t);
+    if (block) { this.toast(block, 'warn'); this.reload = 0.4; return; }
+    this.spearTo.copy(t.agent.p);
+    const def = t.rt.def;
+    if (Math.random() > this.hitChance(t)) {
+      this.creatures.startle(t.agent, cam.position);
+      this.toast('外れた… 魚が逃げていく', 'warn', 1.6);
+      return;
+    }
+    const kg = weightOf(def, t.agent.s);
+    this.creatures.take(t.rt, t.agent, cam.position);
+    this.diveCatch.push({ id: def.id, kg });
+    const known = !!this.save.found[def.id] || this.pending.has(def.id);
+    this.toast(`${known ? def.name : '見たことのない魚'}を獲った！ ${fmtKg(kg)}${kg >= BIG_KG ? '　大物だ！' : ''}`, '', 2.6);
+    this.audio.chime(kg >= BIG_KG);
+    this.freezeT = kg >= BIG_KG ? 0.22 : 0.12;
+    this.shake = Math.max(this.shake, kg >= BIG_KG ? 0.6 : 0.3);
+    // blood in the water: sharks nearby may come to see
+    if (this.creatures.bloodIn(cam.position, FISHING.bloodRange, FISHING.bloodChance) > 0) {
+      window.setTimeout(() => { if (this.state === 'diving') this.toast('血の匂いでサメが寄ってきた！', 'danger', 3); }, 1200);
+    }
+  }
+
+  private updateSpearFx(dt: number): void {
+    const fx = this.spearFx;
+    if (this.spearAnim < 0) { fx.visible = false; return; }
+    this.spearAnim += dt;
+    const cam = this.camera;
+    // shaft from just below the mask out to the aim point, then pulled back on its line
+    const from = this.tmpDir.set(0.18, -0.22, -0.3).applyQuaternion(cam.quaternion).add(cam.position);
+    const out = this.spearAnim < 0.12 ? this.spearAnim / 0.12 : Math.max(0, 1 - (this.spearAnim - 0.25) / 0.35);
+    const len = from.distanceTo(this.spearTo) * out;
+    fx.visible = len > 0.05;
+    fx.position.copy(from);
+    fx.lookAt(this.spearTo);
+    fx.rotateY(Math.PI);
+    fx.scale.set(1, 1, Math.max(0.01, len));
+    if (this.spearAnim > 0.6) this.spearAnim = -1;
   }
 
   private canSurface(): boolean {
@@ -805,7 +991,7 @@ export class Game {
     }
     const known = !!this.save.found[def.id];
     const depth = -t.agent.p.y;
-    const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2, this.env.night > 0);
+    const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2, this.env.night >= 0.5);
     this.missions.onPhoto(def.id, ev.grade.g);
     // a known species pays a share unless this beats the best photo on record
     const best = this.save.found[def.id]?.score ?? -1;
@@ -882,6 +1068,26 @@ export class Game {
     const ret = $('reticle');
     const lab = $('ret-label');
     const t = this.target;
+    const cc = $('catch-chip');
+    cc.classList.toggle('hidden', this.tool !== 'spear' && !this.diveCatch.length);
+    $('catch-val').textContent = `${this.bagKg.toFixed(1)}/${this.bagCap}kg`;
+    cc.classList.toggle('full', this.bagKg >= this.bagCap - 0.05);
+    $('btn-shutter').classList.toggle('reload', this.tool === 'spear' && this.reload > 0);
+    if (this.tool === 'spear') {
+      const st = this.spearT;
+      const block = st ? this.spearBlock(st) : null;
+      ret.classList.toggle('lock', !!st && !block);
+      ret.classList.toggle('far', !!st && !!block);
+      $('btn-shutter').classList.toggle('ready', !!st && !block && this.reload <= 0);
+      if (st) {
+        const def = st.rt.def;
+        const known = this.save.found[def.id] || this.pending.has(def.id);
+        const kg = weightOf(def, st.agent.s);
+        const sub = block ?? `<span class="gA">命中 ${Math.round(this.hitChance(st) * 100)}%</span>　約${fmtKg(kg)}${st.speed > 0.6 ? '　動きが速い' : st.ang > 0.12 ? '　中心で狙う↑' : ''}`;
+        lab.innerHTML = `${known ? def.name : '？？？'}<small>${sub}</small>`;
+      } else lab.innerHTML = `<small>${this.spearTool.name}（射程${this.spearTool.range}m）— 魚に近づいて中央で狙う</small>`;
+      return this.updateToasts(dt);
+    }
     ret.classList.toggle('lock', !!t && t.inRange);
     ret.classList.toggle('far', !!t && !t.inRange);
     $('btn-shutter').classList.toggle('ready', !!t && t.inRange && !this.save.found[t.rt.def.id] && !this.pending.has(t.rt.def.id));
@@ -891,13 +1097,16 @@ export class Game {
       let sub = why[t.reason];
       if (t.inRange) {
         // live grade: the player sees closer / side-on / centred pays more before pressing the shutter
-        const ev = evaluateShot(t, this.lastClear, -t.agent.p.y, this.currentF > 0.2, this.env.night > 0);
+        const ev = evaluateShot(t, this.lastClear, -t.agent.p.y, this.currentF > 0.2, this.env.night >= 0.5);
         const hint = t.fit < 0.99 ? 'はみ出している・少し離れる' : t.fill > PHOTO.fillMax ? '近すぎ・少し離れる' : t.side < 0.6 ? '横から狙うと↑' : t.frac < 0.2 ? '寄ると↑' : t.centred < 0.6 ? '中央で↑' : '';
         sub = `<span class="g${ev.grade.g}">評価 ${ev.grade.g}</span>${t.danger ? ' <span class="gS">危険手当！</span>' : ''}${hint ? '　' + hint : ''}`;
       }
       lab.innerHTML = `${known ? t.rt.def.name : '？？？'}<small>${sub}</small>`;
     } else lab.textContent = '';
+    this.updateToasts(dt);
+  }
 
+  private updateToasts(dt: number): void {
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) $('toast').className = '';
@@ -939,6 +1148,7 @@ export class Game {
     // image-based fill only adds sheen near the surface; it must not flatten the sun/shade contrast
     this.scene.environmentIntensity = (0.22 * Math.exp(Math.min(0, this.camera.position.y) / 25) + 0.01) * (1 - this.env.darkness * 0.95);
     if (this.state === 'diving' && !this.paused) this.updateHud(dt);
+    else this.updateToasts(rawDt);
 
     // ambience
     const reefNear = ['reef', 'rocky', 'lagoon'].includes(zoneAt(cp.x, cp.z)) ? clamp(1 - -cp.y / 40, 0, 1) * 0.25 : 0;

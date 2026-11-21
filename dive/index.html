@@ -46,9 +46,9 @@
             <i id="dex-new" class="hidden">+0</i>
           </button>
           <div id="cash" class="glass chip" aria-label="今回のダイブの写真の売上"><b id="cash-val">¥0</b></div>
+          <div id="catch-chip" class="glass chip hidden" aria-label="クーラーの中の獲物の重さ"><svg viewBox="0 0 24 24"><path d="M2 12c3-5 9-6 14-3l5-3v12l-5-3c-5 3-11 2-14-3z"/></svg><b id="catch-val">0</b></div>
         </div>
         <div id="reticle"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div id="ret-label"></div></div>
-        <div id="toast"></div>
         <div id="mission" class="hidden"><div id="ms-title"></div><div id="ms-prog"></div><div class="ms-bar"><i id="ms-bar-fill"></i></div><div id="ms-ask" class="hidden"><button id="ms-yes" type="button">受ける</button><button id="ms-no" type="button">断る</button></div></div>
         <button id="surface-btn" class="hidden" type="button">
           <svg viewBox="0 0 24 24"><path d="M12 4l-7 7h4v9h6v-9h4z"/></svg><span id="surface-text">浮上してボートに戻る</span>
@@ -64,8 +64,10 @@
             <button id="btn-up" class="ctl" type="button" aria-label="上昇"><svg viewBox="0 0 24 24"><path d="M12 6l7 9H5z"/></svg></button>
             <button id="btn-down" class="ctl" type="button" aria-label="下降"><svg viewBox="0 0 24 24"><path d="M12 18L5 9h14z"/></svg></button>
           </div>
+          <button id="btn-tool" class="ctl" type="button" aria-label="カメラと銛を持ち替える"><svg viewBox="0 0 24 24" class="i-spear"><path d="M3 21L17 7M14 4l6-1-1 6z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M14 4l6-1-1 6z"/></svg><svg viewBox="0 0 24 24" class="i-cam"><path d="M9 4h6l1.5 2H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5z"/></svg><small id="tool-label">銛</small></button>
           <button id="btn-shutter" type="button" aria-label="シャッター">
-            <svg viewBox="0 0 24 24"><path d="M9 4h6l1.5 2H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5z"/><circle cx="12" cy="12.5" r="3.6" fill="#0b2a3a"/></svg>
+            <svg viewBox="0 0 24 24" class="i-spear"><path d="M4 20L17 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M14 3.5l6.5-1-1 6.5z"/></svg>
+            <svg viewBox="0 0 24 24" class="i-cam"><path d="M9 4h6l1.5 2H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5z"/><circle cx="12" cy="12.5" r="3.6" fill="#0b2a3a"/></svg>
           </button>
         </div>
         <button id="btn-pause" class="glass icon" type="button" aria-label="メニュー">
@@ -84,7 +86,7 @@
         <div id="help" class="hidden">
           <div><b>左側をドラッグ</b> 移動（見ている方向へ泳ぐ）</div>
           <div><b>右側をドラッグ</b> 見回す</div>
-          <div><b>▲▼</b> 浮上・潜降　<b>📷</b> 撮影</div>
+          <div><b>▲▼</b> 浮上・潜降　<b>📷</b> 撮影　<b>銛ボタン</b> 銛に持ち替えて魚を獲る</div>
         </div>
       </section>
 
@@ -100,10 +102,11 @@
           <header class="brand">
             <div class="brand-kicker">DIVE LOG</div>
             <h1>BLUE<span>DEPTHS</span></h1>
-            <p>海へ潜り、出会った生き物を写真に収めよう</p>
+            <p>島の食堂を手伝いながら、海へ潜って撮って、獲って、食べよう</p>
             <div class="t-goal" id="t-goal"></div>
           </header>
-          <button id="night-toggle" type="button" class="btn sec night-toggle" aria-pressed="false"><span class="moon">☾</span><span id="night-label">ナイトダイブ：OFF</span><small>暗い海でライトを頼りに夜の生き物を探す</small></button>
+          <button id="open-kitchen" type="button" class="btn pri kitchen-btn"><svg viewBox="0 0 24 24"><path d="M3 11h18l-2 9H5zM6 11a6 6 0 0 1 12 0M12 3v2"/></svg><span>しおさい亭（食堂）</span><small id="k-badge"></small></button>
+          <div id="daytime" class="panel daytime"></div>
           <div class="panel" id="points"></div>
           <div class="row-actions">
             <button id="open-dex" type="button" class="btn sec">
@@ -138,7 +141,28 @@
           <div class="res-list" id="res-list"></div>
           <div class="res-unlock" id="res-unlock"></div>
           <button id="res-ok" type="button" class="btn pri">ボートへ戻る</button>
+          <button id="res-kitchen" type="button" class="btn sec hidden">しおさい亭で料理する</button>
         </div>
+      </section>
+
+      <!-- ===================== DINER ===================== -->
+      <section id="kitchen" class="screen hidden" aria-label="しおさい亭">
+        <div class="modal wide kitchen">
+          <div class="k-head">
+            <div><div class="res-kicker">SHIOSAI-TEI</div><h2>しおさい亭</h2></div>
+            <button id="k-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4"/></svg></button>
+          </div>
+          <div id="k-status" class="k-status"></div>
+          <div id="k-story" class="k-story hidden"></div>
+          <h3 class="k-h">今日の注文</h3>
+          <div id="k-orders" class="k-list"></div>
+          <h3 class="k-h">クーラーの中</h3>
+          <div id="k-cooler" class="k-list"></div>
+          <div id="k-buff" class="k-buff"></div>
+          <button id="k-sleep" type="button" class="btn sec">店を閉めて休む（翌朝へ）</button>
+          <p class="note">残った魚は休むときに市場へ卸す。注文の料理は日ごとに変わる。</p>
+        </div>
+        <div id="cook-pop" class="hidden"><div class="cp-dish" id="cp-dish"></div><div class="cp-sub" id="cp-sub"></div></div>
       </section>
 
       <!-- ===================== DEX ===================== -->
@@ -164,6 +188,7 @@
         </div>
       </section>
 
+      <div id="toast"></div>
       <div id="loading" class="screen"><div class="spinner"></div><p>海を生成しています…</p></div>
     </main>
     <script type="module" src="/src/main.ts"></script>

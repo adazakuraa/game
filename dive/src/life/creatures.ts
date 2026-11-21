@@ -29,6 +29,8 @@ type Agent = {
   watch?: number;
   /** aggressive individual (see SpeciesDef.aggro): 0 idle, 1 circling, 2 charging, 3 retreating */
   aggro?: boolean; mode?: number; modeT?: number;
+  /** speared by the diver: gone for the rest of this dive */
+  taken?: boolean;
   /** cached surface under a crawler: x, z, y */
   gx?: number; gz?: number; gy?: number;
 };
@@ -701,7 +703,7 @@ export class Creatures {
         if (!g.absent && movable) this.relocate(rt, gi, player, 4);
       });
       const ag = rt.def.aggro;
-      for (const a of rt.agents) { a.aggro = !!ag && this.rnd() < ag.chance; a.mode = 0; a.modeT = 0; }
+      for (const a of rt.agents) { a.aggro = !!ag && this.rnd() < ag.chance; a.mode = 0; a.modeT = 0; a.taken = false; }
       // always keep at least one group of common species
       if (rt.def.rarity === 1 && rt.groups.every((g) => g.absent)) rt.groups[0].absent = false;
     }
@@ -725,7 +727,7 @@ export class Creatures {
       if (!rt.active || known(rt.def.id) || rt.def.kind === 'none') continue;
       let best: Agent | null = null, bd = radius;
       for (const a of rt.agents) {
-        if (rt.groups[a.g].absent) continue;
+        if (rt.groups[a.g].absent || a.taken) continue;
         const d = a.p.distanceTo(p);
         if (d < bd) { bd = d; best = a; }
       }
@@ -860,7 +862,7 @@ export class Creatures {
           this.writeInstance(rt, a, i);
           continue;
         }
-        if (g.absent) continue;
+        if (g.absent || a.taken) continue;
         if (Math.abs(g.c.x - player.x) > 100 || Math.abs(g.c.z - player.z) > 100) continue;
         const dPlayer = a.p.distanceTo(player);
         if (def.behavior === 'buried') {
@@ -1055,7 +1057,7 @@ export class Creatures {
       if (!rt.active || (!rt.mesh && rt.def.kind !== 'none')) continue;
       const def = rt.def;
       for (const a of rt.agents) {
-        if (rt.groups[a.g].absent) continue;
+        if (rt.groups[a.g].absent || a.taken) continue;
         if (def.behavior === 'buried' && a.retract > 0.5) continue;
         _v2.copy(a.p).sub(cp);
         const dist = _v2.length();
@@ -1110,6 +1112,79 @@ export class Creatures {
     return best;
   }
 
+  /** Spearfishing: the creature nearest the aim line within reach (any kind; the caller decides what may be taken). */
+  findSpearTarget(cam: THREE.PerspectiveCamera, reach: number, maxAng = 0.3): { rt: SpeciesRuntime; agent: Agent; dist: number; ang: number; speed: number } | null {
+    const fwd = _v.set(0, 0, -1).applyQuaternion(cam.quaternion);
+    const cp = cam.position;
+    let best: { rt: SpeciesRuntime; agent: Agent; dist: number; ang: number; speed: number } | null = null;
+    let bestScore = Infinity;
+    for (const rt of this.list) {
+      if (!rt.active || !rt.mesh) continue;
+      const def = rt.def;
+      if (def.kind !== 'fish' && def.kind !== 'squid' && def.kind !== 'octopus' && !(def.kind === 'ray' && def.ray?.flounder)) continue;
+      for (const a of rt.agents) {
+        if (rt.groups[a.g].absent || a.taken) continue;
+        _v2.copy(a.p).sub(cp);
+        const dist = Math.max(0, _v2.length() - a.s * 0.3);
+        if (dist > reach * 2) continue;
+        const ang = _v2.angleTo(fwd);
+        if (ang > maxAng + Math.atan2(a.s * 0.4, Math.max(dist, 0.2))) continue;
+        const score = ang * 4 + dist / reach;
+        if (score < bestScore && !this.occluded(cp, a.p)) {
+          bestScore = score;
+          best = { rt, agent: a, dist, ang: Math.max(0, ang - Math.atan2(a.s * 0.3, Math.max(dist, 0.2))), speed: a.v.length() / (def.speed * 1.6 + 0.3) };
+        }
+      }
+    }
+    return best;
+  }
+
+  /** The speared individual leaves the scene; its school bolts. */
+  take(rt: SpeciesRuntime, a: Agent, from: THREE.Vector3): void {
+    a.taken = true;
+    for (const b of rt.agents) {
+      if (b === a || b.taken || b.p.distanceTo(a.p) > 12) continue;
+      _v.copy(b.p).sub(from).setY(0).normalize().multiplyScalar(3);
+      b.v.add(_v);
+      b.alarm = 3;
+    }
+  }
+
+  /** A missed thrust: the fish darts away. */
+  startle(a: Agent, from: THREE.Vector3): void {
+    _v.copy(a.p).sub(from).normalize().multiplyScalar(4);
+    a.v.add(_v);
+    a.alarm = 3;
+  }
+
+  /** Blood in the water: some roaming sharks nearby come to circle the diver. Returns how many. */
+  bloodIn(p: THREE.Vector3, range: number, chance: number): number {
+    let n = 0;
+    for (const rt of this.list) {
+      const ag = rt.def.aggro;
+      if (!rt.active || !ag || ag.kind !== 'shark') continue;
+      for (const a of rt.agents) {
+        if (rt.groups[a.g].absent || a.taken || a.p.distanceTo(p) > range || Math.random() > chance) continue;
+        a.aggro = true;
+        if (!a.mode) { a.mode = 1; a.modeT = 6 + Math.random() * 5; n++; this.events.push({ type: 'warn', def: rt.def, p: a.p.clone() }); }
+      }
+    }
+    return n;
+  }
+
+  /** Dusk turned to night during a dive: nocturnal species come out around the diver. */
+  nightFall(player: THREE.Vector3): void {
+    this.night = true;
+    for (const rt of this.list) {
+      if (rt.def.when !== 'night') continue;
+      const movable = this.canRelocate(rt.def);
+      rt.groups.forEach((g, gi) => {
+        g.absent = Math.random() > this.presence(rt.def.rarity);
+        if (!g.absent && movable) this.relocate(rt, gi, player, 4);
+      });
+    }
+  }
+
   /** The diver bumps into large animals instead of swimming through them (capsule along the body). */
   collideBig(p: THREE.Vector3, rad: number, vel?: THREE.Vector3): void {
     const fwd = new THREE.Vector3();
@@ -1117,7 +1192,7 @@ export class Creatures {
       const def = rt.def;
       if (!rt.active || def.size < 0.9 || def.kind === 'jelly' || def.kind === 'none') continue;
       for (const a of rt.agents) {
-        if (rt.groups[a.g].absent) continue;
+        if (rt.groups[a.g].absent || a.taken) continue;
         const reach = a.s * 0.7 + rad + 1;
         if (Math.abs(a.p.x - p.x) > reach || Math.abs(a.p.z - p.z) > reach || Math.abs(a.p.y - p.y) > reach) continue;
         fwd.set(0, 0, 1).applyQuaternion(a.q);
