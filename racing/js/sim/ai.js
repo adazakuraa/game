@@ -27,6 +27,8 @@ export class AICar {
     this.spec = spec;
     this.track = track;
     this.pace = pace;
+    this.cornerPace = pace; // 目標速度（速度プロファイル）に掛ける倍率
+    this.accelK = 1; // 加速度に掛ける倍率（遅さをコーナー速度ではなく加速で表す）
     this.rng = mulberry32(seed);
     this.s = 0;
     this.d = 0;
@@ -86,7 +88,7 @@ export class AICar {
   targetSpeed(s) {
     const tr = this.track;
     const seg = Math.floor((((s % tr.length) + tr.length) % tr.length) / (tr.length / 64));
-    return tr.sampleArr(tr.aiProfile || tr.profile, s) * this.pace * (1 + this.noise[seg]);
+    return tr.sampleArr(tr.aiProfile || tr.profile, s) * this.cornerPace * (1 + this.noise[seg]);
   }
 
   // others: 他車の配列（{progress, d, v, x, z}）
@@ -185,7 +187,7 @@ export class AICar {
     // 縦方向
     if (this.v < vt) {
       // スリップストリームはプレイヤーと同じく「空気抵抗が最大 40% 減る」ぶんだけ
-      const a = this.spec.accel(this.v, tr.grip) + (this.spec.dragK || 0) * 0.4 * (this.draft || 0) * this.v * this.v + boostA;
+      const a = this.spec.accel(this.v, tr.grip) * this.accelK + (this.spec.dragK || 0) * 0.4 * (this.draft || 0) * this.v * this.v + boostA;
       this.v = Math.min(vt, this.v + Math.max(a, 0) * dt);
       this.throttle = 1;
       this.braking = 0;
@@ -210,8 +212,8 @@ export class AICar {
   updateShortcut(dt) {
     const sc = this.sc, main = this.track;
     const prof = sc.aiProfile || sc.profile;
-    const vt = Math.min(sc.sampleArr(prof, this.scS + 2), sc.sampleArr(prof, this.scS + 2 + this.v * 0.05)) * this.pace;
-    if (this.v < vt) { this.v = Math.min(vt, this.v + Math.max(0, this.spec.accel(this.v, sc.grip * 0.85)) * dt); this.throttle = 1; this.braking = 0; }
+    const vt = Math.min(sc.sampleArr(prof, this.scS + 2), sc.sampleArr(prof, this.scS + 2 + this.v * 0.05)) * this.cornerPace;
+    if (this.v < vt) { this.v = Math.min(vt, this.v + Math.max(0, this.spec.accel(this.v, sc.grip * 0.85) * this.accelK) * dt); this.throttle = 1; this.braking = 0; }
     else { this.v = Math.max(vt, this.v - this.spec.brake(sc.grip) * dt); this.throttle = 0; this.braking = 1; }
     if (this.boostT > 0) this.boostT -= dt;
     this.scS += this.v * dt;
