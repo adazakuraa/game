@@ -1,4 +1,5 @@
 // CPU ドライバー: 理想速度プロファイル × ペースでレーシングラインを走り、追い越し・回避を行う
+import { DRIFT } from './car.js';
 const tmp = {}, tmp2 = {};
 
 export function mulberry32(seed) {
@@ -45,6 +46,34 @@ export class AICar {
     this.noise = new Float32Array(64);
     for (let i = 0; i < 64; i++) this.noise[i] = (this.rng() - 0.5) * 0.03;
     this.lineBias = (this.rng() - 0.5) * 0.8;
+    // ドリフトターボ（プレイヤーと同じ段階・同じ加速）。driftSkill = ドリフトを使うコーナーの割合
+    this.driftSkill = 0;
+    this.drift = 0; this.driftT = 0; this.driftLvl = 0;
+    this.boostT = 0; this.boostLvl = 0; this.lastZone = null; this.boostFired = 0;
+  }
+
+  // ドリフトに向くコーナー（減速の大きいコーナー）: ターンイン〜立ち上がりの区間
+  static driftZones(tr) {
+    if (tr.driftZones) return tr.driftZones;
+    const prof = tr.aiProfile || tr.profile;
+    const zones = [];
+    for (const c of tr.corners) {
+      if (c.vEntry - c.vApex < 12) continue;
+      const apexS = c.apex * tr.ds;
+      let exit = apexS + 120;
+      for (let o = 2; o < 120; o += 2) if (tr.sampleArr(prof, apexS + o) > c.vApex * 1.18) { exit = apexS + o; break; }
+      zones.push({ entry: apexS - 28, exit, dir: Math.sign(tr.kappa[c.apex]) || 1 });
+    }
+    return (tr.driftZones = zones);
+  }
+
+  zoneAt(s) {
+    const L = this.track.length;
+    for (const z of AICar.driftZones(this.track)) {
+      const a = ((s - z.entry) % L + L) % L;
+      if (a <= z.exit - z.entry) return z;
+    }
+    return null;
   }
 
   place(s, d) {
@@ -64,7 +93,22 @@ export class AICar {
   // forceVt: 指定すると目標速度をこの値にする
   update(dt, others, myProgress, started, forceVt = null) {
     const tr = this.track;
-    if (!started) { this.updatePose(dt); return; }
+    if (!started) { this.updatePose(dt); this.prevMainS = this.s; return; }
+    // ショートカット: 分岐の手前で使うか決める（scChance の割合で）
+    if (this.sc) { this.updateShortcut(dt); return; }
+    if (tr.shortcuts && this.prevMainS != null && forceVt == null) {
+      for (const sc of tr.shortcuts) {
+        if (this.prevMainS < sc.sA0 && this.s >= sc.sA0 && this.s < sc.sA0 + 30) {
+          if (this.rng() < (this.scChance || 0)) {
+            this.sc = sc; this.scS = 0; this.scD = this.d - sc.side * tr.halfW * 0.3;
+            this.drift = 0; this.driftLvl = 0;
+            this.updateShortcut(dt);
+            return;
+          }
+        }
+      }
+    }
+    this.prevMainS = this.s;
     // 目標速度はすぐ先で見る（先を見すぎると、コーナーの手前から必要以上に遅くなる）
     let vt = Math.min(this.targetSpeed(this.s + 2), this.targetSpeed(this.s + 2 + this.v * 0.05));
     if (forceVt != null) vt = forceVt;
@@ -102,6 +146,28 @@ export class AICar {
       }
     }
     if (this.passTimer > 0) this.passTimer -= dt;
+    // ドリフト: コーナーに入るときに使うか決め、立ち上がりでターボ
+    this.boostFired = 0;
+    const zone = this.driftSkill > 0 ? this.zoneAt(this.s) : null;
+    if (!this.drift && zone && zone !== this.lastZone) {
+      this.lastZone = zone;
+      if (this.rng() < this.driftSkill && this.v > DRIFT.minSpeed) { this.drift = zone.dir; this.driftT = 0; this.driftLvl = 0; }
+    }
+    if (this.drift) {
+      this.driftT += dt;
+      while (this.driftLvl < 3 && this.driftT >= DRIFT.levels[this.driftLvl]) this.driftLvl++;
+      vt *= 0.985; // 滑らせているぶん少し遅い
+      if (!zone) {
+        if (this.driftLvl > 0) { this.boostLvl = this.driftLvl; this.boostT = DRIFT.boostTime[this.driftLvl - 1]; this.boostFired = this.driftLvl; }
+        this.drift = 0; this.driftLvl = 0; this.driftT = 0;
+      }
+    }
+    let boostA = 0;
+    if (this.boostT > 0) {
+      this.boostT -= dt;
+      boostA = DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl);
+      vt += 4;
+    }
     // 直線（目標速度が高い所）では、スリップストリームで少しだけ伸びる
     this.draft = draft;
     if (draft > 0 && vt > 50) vt += draft * 1.2;
@@ -117,7 +183,7 @@ export class AICar {
     // 縦方向
     if (this.v < vt) {
       // スリップストリームはプレイヤーと同じく「空気抵抗が最大 40% 減る」ぶんだけ
-      const a = this.spec.accel(this.v, tr.grip) + (this.spec.dragK || 0) * 0.4 * (this.draft || 0) * this.v * this.v;
+      const a = this.spec.accel(this.v, tr.grip) + (this.spec.dragK || 0) * 0.4 * (this.draft || 0) * this.v * this.v + boostA;
       this.v = Math.min(vt, this.v + Math.max(a, 0) * dt);
       this.throttle = 1;
       this.braking = 0;
@@ -138,15 +204,57 @@ export class AICar {
     this.updatePose(dt);
   }
 
+  // ショートカットを走る（その道の理想速度 × ペース。終点で本線に戻る）
+  updateShortcut(dt) {
+    const sc = this.sc, main = this.track;
+    const prof = sc.aiProfile || sc.profile;
+    const vt = Math.min(sc.sampleArr(prof, this.scS + 2), sc.sampleArr(prof, this.scS + 2 + this.v * 0.05)) * this.pace;
+    if (this.v < vt) { this.v = Math.min(vt, this.v + Math.max(0, this.spec.accel(this.v, sc.grip * 0.85)) * dt); this.throttle = 1; this.braking = 0; }
+    else { this.v = Math.max(vt, this.v - this.spec.brake(sc.grip) * dt); this.throttle = 0; this.braking = 1; }
+    if (this.boostT > 0) this.boostT -= dt;
+    this.scS += this.v * dt;
+    this.scD += (0 - this.scD) * Math.min(1, dt * 1.5);
+    // 見た目はショートカットの道の上
+    const ms = this.s, md = this.d;
+    this.track = sc; this.s = this.scS; this.d = this.scD;
+    this.updatePose(dt);
+    this.track = main; this.s = sc.toMain(this.scS); this.d = md;
+    void ms;
+    if (this.scS >= sc.stageEnd - 2) {
+      // 本線に合流
+      this.sc = null;
+      this.s = sc.sB0;
+      this.d = sc.side * main.halfW * 0.3;
+      this.latV = 0;
+    }
+    this.prevMainS = this.s;
+  }
+
   updatePose(dt) {
     const tr = this.track;
     const p = tr.pointAt(this.s, this.d, tmp);
     const ox = this.x, oz = this.z;
-    this.x = p.x; this.y = p.y; this.z = p.z;
+    this.x = p.x; this.z = p.z;
+    // ジャンプ台では宙に浮く（プレイヤーと同じ判定）。谷は飛び越えられる速さで走る前提
+    const gy = tr.jumpArr && tr.jumpArr[p.i] === 2 ? p.y : tr.groundY(p.i, p.y);
+    if (dt > 0) {
+      if (this.air) {
+        this.vy -= 9.81 * dt;
+        this.y += this.vy * dt;
+        if (this.y <= gy) { this.air = false; this.y = gy; this.vy = 0; this.vyG = 0; }
+      } else {
+        const vyG = (gy - this.y) / dt;
+        if (this.v > 8 && this.vyG != null && vyG < this.vyG - 9.81 * dt * 3 && this.y - gy > 0.05) { this.air = true; this.vy = this.vyG; this.y += this.vy * dt; }
+        else { this.y = gy; this.vyG = Math.max(-20, Math.min(20, vyG)); }
+      }
+    } else { this.y = gy; this.vyG = 0; this.air = false; }
     const latAngle = Math.atan2(this.latV, Math.max(this.v, 3));
     const k = tr.sampleArr(tr.kappa, this.s);
     // 横G に応じたわずかなスリップアングル（見た目）
     this.slip = Math.max(-0.08, Math.min(0.08, k * this.v * this.v * 0.0018));
+    // ドリフト中は車体を大きく内側へ向ける（見た目）
+    this.driftAng = (this.driftAng || 0) + ((this.drift ? this.drift * Math.min(0.34, 0.12 + this.driftT * 0.6) : 0) - (this.driftAng || 0)) * Math.min(1, dt * 6);
+    this.slip += this.driftAng;
     this.psi = p.hd - latAngle + this.slip;
     this.vx = (this.x - ox) / Math.max(dt, 1e-3);
     this.vz = (this.z - oz) / Math.max(dt, 1e-3);

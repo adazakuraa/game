@@ -165,6 +165,13 @@ export class CircuitGame extends GameBase {
           const c = r.player.car;
           this.fx.sparks(c.x, c.y, c.z, c.vx, c.vz, 10);
         }
+      } else if (ev.type === 'shortcut') {
+        this.subMsg('ショートカット！ 路面に注意', 1.6);
+      } else if (ev.type === 'fell') {
+        this.showMsg('谷に落ちた！', 1.3, '#ff3b2f', true);
+        this.subMsg('ジャンプ台には十分な速さで', 2);
+        this.resetCamera?.();
+        C.audio.impact(5);
       } else if (ev.type === 'recover') {
         this.showMsg('コースに戻ります', 1.2, '#fff', true);
         this.resetCamera?.();
@@ -321,8 +328,10 @@ export class CircuitGame extends GameBase {
         if (e.kind === 'player') {
           const slipAmount = Math.max(pc.slipR * 3.2 - 0.1, pc.slipF * 2.2 - 0.25, 0);
           this.fx.carFx('p', { ...pc, slipAmount, lock: pc.lock, wheelspin: pc.wheelspin, smoke: this.look.smoke }, dt);
+          this.fx.driftFx(pc, dt);
         } else if (dist < 120) {
           this.fx.carFx('a' + e.num, { x: st.x, y: st.y, z: st.z, psi: st.psi, vx: st.vx, vz: st.vz, slipAmount: Math.abs(st.slip) * 6 - 0.15, wheelSurf: null }, dt);
+          this.fx.driftFx(st, dt);
         }
       }
     }

@@ -9,9 +9,9 @@ import { BotDriver } from './bot.js';
 // factor: トップ CPU の周回タイム ÷ 上手な自動ドライバーの周回タイム
 export const DIFFICULTY = {
   // factor: 上手な自動ドライバーの周回タイムに対する、先頭 CPU の速さ（小さいほど速い）
-  easy: { label: 'かんたん', factor: 1.045, spread: 0.008 },
-  normal: { label: 'ふつう', factor: 1.0, spread: 0.006 }, // 以前の「むずかしい」
-  hard: { label: 'むずかしい', factor: 0.985, spread: 0.004 },
+  easy: { label: 'かんたん', factor: 1.03, spread: 0.008, drift: 0.35, shortcut: 0.3 },
+  normal: { label: 'ふつう', factor: 0.99, spread: 0.006, drift: 0.7, shortcut: 0.55 }, // drift: ドリフトターボを使うコーナーの割合
+  hard: { label: 'むずかしい', factor: 0.97, spread: 0.004, drift: 0.95, shortcut: 0.8 },
 };
 
 // コースごとに「上手なドライバー」の周回タイムと CPU の基準タイムを測る
@@ -24,6 +24,7 @@ export function matchAIAccel() {
   const tr = new Track({ id: 'accel-test', width: 14, runoff: 10, grip: 1, env: {}, points: poly([[-3500, 0, 150, 0], [3500, 0, 150, 0], [3500, 800, 150, 0], [-3500, 800, 150, 0]]) });
   const car = new Car(tr);
   car.assist = true;
+  car.noDrift = true; // 基準の走りはドリフトなし
   car.reset(0, 0);
   const dt = 1 / 120;
   const step = 2; // m/s ごと
@@ -57,6 +58,7 @@ export function calibrate(track) {
   const dt = 1 / 120;
   const car = new Car(track);
   car.assist = true;
+  car.noDrift = true; // 基準の走りはドリフトなし
   const L = track.length;
   car.reset(L - 300, track.sampleArr(track.line, L - 300));
   const bot = new BotDriver(car, track, 1.0);
@@ -89,11 +91,12 @@ export function calibrate(track) {
 }
 
 export { STAGE_START };
+const scProj = {};
 
 // CPU の目標速度: 上手な自動ドライバーが実際の車で走った速度の記録（ブレーキの踏み始め・コーナーの速さが人の走りと同じになる）
 function recordTrace(track, trace, car) {
   const i = Math.floor(car.s / track.ds) % track.N;
-  if (Number.isNaN(trace[i]) || car.u < trace[i]) trace[i] = car.u;
+  trace[i] = car.u;
 }
 function setAIProfile(track, trace, i0, i1) {
   const N = track.N;
@@ -109,7 +112,8 @@ function setAIProfile(track, trace, i0, i1) {
   for (let i = i0; i < i1; i++) {
     let acc = 0, n = 0;
     for (let o = -2; o <= 2; o++) { const v = trace[(i + o + N) % N]; if (!Number.isNaN(v)) { acc += v; n++; } }
-    if (n) out[i] = acc / n;
+    // 自動ドライバーが壁に当たった所などで記録が乱れても、理想速度から大きく外れないように
+    if (n) out[i] = Math.max(track.profile[i] * 0.85, Math.min(track.profile[i] * 1.12, acc / n));
   }
   track.aiProfile = out;
 }
@@ -120,6 +124,7 @@ function calibrateSection(track) {
   const S0 = STAGE_START, end = track.stageEnd;
   const car = new Car(track);
   car.assist = true;
+  car.noDrift = true; // 基準の走りはドリフトなし
   car.reset(10, track.sampleArr(track.line, 10));
   const bot = new BotDriver(car, track, 1.0);
   let t = 0, t0 = null;
@@ -339,6 +344,8 @@ export class Race extends RaceBase {
       for (let g = 0; g < n; g++) {
         const di = order[g];
         const ai = new AICar(track, paces[di], 1000 + di * 77);
+        ai.driftSkill = diff.drift ?? 0;
+        ai.scChance = diff.shortcut ?? 0;
         const slot = g < pSlot ? g : g + 1;
         const s = L - 12 - slot * 8;
         ai.place(s, slot % 2 === 0 ? 3 : -3);
@@ -368,6 +375,41 @@ export class Race extends RaceBase {
   progress(e) {
     if (this.stage) return this.pose(e).s - this.START;
     return super.progress(e);
+  }
+
+  // ショートカットへの出入り（プレイヤー）。ショートカット上でも car.s は本線に換算した位置にする
+  shortcutSwitch(car) {
+    const main = this.track;
+    if (!main.shortcuts || !main.shortcuts.length) return;
+    car.mainTrack = main;
+    const pj = scProj;
+    // 今いる道から外へ出て、もう一方の道の上にいたら乗り換える
+    if (car.track === main) {
+      for (const sc of main.shortcuts) {
+        const inWin = (car.s > sc.sA0 && car.s < sc.sA0 + 120) || (car.s > sc.sB0 - 120 && car.s < sc.sB0);
+        if (!inWin || sc.side * car.d < main.halfW - 0.3) continue;
+        sc.project(car.x, car.z, -1, pj, 1e9);
+        if (pj.s > 0 && pj.s < sc.stageEnd && Math.abs(pj.d) < sc.halfW) {
+          car.track = sc; car.hint = pj.i;
+          car.scS = pj.s; car.d = pj.d;
+          car.s = sc.toMain(pj.s);
+          this.events.push({ type: 'shortcut' });
+          return;
+        }
+      }
+    } else {
+      const sc = car.track;
+      car.scS = car.s; // Car.step はショートカット上の位置を入れる
+      car.s = sc.toMain(car.scS);
+      const leftSc = Math.abs(car.d) > sc.halfW - 0.3 || car.scS > sc.stageEnd - 4;
+      if (leftSc) {
+        main.project(car.x, car.z, -1, pj, 1e9);
+        if (Math.abs(pj.d) < main.halfW + 0.5 && Math.abs(pj.s - car.s) < 200) {
+          car.track = main; car.hint = pj.i;
+          car.s = pj.s; car.d = pj.d;
+        }
+      }
+    }
   }
 
   // セクションコースのゴール
@@ -441,6 +483,7 @@ export class Race extends RaceBase {
       p.car.throttle = input.throttle;
     } else {
       p.car.step(dt, inp);
+      this.shortcutSwitch(p.car);
       if (p.car.impact > 2) this.events.push({ type: 'wall', power: p.car.impact });
       // 動けない・逆走が続いたら自動でコースに戻す
       if (!p.finished) {

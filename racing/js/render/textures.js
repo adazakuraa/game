@@ -364,6 +364,27 @@ export function crowdTexture() {
   return (cache.crowd = tex(c));
 }
 
+// ジャンプ台の黄黒の縞（進行方向に「く」の字の矢羽根）
+export function rampTexture() {
+  if (cache.ramp) return cache.ramp;
+  const c = canvas(256, 256);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f2c200';
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.fillStyle = '#151515';
+  for (let k = -1; k < 3; k++) {
+    const y = k * 128;
+    ctx.beginPath();
+    ctx.moveTo(0, y + 64); ctx.lineTo(128, y); ctx.lineTo(256, y + 64);
+    ctx.lineTo(256, y + 112); ctx.lineTo(128, y + 48); ctx.lineTo(0, y + 112);
+    ctx.closePath();
+    ctx.fill();
+  }
+  const t = tex(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return (cache.ramp = t);
+}
+
 export function checkerTexture() {
   if (cache.checker) return cache.checker;
   const c = canvas(256, 32);

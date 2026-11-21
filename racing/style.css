@@ -108,11 +108,19 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .hud-top { position: absolute; top: calc(8px + var(--st)); left: 50%; transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; }
 .hud-btn { width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.45); font-size: 16px; font-weight: 900; }
 /* スリップストリーム中の表示（効き具合をバーで） */
-.draft { position: absolute; left: 50%; bottom: calc(86px + var(--sb)); transform: translateX(-50%); padding: 3px 12px 6px; border-radius: 99px; background: rgba(40, 160, 255, 0.25); border: 1px solid rgba(120, 200, 255, 0.7); color: #bfe6ff; font-size: 12px; font-weight: 900; font-style: italic; letter-spacing: 0.12em; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+.draft { position: absolute; right: calc(50% + 122px); bottom: calc(18px + var(--sb)); padding: 3px 12px 6px; border-radius: 99px; background: rgba(40, 160, 255, 0.25); border: 1px solid rgba(120, 200, 255, 0.7); color: #bfe6ff; font-size: 12px; font-weight: 900; font-style: italic; letter-spacing: 0.12em; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
 .draft.on { opacity: 1; }
 .draft i { position: absolute; left: 10px; right: 10px; bottom: 2px; height: 2px; border-radius: 2px; background: #6fd0ff; transform-origin: left; transform: scaleX(var(--k, 0)); }
 #hud .pos.up { animation: posUp 0.6s cubic-bezier(.2, 1.6, .4, 1); transform-origin: left top; }
 @keyframes posUp { 0% { transform: scale(1.5); color: #3ddc84; } 100% { transform: scale(1); } }
+/* ドリフトのチャージ表示（青・オレンジ・紫の3段階） */
+.driftHud { position: absolute; left: calc(50% + 122px); bottom: calc(18px + var(--sb)); display: flex; align-items: center; gap: 8px; padding: 3px 12px; border-radius: 99px; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 12px; font-weight: 900; font-style: italic; letter-spacing: 0.12em; opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.driftHud.on { opacity: 1; }
+.driftHud span { display: flex; gap: 4px; }
+.driftHud b { width: 14px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.2); }
+.driftHud.l1 b:nth-child(1) { background: #5ab8ff; box-shadow: 0 0 8px #5ab8ff; }
+.driftHud.l2 b:nth-child(-n+2) { background: #ff8c1f; box-shadow: 0 0 8px #ff8c1f; }
+.driftHud.l3 b { background: #d066ff; box-shadow: 0 0 8px #d066ff; }
 .gauge { position: absolute; left: 50%; bottom: calc(10px + var(--sb)); transform: translateX(-50%); text-align: center; width: 220px; }
 .rpm { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.15); overflow: hidden; margin-bottom: 4px; }
 .rpm i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #3ddc84 0%, #ffd000 70%, #ff3b2f 90%); border-radius: 3px; }

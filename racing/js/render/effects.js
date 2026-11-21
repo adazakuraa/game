@@ -178,6 +178,34 @@ export class Effects {
     }
   }
 
+  // ドリフトの火花（チャージの段階で色が変わる）とターボの炎。プレイヤーも CPU も同じ
+  driftFx(st, dt) {
+    const fx = Math.sin(st.psi), fz = Math.cos(st.psi);
+    const lx = Math.cos(st.psi), lz = -Math.sin(st.psi);
+    const COL = [[1.0, 0.9, 0.6], [0.35, 0.72, 1.0], [1.0, 0.55, 0.12], [0.85, 0.4, 1.0]];
+    if (st.drift) {
+      const c = COL[Math.min(3, st.driftLvl || 0)];
+      const rate = (st.driftLvl ? 70 : 25) * dt;
+      for (const side of [1, -1]) {
+        const x = st.x + lx * side * 0.82 - fx * 1.36, z = st.z + lz * side * 0.82 - fz * 1.36;
+        let n = Math.floor(rate) + (Math.random() < rate % 1 ? 1 : 0);
+        while (n-- > 0) {
+          this.emit(x, (st.y || 0) + 0.12, z, (st.vx || 0) * 0.55 + (Math.random() - 0.5) * 5 - fx * 2, 1 + Math.random() * 2.5, (st.vz || 0) * 0.55 + (Math.random() - 0.5) * 5 - fz * 2, st.driftLvl ? 0.34 : 0.18, -0.3, 0.25 + Math.random() * 0.25, c[0], c[1], c[2], 1);
+        }
+      }
+    }
+    if (st.boostT > 0) {
+      const c = COL[Math.min(3, st.boostLvl || 1)];
+      for (const side of [1, -1]) {
+        const x = st.x - fx * 2.45 + lx * side * 0.3, z = st.z - fz * 2.45 + lz * side * 0.3;
+        for (let k = 0; k < 3; k++) {
+          const sp = 5 + Math.random() * 6;
+          this.emit(x, (st.y || 0) + 0.26, z, (st.vx || 0) - fx * sp, 0.2 + Math.random() * 0.4, (st.vz || 0) - fz * sp, 0.6 + Math.random() * 0.3, 1.6, 0.18 + Math.random() * 0.12, c[0] * 0.6 + 0.4, c[1] * 0.6 + 0.4, c[2] * 0.6 + 0.4, 0.95);
+        }
+      }
+    }
+  }
+
   // ---- 雨 ----
   // マフラーの炎（後ろ向きに短く噴く）
   flame(st) {

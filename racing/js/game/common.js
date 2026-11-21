@@ -57,6 +57,17 @@ export function drawTrackMap(cv, track, opts = {}) {
   ctx.strokeStyle = opts.color ?? '#e9edf2';
   ctx.lineWidth = opts.w ?? 4;
   path(); ctx.stroke();
+  // ショートカット（点線）
+  for (const sc of track.shortcuts || []) {
+    ctx.save();
+    ctx.setLineDash([Math.max(3, (opts.w ?? 4)), Math.max(3, (opts.w ?? 4))]);
+    ctx.strokeStyle = 'rgba(255,170,60,0.95)';
+    ctx.lineWidth = Math.max(2, (opts.w ?? 4) * 0.6);
+    ctx.beginPath();
+    for (let i = 0; i <= sc.stageN; i += 2) { const [a, b] = P(sc.x[i], sc.z[i]); if (i === 0) ctx.moveTo(a, b); else ctx.lineTo(a, b); }
+    ctx.stroke();
+    ctx.restore();
+  }
   const [sx, sy] = P(track.x[i0 % track.N], track.z[i0 % track.N]);
   ctx.fillStyle = '#ff3b2f';
   ctx.fillRect(sx - 3, sy - 3, 6, 6);

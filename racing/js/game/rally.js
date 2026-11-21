@@ -80,6 +80,11 @@ export class RallyGame extends GameBase {
         this.countdown(ev.n);
       } else if (ev.type === 'go') {
         this.countdown(0);
+      } else if (ev.type === 'fell') {
+        this.showMsg('谷に落ちた！', 1.3, '#ff3b2f', true);
+        this.subMsg('ジャンプ台には十分な速さで', 2);
+        this.resetCamera?.();
+        C.audio.impact(5);
       } else if (ev.type === 'recover') {
         this.showMsg('コースに戻ります', 1.2, '#fff', true);
         this.resetCamera?.();
@@ -135,6 +140,7 @@ export class RallyGame extends GameBase {
     if (dt > 0) {
       const slipAmount = Math.max(c.slipR * 3.2 - 0.1, c.slipF * 2.2 - 0.25, 0);
       this.fx.carFx('p', { ...c, slipAmount, lock: c.lock, wheelspin: c.wheelspin, smoke: this.look.smoke, roadSurf: c.roadSurf }, dt);
+      this.fx.driftFx(c, dt);
     }
     if (r.state !== 'countdown') this.carFeel(dt, c);
     this.carCamera(dt, false, c);

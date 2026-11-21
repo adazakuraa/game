@@ -110,6 +110,7 @@ export class GameBase {
     $('#hCount').className = 'count';
     $('#hTarget').className = 't-sub t-target';
     $('#hDraft').classList.remove('on');
+    $('#hDrift').className = 'driftHud';
     $('#hNotes').classList.remove('show');
     $('#fTcs').textContent = 'TCS';
     $('#fAbs').textContent = 'ABS';
@@ -226,7 +227,21 @@ export class GameBase {
     f.curbT -= dt;
     if ((c.onCurb || c.offTrack) && (c.speed || 0) > 8 && f.curbT <= 0) { this.vibrate(c.offTrack ? 18 : 10); f.curbT = 0.12; }
     if (c.impact > 3) this.vibrate(Math.min(80, c.impact * 8));
-    this.speedFx(dt, c.speed || 0, (c.draft || 0) * 0.35);
+    this.speedFx(dt, c.speed || 0, (c.draft || 0) * 0.35 + (c.boostT > 0 ? 0.6 : 0));
+    // ジャンプの着地
+    if (c.landed > 3) { this.shake = Math.max(this.shake, Math.min(0.9, c.landed * 0.06)); C.audio.impact(Math.min(8, c.landed * 0.5)); this.vibrate(Math.min(60, c.landed * 5)); c.landed = 0; }
+    // ドリフトのチャージとターボ
+    const hd = $('#hDrift');
+    hd.classList.toggle('on', !!c.drift);
+    hd.className = 'driftHud' + (c.drift ? ' on l' + Math.min(3, c.driftLvl || 0) : '');
+    if ((c.driftLvl || 0) > (f.driftLvl || 0)) C.audio.beep(520 + 220 * c.driftLvl, 0.07, 0.18);
+    f.driftLvl = c.driftLvl || 0;
+    if (c.boostFired) {
+      this.showMsg(['', 'TURBO!', 'SUPER TURBO!', 'ULTRA TURBO!'][Math.min(3, c.boostFired)], 0.8, ['', '#5ab8ff', '#ff8c1f', '#d066ff'][Math.min(3, c.boostFired)], true);
+      C.audio.beep(180, 0.25, 0.25); setTimeout(() => C.audio.beep(360, 0.3, 0.2), 60);
+      this.shake = Math.max(this.shake, 0.25);
+      c.boostFired = 0; // 表示したら消す（物理側は一度だけ立てる）
+    }
     const dEl = $('#hDraft');
     const dk = c.draft || 0;
     dEl.classList.toggle('on', dk > 0.15 && (c.speed || 0) > 20);

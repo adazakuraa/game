@@ -34,6 +34,7 @@ export class Track {
     this.buildRacingLine();
     this.buildSpeedProfile(def.spec || CAR_SPEC);
     this.buildHash();
+    this.buildShortcuts(def);
   }
 
   build(def) {
@@ -80,6 +81,27 @@ export class Track {
       }
       ys.set(Y);
     }
+    // ジャンプ台: def.jumps = [{ at: 先端の位置（ゴール/1周に対する割合）, len: 台の長さ m, h: 高さ m, gap: 谷の長さ m（なければ 0） }]
+    this.jumpArr = new Uint8Array(N); // 1 = 台、2 = 谷（路面なし）
+    this.jumps = [];
+    if (def.jumps) {
+      const len0 = def.stage ? def.stage * total : total;
+      for (const jd of def.jumps) {
+        const lip = jd.at * len0;
+        const j0 = Math.round((lip - jd.len) / this.ds), j1 = Math.round(lip / this.ds);
+        for (let i = j0; i < j1; i++) {
+          const k = ((i % N) + N) % N;
+          const t = (i - j0) / Math.max(1, j1 - j0);
+          Y[k] += jd.h * Math.pow(t, 1.4);
+          this.jumpArr[k] = 1;
+        }
+        const g1 = Math.round((lip + (jd.gap || 0)) / this.ds);
+        for (let i = j1; i < g1; i++) this.jumpArr[((i % N) + N) % N] = 2;
+        this.jumps.push({ ramp: (lip - jd.len), lip, end: lip + (jd.gap || 0), h: jd.h, gap: jd.gap || 0 });
+      }
+    }
+    this.holeDepth = 14;
+
     // 接線・左法線・方位・曲率・勾配
     this.tx = new Float32Array(N);
     this.tz = new Float32Array(N);
@@ -393,6 +415,66 @@ export class Track {
     out.i = i0;
     out.t = t;
     return out;
+  }
+
+  // ショートカット（本線から分かれて合流する別の道）。def.shortcuts = [{ a, b: 分岐・合流の位置（割合）, side: 1 左 / -1 右, surface }]
+  // 別の Track として作り（見えない戻り道を足したループ + stage）、本線の s に換算する toMain を持たせる
+  buildShortcuts(def) {
+    this.shortcuts = [];
+    this.openArr = new Int8Array(this.N); // 本線のガードレールを開ける所（1 左 / -1 右）
+    if (!def.shortcuts) return;
+    const len0 = this.stageEnd || this.length, hw = this.halfW;
+    let cx = 0, cz = 0;
+    for (let i = 0; i < this.N; i++) { cx += this.x[i]; cz += this.z[i]; }
+    cx /= this.N; cz /= this.N;
+    def.shortcuts.forEach((sd, k) => {
+      const sA = sd.a * len0, sB = sd.b * len0, side = sd.side;
+      const P = (s, d) => { const p = this.pointAt(s, d, {}); return [p.x, p.z, p.y]; };
+      // 入口・出口はなだらかに本線から離れる / 寄る
+      const A = P(sA + 45, side * (hw + 7)), B = P(sB - 45, side * (hw + 7));
+      const lerp = (t) => [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t];
+      const pts = [P(sA - 20, side * hw * 0.3), P(sA + 12, side * hw * 0.75), A, lerp(0.33), lerp(0.66), B, P(sB - 12, side * hw * 0.75), P(sB + 20, side * hw * 0.3)];
+      // 見えない戻り道（本線から離れる向きに大きく回る）
+      const last = pts[pts.length - 1], first = pts[0];
+      let ox = (last[0] + first[0]) / 2 - cx, oz = (last[1] + first[1]) / 2 - cz;
+      const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
+      const ret = [[last[0] + ox * 2500, last[1] + oz * 2500, last[2]], [first[0] + ox * 2500, first[1] + oz * 2500, first[2]]];
+      const base = { id: def.id + '-sc' + k, width: sd.width ?? 10, runoff: 4, grip: this.grip, scenery: def.scenery, env: def.env, curbs: false, points: pts.concat(ret) };
+      const tmp = new Track({ ...base, stage: 0.5 });
+      const pj = {};
+      tmp.project(last[0], last[1], -1, pj, 1e9);
+      const scLen = Math.min(pj.s, tmp.length * 0.6);
+      const sc = new Track({ ...base, stage: scLen / tmp.length, surfaces: [[0, 1, sd.surface || 'dirt']] });
+      sc.mainTrack = this;
+      sc.side = side;
+      sc.sA0 = sA - 20; sc.sB0 = sB + 20;
+      sc.toMain = (s) => sc.sA0 + Math.max(0, Math.min(1, s / sc.stageEnd)) * (sc.sB0 - sc.sA0);
+      // 分岐・合流の付近は、本線側の壁を開ける
+      const openSc = (from, to) => { for (let i = Math.max(0, Math.floor(from / sc.ds)); i < Math.min(sc.N, to / sc.ds); i++) { if (side > 0) sc.wallR[i] = sc.halfW + 16; else sc.wallL[i] = sc.halfW + 16; } };
+      openSc(0, 75); openSc(sc.stageEnd - 75, sc.stageEnd + 40);
+      for (let s = sA - 10; s < sA + 70; s += this.ds / 2) this.openMain(s, side);
+      for (let s = sB - 70; s < sB + 10; s += this.ds / 2) this.openMain(s, side);
+      this.shortcuts.push(sc);
+    });
+  }
+  openMain(s, side) {
+    const i = Math.floor((((s % this.length) + this.length) % this.length) / this.ds) % this.N;
+    if (side > 0) this.wallL[i] = Math.max(this.wallL[i], this.halfW + 13); else this.wallR[i] = Math.max(this.wallR[i], this.halfW + 13);
+    this.openArr[i] = side;
+  }
+
+  // 地面の高さ（谷の区間は路面がなく、深く落ちる）
+  inHole(s) {
+    for (const j of this.jumps || []) if (j.gap && s > j.lip && s < j.end) return true;
+    return false;
+  }
+  groundY(i, y) {
+    return this.jumpArr && this.jumpArr[i] === 2 ? y - this.holeDepth : y;
+  }
+  // 谷の先（着地できる場所）の s。谷でなければ null
+  holeExit(s) {
+    for (const j of this.jumps || []) if (j.gap && s >= j.lip - 5 && s <= j.end + 5) return j.end + 12;
+    return null;
   }
 
   sampleArr(arr, s) {

@@ -67,6 +67,8 @@ export class World {
     this.buildTerrain();
     this.buildStartArea();
     this.buildBoards();
+    this.buildJumps();
+    this.buildShortcuts();
     this.buildScenery();
     if (this.night) this.buildStreetLights();
   }
@@ -214,7 +216,9 @@ export class World {
         col.push(1, 1, 1);
       }
     }
+    const hole = (i) => tr.jumpArr && (tr.jumpArr[i % N] === 2 || tr.jumpArr[(i + 1) % N] === 2);
     for (let i = 0; i < M; i++) {
+      if (hole(i)) continue; // 谷の区間は路面なし
       for (let k = 0; k < across; k++) {
         const a = i * (across + 1) + k, b = a + 1, c = a + across + 1, d = c + 1;
         idx.push(a, b, c, b, d, c);
@@ -249,7 +253,7 @@ export class World {
       let run = null;
       for (let i = 0; i <= M; i++) {
         const j = i % N;
-        const on = tr.curb[j] && i < M;
+        const on = tr.curb[j] && i < M && !(tr.jumpArr && tr.jumpArr[j]);
         if (on) {
           const lx = tr.tz[j], lz = -tr.tx[j];
           const base = cp.length / 3;
@@ -293,6 +297,7 @@ export class World {
         uv.push(0, (i * tr.ds) / 8, Math.abs(b - a) / 8, (i * tr.ds) / 8);
       }
       for (let i = 0; i < M; i++) {
+        if (tr.jumpArr && (tr.jumpArr[i % N] === 2 || tr.jumpArr[(i + 1) % N] === 2)) continue;
         const a = base0 + i * 2, b = a + 1, c = a + 2, d = a + 3;
         if (side > 0) idx.push(a, c, b, b, c, d);
         else idx.push(a, b, c, b, d, c);
@@ -352,6 +357,8 @@ export class World {
         }
       }
       for (let i = 0; i < M; i++) {
+        if (tr.jumpArr && (tr.jumpArr[i % N] === 2 || tr.jumpArr[(i + 1) % N] === 2)) continue;
+        if (tr.openArr && (tr.openArr[i % N] === side || tr.openArr[(i + 1) % N] === side)) continue; // ショートカットの出入口
         const a = base0 + i * 2, b = a + 1, c = a + 2, d = a + 3;
         if (side > 0) idx.push(a, b, c, b, d, c);
         else idx.push(a, c, b, b, c, d);
@@ -396,6 +403,8 @@ export class World {
       const step = Math.max(1, Math.round(4 / tr.ds));
       for (const side of [1, -1]) {
         for (let i = 0; i < M && n < count; i += step) {
+          if (tr.jumpArr && tr.jumpArr[i] === 2) continue;
+          if (tr.openArr && tr.openArr[i] === side) continue;
           const w = (side > 0 ? tr.wallL[i] : tr.wallR[i]) * side + side * 0.1;
           m.makeRotationY(tr.hd[i]);
           m.setPosition(tr.x[i] + tr.tz[i] * w, tr.y[i], tr.z[i] - tr.tx[i] * w);
@@ -480,6 +489,24 @@ export class World {
         }
       }
     }
+    // ショートカットの道の周りも平らにする（番号は tr.N 以降に続けて持つ）
+    this.scPts = [];
+    for (const sc of tr.shortcuts || []) {
+      for (let k = 0; k <= Math.min(sc.N - 1, sc.stageN + 10); k++) this.scPts.push({ x: sc.x[k], y: sc.y[k], z: sc.z[k], w: sc.halfW + 2 });
+    }
+    this.scPts.forEach((q, n) => {
+      const ci = Math.round((q.x - this.bounds.minX) / res), cj = Math.round((q.z - this.bounds.minZ) / res);
+      const rr = Math.ceil(60 / res);
+      for (let j = Math.max(0, cj - rr); j <= Math.min(nz, cj + rr); j++) {
+        const dz = this.bounds.minZ + j * res - q.z;
+        for (let i = Math.max(0, ci - rr); i <= Math.min(nx, ci + rr); i++) {
+          const dx = this.bounds.minX + i * res - q.x;
+          const d2 = dx * dx + dz * dz;
+          const v = j * (nx + 1) + i;
+          if (d2 < bestD[v]) { bestD[v] = d2; bestI[v] = tr.N + n; }
+        }
+      }
+    });
     const pos = new Float32Array(nv * 3);
     const col = new Float32Array(nv * 3);
     const uv = new Float32Array(nv * 2);
@@ -531,7 +558,7 @@ export class World {
       const kinds = [...new Set(this.def.zones.map((z) => z[2]))];
       const vz = new Uint8Array(nv);
       for (let v = 0; v < nv; v++) {
-        const k = bestI[v] >= 0 ? this.zoneAt(bestI[v]) : this.zoneXZ(pos[v * 3], pos[v * 3 + 2]);
+        const k = bestI[v] >= 0 && bestI[v] < tr.N ? this.zoneAt(bestI[v]) : this.zoneXZ(pos[v * 3], pos[v * 3 + 2]);
         vz[v] = kinds.indexOf(k);
       }
       const buckets = kinds.map(() => []);
@@ -575,11 +602,18 @@ export class World {
     const tr = this.track;
     const noise = avgY - 2 + (fbm2(x * 0.0025, z * 0.0025, 5) - 0.45) * amp * 2;
     if (i < 0) return noise;
+    if (i >= tr.N) {
+      // ショートカットの道
+      const q = this.scPts[i - tr.N];
+      const t = Math.min(1, Math.max(0, (dist - q.w - 3) / 60));
+      const sm = t * t * (3 - 2 * t);
+      return q.y - 0.06 + (noise - (q.y - 0.06)) * sm;
+    }
     const nr = { dist };
     const lx = tr.tz[i], lz = -tr.tx[i];
     const d = (x - tr.x[i]) * lx + (z - tr.z[i]) * lz;
     const wall = d > 0 ? tr.wallL[i] : tr.wallR[i];
-    const flat = tr.y[i] - 0.04;
+    const flat = tr.y[i] - 0.04 - (tr.jumpArr && tr.jumpArr[i] === 2 ? tr.holeDepth : 0);
     const t = Math.min(1, Math.max(0, (nr.dist - wall - 4) / 110));
     const s = t * t * (3 - 2 * t);
     return flat + (noise - flat) * s;
@@ -776,6 +810,112 @@ export class World {
     this.scene.add(g);
   }
 
+  // ---------- ショートカットの道（未舗装）と入口の看板 ----------
+  buildShortcuts() {
+    const tr = this.track;
+    for (const sc of tr.shortcuts || []) {
+      const kind = sc.def.surfaces ? sc.def.surfaces[0][2] : 'dirt';
+      const last = Math.min(sc.N - 1, sc.stageN + 6);
+      const across = 4;
+      const pos = [], uv = [], idx = [];
+      for (let i = 0; i <= last; i++) {
+        const lx = sc.tz[i], lz = -sc.tx[i];
+        for (let k = 0; k <= across; k++) {
+          const u = k / across, d = sc.halfW * (1 - 2 * u);
+          pos.push(sc.x[i] + lx * d, sc.y[i] + 0.035, sc.z[i] + lz * d);
+          uv.push(u, (i * sc.ds) / 20);
+        }
+      }
+      for (let i = 0; i < last; i++) for (let k = 0; k < across; k++) {
+        const a = i * (across + 1) + k, b = a + 1, c = a + across + 1, d = c + 1;
+        idx.push(a, b, c, b, d, c);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      const tx = T.surfaceTextures(kind);
+      const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: tx.map, normalMap: tx.normal, roughnessMap: tx.rough, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1 }));
+      m.receiveShadow = true;
+      this.scene.add(m);
+      // 道の両脇のわら束（本線側の出入口は開ける）
+      const hay = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.6, 0.6, 1.2, 10).rotateZ(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xc9a44a, roughness: 0.95 }), 400);
+      const m4 = new THREE.Matrix4();
+      let n = 0;
+      for (let s = 20; s < sc.stageEnd - 10 && n < 398; s += 7) {
+        const p = sc.pointAt(s, 0, {});
+        for (const side of [1, -1]) {
+          const w = side > 0 ? sc.wallL[p.i] : sc.wallR[p.i];
+          if (w > sc.halfW + 8) continue;
+          const q = sc.pointAt(s, side * (w - 0.4), {});
+          m4.makeRotationY(p.hd);
+          m4.setPosition(q.x, q.y + 0.6, q.z);
+          hay.setMatrixAt(n++, m4);
+        }
+      }
+      hay.count = n;
+      hay.castShadow = true;
+      this.scene.add(hay);
+      // 入口の矢印看板
+      const pa = tr.pointAt(sc.sA0 - 30, sc.side * (tr.halfW + 2), {});
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.2), new THREE.MeshStandardMaterial({ map: T.bannerTextureText('SHORTCUT', '#e07a10'), roughness: 0.6, side: THREE.DoubleSide }));
+      board.position.set(pa.x, pa.y + 2.2, pa.z);
+      board.rotation.y = pa.hd + Math.PI;
+      this.scene.add(board);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.2, 0.12), new THREE.MeshStandardMaterial({ color: 0x555555 }));
+      post.position.set(pa.x, pa.y + 1.1, pa.z);
+      this.scene.add(post);
+    }
+  }
+
+  // ---------- ジャンプ台（黄黒の縞）と谷（水面） ----------
+  buildJumps() {
+    const tr = this.track;
+    if (!tr.jumps || !tr.jumps.length) return;
+    const tex = T.rampTexture();
+    for (const j of tr.jumps) {
+      const pos = [], uv = [], idx = [];
+      const i0 = Math.round(j.ramp / tr.ds), i1 = Math.round(j.lip / tr.ds);
+      for (let i = i0; i <= i1; i++) {
+        const k = ((i % tr.N) + tr.N) % tr.N;
+        const lx = tr.tz[k], lz = -tr.tx[k];
+        for (const d of [tr.halfW, -tr.halfW]) pos.push(tr.x[k] + lx * d, tr.y[k] + 0.07, tr.z[k] + lz * d);
+        uv.push(0, (i - i0) * tr.ds / 6, 1, (i - i0) * tr.ds / 6);
+        if (i > i0) { const b = (i - i0) * 2; idx.push(b - 2, b - 1, b, b - 1, b + 1, b); }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2 }));
+      m.receiveShadow = true;
+      this.scene.add(m);
+      // 先端の側面（台の厚み）
+      const pl = tr.pointAt(j.lip, 0, {});
+      const face = new THREE.Mesh(new THREE.BoxGeometry(tr.halfW * 2, j.h, 0.4), new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.8 }));
+      face.position.set(pl.x, pl.y - j.h / 2 + 0.05, pl.z);
+      face.rotation.y = pl.hd;
+      this.scene.add(face);
+      if (j.gap) {
+        // 谷底の水面
+        const pm = tr.pointAt((j.lip + j.end) / 2, 0, {});
+        const water = new THREE.Mesh(new THREE.PlaneGeometry(tr.halfW * 2 + 60, j.gap + 20).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x1d4a6e, metalness: 0.2, roughness: 0.15, envMapIntensity: 1.4 }));
+        water.position.set(pm.x, pm.y - tr.holeDepth + 2.5, pm.z);
+        water.rotation.y = pm.hd;
+        this.scene.add(water);
+        // 向こう岸の目印（黄黒のポール）
+        for (const s of [j.lip, j.end]) for (const side of [1, -1]) {
+          const q = tr.pointAt(s, side * (tr.halfW + 0.6), {});
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.2, 0.3), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }));
+          post.position.set(q.x, q.y + 1.1, q.z);
+          this.scene.add(post);
+        }
+      }
+    }
+  }
+
   // ---------- ブレーキング看板 ----------
   buildBoards() {
     const tr = this.track;
@@ -838,6 +978,7 @@ export class World {
         if ((tr.stageEnd ? rs > -120 && rs < 210 : rs < 210 || rs > tr.length - 120) && Math.sign(d) === this.pitSide && dist < wall + 50) continue;
       }
       if (zf && (nr ? this.zoneAt(nr.i) : this.zoneXZ(x, z)) !== zf) continue;
+      if (tr.shortcuts && tr.shortcuts.some((sc) => { const q = sc.nearest(x, z, 30); return q && q.dist < sc.halfW + minDist; })) continue;
       fn(x, this.heightAt(x, z), z, nr);
       placed++;
     }

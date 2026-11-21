@@ -67,13 +67,17 @@ function nrm(x, z) {
 export const TRACKS = [
   {
     id: 'greenhill',
+    // ショートカット（a: 分岐、b: 合流の位置の割合、side: 1 左 / -1 右）。距離は短いが路面が悪い
+    shortcuts: [{ a: 0.284, b: 0.459, side: -1, surface: 'dirt' }],
+    // ジャンプ台（at: 先端の位置の割合、gap: 飛び越える谷の長さ m）
+    jumps: [{ at: 0.921, len: 26, h: 1.2 }],
     // タイムアタックの目標（1・2周目の合計・秒）: 金・銀・銅
-    medals: [155.0, 159.5, 166.0],
+    medals: [151.5, 159.5, 166.0],
     name: 'グリーンヒル・グランプリ',
     en: 'GREENHILL GP',
     desc: '丘陵地帯の高速サーキット。長いストレートと高速S字、最後のヘアピンでのブレーキングが勝負。',
     tags: ['昼', '高速', '初級'],
-    width: 14,
+    width: 17, // 以前は 14
     runoff: 14,
     grip: 1.0,
     scenery: 'country',
@@ -86,13 +90,15 @@ export const TRACKS = [
   },
   {
     id: 'kirimine',
+    // ショートカット（a: 分岐、b: 合流の位置の割合、side: 1 左 / -1 右）。距離は短いが路面が悪い
+    shortcuts: [{ a: 0.477, b: 0.693, side: -1, surface: 'gravel' }],
     // タイムアタックの目標（1・2周目の合計・秒）: 金・銀・銅
-    medals: [137.0, 141.5, 148.5],
+    medals: [133.5, 141.5, 148.5],
     name: '霧峰マウンテンサーキット',
     en: 'KIRIMINE MOUNTAIN',
     desc: '朝霧の山岳コース。高低差45m、狭い道幅とブラインドコーナーが続くテクニカルレイアウト。',
     tags: ['朝霧', '高低差', 'テクニカル'],
-    width: 11.5,
+    width: 14.5, // 以前は 11.5
     runoff: 7,
     grip: 0.97,
     scenery: 'mountain',
@@ -105,17 +111,21 @@ export const TRACKS = [
   },
   {
     id: 'bayside',
+    // ショートカット（a: 分岐、b: 合流の位置の割合、side: 1 左 / -1 右）。距離は短いが路面が悪い
+    shortcuts: [{ a: 0.027, b: 0.317, side: -1, surface: 'cobble', width: 9 }],
+    // ジャンプ台（at: 先端の位置の割合、gap: 飛び越える谷の長さ m）
+    jumps: [{ at: 0.929, len: 22, h: 0.9 }],
     // タイムアタックの目標（1・2周目の合計・秒）: 金・銀・銅
-    medals: [163.5, 169.5, 177.5],
+    medals: [161.0, 170.5, 178.5],
     name: 'ベイサイド市街地コース',
     en: 'BAYSIDE STREET',
     desc: '夜の港湾都市を走るストリートコース。ウォールが迫る直角コーナーの連続。一瞬のミスが命取り。',
     tags: ['夜', '市街地', '上級'],
-    width: 12,
+    width: 15, // 以前は 12
     runoff: 0.8,
     grip: 0.98,
     scenery: 'city',
-    lineLimit: 4.1, // 壁が近いのでライン取りに余裕を持たせる
+    lineLimit: 5.6, // 壁が近いのでライン取りに余裕を持たせる
     env: { time: 'night', sunElev: -8, sunAzim: 200, fog: 0.0016, exposure: 0.85 },
     points: poly([
       [-300, 0, 16], [350, 0, 20], [350, 250, 16], [180, 250, 14], [180, 150, 14], [60, 150, 14],
@@ -124,13 +134,15 @@ export const TRACKS = [
   },
   {
     id: 'sunset',
+    // ジャンプ台（at: 先端の位置の割合、gap: 飛び越える谷の長さ m）
+    jumps: [{ at: 0.542, len: 24, h: 1.6, gap: 28 }, { at: 0.911, len: 28, h: 1.0 }],
     // タイムアタックの目標（1・2周目の合計・秒）: 金・銀・銅
-    medals: [161.0, 166.0, 171.0],
+    medals: [158.5, 167.0, 173.0],
     name: 'サンセット・デザートレースウェイ',
     en: 'SUNSET DESERT',
     desc: '夕陽に染まる砂漠の超高速コース。道幅は広いが、コースを外れると砂で大きく失速する。',
     tags: ['夕方', '超高速', '中級'],
-    width: 15,
+    width: 18, // 以前は 15
     runoff: 16,
     grip: 0.96,
     scenery: 'desert',
@@ -142,13 +154,15 @@ export const TRACKS = [
   },
   {
     id: 'rainforest',
+    // ショートカット（a: 分岐、b: 合流の位置の割合、side: 1 左 / -1 右）。距離は短いが路面が悪い
+    shortcuts: [{ a: 0.699, b: 0.931, side: -1, surface: 'dirt' }],
     // タイムアタックの目標（1・2周目の合計・秒）: 金・銀・銅
-    medals: [166.0, 171.5, 179.0],
+    medals: [165.0, 172.0, 179.0],
     name: 'レインフォレスト・リンク',
     en: 'RAINFOREST RING',
     desc: '雨の森林サーキット。濡れた路面はグリップが低く、アクセルとブレーキの繊細なコントロールが必要。',
     tags: ['雨', 'ウェット', '上級'],
-    width: 13,
+    width: 16, // 以前は 13
     runoff: 9,
     grip: 0.74,
     scenery: 'forest',
@@ -161,13 +175,15 @@ export const TRACKS = [
   },
   {
     id: 'frostpeak',
+    // ショートカット（a: 分岐、b: 合流の位置の割合、side: 1 左 / -1 右）。距離は短いが路面が悪い
+    shortcuts: [{ a: 0.274, b: 0.498, side: -1, surface: 'snow' }],
     // タイムアタックの目標（1・2周目の合計・秒）: 金・銀・銅
-    medals: [170.0, 175.0, 182.5],
+    medals: [166.0, 175.0, 182.5],
     name: 'フロストピーク・サーキット',
     en: 'FROSTPEAK CIRCUIT',
     desc: '雪山の小さな周回コース。冷えた路面はグリップが低く、コース外は雪。下りのヘアピンでブレーキを残しすぎると曲がれない。',
     tags: ['雪', '低グリップ', '上級'],
-    width: 12,
+    width: 15, // 以前は 12
     runoff: 8,
     grip: 0.84,
     scenery: 'alpine',
@@ -181,13 +197,17 @@ export const TRACKS = [
   // 内部ではループとして作り、ゴールより先（戻り道）は作らない。stage = 全周に対するゴール位置の割合
   {
     id: 'grandtour',
+    // ショートカット（a: 分岐、b: 合流の位置の割合、side: 1 左 / -1 右）。距離は短いが路面が悪い
+    shortcuts: [{ a: 0.124, b: 0.229, side: -1, surface: 'gravel' }],
+    // ジャンプ台（at: 先端の位置の割合、gap: 飛び越える谷の長さ m）
+    jumps: [{ at: 0.349, len: 24, h: 1.6, gap: 30 }],
     // タイムアタックの目標（スタートからゴールまで・秒）: 金・銀・銅
-    medals: [115.5, 119.0, 123.5],
+    medals: [113.0, 119.0, 125.0],
     name: 'グランツアー・パス',
     en: 'GRAND TOUR PASS',
     desc: '港町をスタートし、牧草地、森の峠を抜けて雪の山頂でゴールするセクションコース。標高差130m。景色も路面の外側も区間ごとに変わる。',
     tags: ['セクション', '港町→森→雪山', '中級'],
-    width: 12,
+    width: 15, // 以前は 12
     runoff: 8,
     grip: 1.0,
     scenery: 'country',
@@ -205,13 +225,17 @@ export const TRACKS = [
   },
   {
     id: 'canyon',
+    // ショートカット（a: 分岐、b: 合流の位置の割合、side: 1 左 / -1 右）。距離は短いが路面が悪い
+    shortcuts: [{ a: 0.332, b: 0.465, side: 1, surface: 'dirt' }],
+    // ジャンプ台（at: 先端の位置の割合、gap: 飛び越える谷の長さ m）
+    jumps: [{ at: 0.277, len: 28, h: 1.0 }, { at: 0.661, len: 24, h: 1.8, gap: 34 }],
     // タイムアタックの目標（スタートからゴールまで・秒）: 金・銀・銅
-    medals: [104.0, 107.0, 110.5],
+    medals: [99.5, 104.5, 110.5],
     name: 'レッドキャニオン・ラン',
     en: 'RED CANYON RUN',
     desc: '夕暮れの砂漠から岩山の峡谷へ。超高速の直線のあと、谷底のタイトなつづら折りを抜け、再び砂漠を全開で駆け抜けるセクションコース。',
     tags: ['セクション', '砂漠→峡谷→砂漠', '上級'],
-    width: 13,
+    width: 16, // 以前は 13
     runoff: 10,
     grip: 0.97,
     scenery: 'desert',

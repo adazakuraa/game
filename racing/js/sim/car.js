@@ -45,6 +45,23 @@ function torque(rpm) {
 const proj = {};
 const projF = {}, projR = {};
 
+// ドリフトターボ: 曲がりながらブレーキを軽く踏むとドリフト開始。滑らせている時間でチャージし、
+// ハンドルを戻して立ち上がるとターボ（段階が高いほど長く加速）。コース外・壁・スピンでチャージは消える
+// ドリフト中に目指すヨーレート: 通常の旋回より少しきつめ（ハンドルに比例）
+function rTarget(rRef, rT, dir) {
+  return Math.abs(rRef) > 1e-3 ? rRef * 1.18 : -dir * Math.abs(rT) * 0.2;
+}
+
+export const DRIFT = {
+  minSpeed: 14, // m/s これ未満では始まらない
+  startSteer: 0.5, // これ以上ハンドルを切った状態でブレーキをタップすると開始
+  rearGrip: 0.8, // ドリフト中の後輪グリップ倍率（テールが出る）
+  betaMin: 0.05, // これ以上滑っている間だけチャージ
+  levels: [0.4, 0.9, 1.5], // チャージ時間（秒）: 青・オレンジ・紫
+  boostTime: [0.6, 1.0, 1.45],
+  boostAccel: 7.0, // m/s^2（タイヤのグリップと関係なく押し出す）
+};
+
 export class Car {
   constructor(track, spec = CAR_SPEC) {
     this.track = track;
@@ -85,6 +102,9 @@ export class Car {
     this.throttle = 0;
     this.reverseTimer = 0;
     this.crashT = 0;
+    this.drift = 0; this.driftT = 0; this.driftLvl = 0; this.driftOffT = 0;
+    this.air = false; this.vy = 0; this.vyG = 0; this.fell = false; this.landed = 0; this.airT = 0;
+    this.boostT = 0; this.boostLvl = 0; this.boostFired = 0;
     this.track.project(this.x, this.z, -1, proj);
     this.hint = proj.i;
     this.s = proj.s;
@@ -99,6 +119,7 @@ export class Car {
 
   // input: { steer: -1(左)..1(右), throttle: 0..1, brake: 0..1 }
   step(dt, input) {
+    if (this.air) { this.stepAir(dt, input); return; }
     const c = this.spec;
     const tr = this.track;
     const L = c.a + c.b;
@@ -128,7 +149,8 @@ export class Car {
     const baseMu = c.mu * tr.gripArr[proj.i];
     this.roadSurf = tr.surfArr[proj.i]; // 路面の種類（砂煙・雪煙の演出用）
     const muF = (baseMu * (sFL.grip + sFR.grip)) / 2;
-    const muR = (baseMu * (sRL.grip + sRR.grip)) / 2;
+    let muR = (baseMu * (sRL.grip + sRR.grip)) / 2;
+    if (this.drift) muR *= DRIFT.rearGrip;
     const surfDrag = (sFL.drag + sFR.drag + sRL.drag + sRR.drag) / 4;
     this.offTrack = (sFL.type >= 2) + (sFR.type >= 2) + (sRL.type >= 2) + (sRR.type >= 2);
     this.onCurb = (sFL.type === 1) + (sFR.type === 1) + (sRL.type === 1) + (sRR.type === 1);
@@ -158,6 +180,42 @@ export class Car {
     const pac = (al) => Math.sin(c.C * Math.atan(c.B * al));
     let Fyf = -muF * Nf * pac(af);
     let Fyr = -muR * Nr * pac(ar);
+
+    // ドリフトの開始・継続・終了
+    {
+      const beta0 = Math.atan2(vl, Math.max(Math.abs(u), 1));
+      const brk0 = Math.max(0, Math.min(1, input.brake));
+      // 合図はブレーキの短いタップ（踏んで 0.35 秒以内に離す）。長く踏む普通のブレーキではドリフトしない
+      let tapped = false;
+      if (brk0 > 0.25) this.brakeHeldT = (this.brakeHeldT || 0) + dt;
+      else { if (this.brakeHeldT > 0.02 && this.brakeHeldT < 0.35) tapped = true; this.brakeHeldT = 0; }
+      if (!this.drift) {
+        if (!this.noDrift && tapped && u > DRIFT.minSpeed && Math.abs(steerIn) > DRIFT.startSteer && !(this.crashT > 0)) {
+          this.drift = Math.sign(steerIn);
+          this.driftT = 0; this.driftLvl = 0; this.driftOffT = 0;
+          this.boostT = 0;
+        }
+      } else {
+        // 曲がる向きにハンドルを残している間（逆ハンドルで当てていてもよい）は続く
+        const holding = Math.sign(steerIn) === this.drift && Math.abs(steerIn) > 0.12;
+        const sliding = Math.abs(beta0) > DRIFT.betaMin;
+        if (sliding) this.driftT += dt;
+        while (this.driftLvl < 3 && this.driftT >= DRIFT.levels[this.driftLvl]) this.driftLvl++;
+        this.driftOffT = holding || sliding ? 0 : this.driftOffT + dt;
+        const fail = this.offTrack >= 3 || Math.abs(beta0) > 0.95 || this.crashT > 0 || (this.scrape && Math.abs(u) < 20);
+        if (fail) { this.drift = 0; this.driftLvl = 0; this.driftT = 0; }
+        else if (this.driftOffT > 0.12 || u < 9) {
+          // 立ち上がり: チャージした段階でターボ
+          if (this.driftLvl > 0) {
+            this.boostLvl = this.driftLvl;
+            this.boostT = DRIFT.boostTime[this.driftLvl - 1];
+            this.boostFired = this.driftLvl;
+          }
+          this.drift = 0; this.driftLvl = 0; this.driftT = 0;
+        }
+      }
+      if (this.boostT > 0) { this.boostT -= dt; if (brk0 > 0.5) this.boostT = 0; }
+    }
 
     // パワートレイン
     let throttle = Math.max(0, Math.min(1, input.throttle));
@@ -248,6 +306,10 @@ export class Car {
 
     const cd = Math.cos(delta), sd = Math.sin(delta);
     let du = (Fxr + Fxf * cd - Fyf * sd - Fdrag - Froll + Fg) / c.mass + vl * r;
+    // ドリフト中もアクセルを踏んでいれば大きくは失速しない（タイヤが横に滑る抵抗をやわらげる）
+    if (this.drift && throttle > 0.3 && this.assist) du = Math.max(du, -2.2);
+    // ターボ（アクセルを踏んでいる間だけ押し出す）
+    if (this.boostT > 0 && throttle > 0.3) du += DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl);
     let dvl = (Fyr + Fyf * cd + Fxf * sd) / c.mass - u * r;
     let dr = (c.a * (Fyf * cd + Fxf * sd) - c.b * Fyr) / c.Iz;
 
@@ -258,7 +320,14 @@ export class Car {
       const rt = Math.max(-rLim, Math.min(rLim, rRef));
       const err = r - rt;
       const beta = Math.atan2(vl, Math.abs(u));
-      if (Math.abs(beta) > 0.06 || Math.abs(err) > 0.12) {
+      if (this.drift) {
+        // ドリフトアシスト: ハンドルの切り具合で、滑る角度と向きの変わる速さが決まる（カウンターステア不要）
+        const st = Math.abs(steerIn) * (Math.sign(steerIn) === this.drift ? 1 : -0.6);
+        const betaT = this.drift * Math.max(0.08, Math.min(0.38, 0.16 + 0.22 * st));
+        const rT = this.drift * Math.abs(u) * Math.max(0, 0.6 + 0.9 * st) / Math.max(18, Math.abs(u) * 2.2) * 1.0;
+        dvl += (betaT * Math.abs(u) - vl) * 3.5;
+        dr += (-rT - r) * 4.0 * 0 + (rTarget(rRef, rT, this.drift) - r) * 4.0;
+      } else if (Math.abs(beta) > 0.06 || Math.abs(err) > 0.12) {
         dr -= err * 3.2;
         dvl -= vl * 0.8;
       }
@@ -286,6 +355,34 @@ export class Car {
     this.r = r;
 
     // 壁
+    this.collideWalls(tr);
+    this.s = proj.s;
+    this.d = proj.d;
+    this.followGround(dt, tr);
+
+    // 出力値
+    const sp3 = Math.sin(this.psi), cp3 = Math.cos(this.psi);
+    this.u = this.vx * sp3 + this.vz * cp3;
+    this.vl = this.vx * cp3 - this.vz * sp3;
+    this.speed = Math.hypot(this.vx, this.vz);
+    this.rpm += (((this.shiftTimer > 0 ? rpm * 0.85 : rpm) + (this.wheelspin * 1800)) - this.rpm) * Math.min(1, dt * 15);
+    if (this.rpm > c.redline + 200) this.rpm = c.redline + 200;
+    this.slipF = Math.abs(af);
+    this.slipR = Math.abs(ar);
+    this.throttle = throttle;
+    this.braking = brake;
+    this.reverse = reverse;
+    this.wheelRot += (this.u / c.wheelR) * dt + this.wheelspin * 30 * dt;
+    // 見た目用のピッチ・ロール
+    const latAcc = this.u * r;
+    this.slopePitch = Math.atan(proj.slope * Math.cos(this.psi - proj.hd));
+    this.pitch += (this.slopePitch + this.ax * 0.0035 - this.pitch) * Math.min(1, dt * 8);
+    this.roll += (latAcc * 0.0045 - this.roll) * Math.min(1, dt * 8);
+  }
+
+  // 壁との当たり（押し戻し・失速・クラッシュ）
+  collideWalls(tr) {
+    const c = this.spec;
     tr.project(this.x, this.z, this.hint, proj);
     this.hint = proj.i;
     this.impact = 0;
@@ -329,27 +426,68 @@ export class Car {
       this.scrape = true;
       tr.project(this.x, this.z, this.hint, proj);
     } else this.scrape = false;
+  }
+
+  // 地面に沿う。地面が重力より速く下がる所（ジャンプ台の先端・急な頂上）では宙に浮く
+  followGround(dt, tr) {
+    const gy = tr.groundY(proj.i, proj.y);
+    const vyG = (gy - this.y) / Math.max(dt, 1e-4);
+    if (this.speed > 8 && vyG < this.vyG - G * dt * 3 && this.y - gy > 0.05) {
+      // 離陸: 直前の上向きの速さを保って飛ぶ
+      this.air = true;
+      this.vy = this.vyG;
+      this.airT = 0;
+      this.y += this.vy * dt;
+      return;
+    }
+    this.y = gy;
+    this.vyG = Math.max(-20, Math.min(20, vyG));
+  }
+
+  // 空中: タイヤの力はなく、重力と空気抵抗だけ。ハンドルで向きを少しだけ変えられる
+  stepAir(dt, input) {
+    const c = this.spec;
+    const tr = this.track;
+    this.airT += dt;
+    this.vy -= G * dt;
+    this.y += this.vy * dt;
+    const sp = Math.hypot(this.vx, this.vz);
+    const k = 1 - ((0.5 * 1.2 * c.CdA) / c.mass) * sp * dt;
+    this.vx *= k; this.vz *= k;
+    this.x += this.vx * dt;
+    this.z += this.vz * dt;
+    const steerIn = Math.max(-1, Math.min(1, input.steer));
+    this.r += (-steerIn * 0.5 - this.r) * Math.min(1, dt * 3);
+    this.psi += this.r * dt;
+    if (this.boostT > 0) this.boostT -= dt;
+    this.drift = 0; this.driftLvl = 0; this.driftT = 0;
+    this.collideWalls(tr);
     this.s = proj.s;
     this.d = proj.d;
-    this.y = proj.y;
-
-    // 出力値
+    const gy = tr.groundY(proj.i, proj.y);
+    if (this.y <= gy) {
+      // 着地
+      const hard = -this.vy;
+      this.air = false;
+      this.y = gy;
+      this.vyG = 0;
+      this.landed = hard;
+      if (hard > 9) { this.vx *= 0.93; this.vz *= 0.93; }
+      if (tr.inHole(proj.s)) this.fell = true; // 谷に落ちた
+      this.vy = 0;
+    }
     const sp3 = Math.sin(this.psi), cp3 = Math.cos(this.psi);
     this.u = this.vx * sp3 + this.vz * cp3;
     this.vl = this.vx * cp3 - this.vz * sp3;
     this.speed = Math.hypot(this.vx, this.vz);
-    this.rpm += (((this.shiftTimer > 0 ? rpm * 0.85 : rpm) + (this.wheelspin * 1800)) - this.rpm) * Math.min(1, dt * 15);
-    if (this.rpm > c.redline + 200) this.rpm = c.redline + 200;
-    this.slipF = Math.abs(af);
-    this.slipR = Math.abs(ar);
-    this.throttle = throttle;
-    this.braking = brake;
-    this.reverse = reverse;
-    this.wheelRot += (this.u / c.wheelR) * dt + this.wheelspin * 30 * dt;
-    // 見た目用のピッチ・ロール
-    const latAcc = this.u * r;
-    this.slopePitch = Math.atan(proj.slope * Math.cos(this.psi - proj.hd));
-    this.pitch += (this.slopePitch + this.ax * 0.0035 - this.pitch) * Math.min(1, dt * 8);
-    this.roll += (latAcc * 0.0045 - this.roll) * Math.min(1, dt * 8);
+    this.throttle = Math.max(0, Math.min(1, input.throttle));
+    this.braking = 0;
+    this.offTrack = 0; this.onCurb = 0;
+    this.slipF = 0; this.slipR = 0; this.wheelspin = 0; this.lock = 0;
+    this.wheelRot += (this.u / c.wheelR) * dt;
+    // 空中では鼻先が少しずつ下がる
+    this.pitch += (Math.atan2(this.vy, Math.max(8, this.speed)) * 0.6 - this.pitch) * Math.min(1, dt * 3);
+    this.roll *= 1 - Math.min(1, dt * 2);
   }
+
 }
