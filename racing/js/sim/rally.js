@@ -6,8 +6,8 @@ import { DRIVERS } from './race.js';
 
 export const RALLY_DIFF = {
   easy: { factor: 1.14, spread: 0.014 },
-  normal: { factor: 1.035, spread: 0.01 },
-  hard: { factor: 1.0, spread: 0.007 },
+  normal: { factor: 1.06, spread: 0.01 },
+  hard: { factor: 1.02, spread: 0.007 }, // GT の「むずかしい」（金メダル並み）と同じくらいの手ごたえ
 };
 
 const wrapDelta = (d, L) => (d > L / 2 ? d - L : d < -L / 2 ? d + L : d);
@@ -84,7 +84,7 @@ export class RallyRun {
     const diff = RALLY_DIFF[opts.difficulty] || RALLY_DIFF.normal;
     this.leaderTime = cal.time * diff.factor;
     this.rivals = DRIVERS.map((d, i) => ({ name: d.name, color: d.color, num: d.num, time: this.leaderTime * (1 + i * diff.spread + ((i * 37) % 7) * 0.0012) }));
-    const car = new Car(track);
+    const car = new Car(track, opts.spec || undefined);
     car.assist = opts.assist;
     car.reset(0, 0);
     this.car = car;

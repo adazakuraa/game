@@ -6,13 +6,17 @@ import { poly } from './trackdata.js';
 import { Recovery } from './recovery.js';
 import { BotDriver } from './bot.js';
 
-// factor: トップ CPU の周回タイム ÷ 上手な自動ドライバーの周回タイム
+// factor: 上手な自動ドライバーの周回タイムに対する、先頭 CPU の速さ（小さいほど速い）
+// むずかしい = 先頭 CPU がタイムアタックの金メダル（グリーンヒル 2周 2:31 前後）とほぼ同じペース。
+// ふつう = 銀メダルあたり、かんたん = 銅メダルより少し遅いくらい。
 export const DIFFICULTY = {
-  // factor: 上手な自動ドライバーの周回タイムに対する、先頭 CPU の速さ（小さいほど速い）
-  easy: { label: 'かんたん', factor: 1.03, spread: 0.008, drift: 0.35, shortcut: 0.3 },
-  normal: { label: 'ふつう', factor: 0.99, spread: 0.006, drift: 0.7, shortcut: 0.55 }, // drift: ドリフトターボを使うコーナーの割合
-  hard: { label: 'むずかしい', factor: 0.97, spread: 0.004, drift: 0.95, shortcut: 0.8 },
+  easy: { label: 'かんたん', factor: 1.085, spread: 0.008, drift: 0.35, shortcut: 0.3 },
+  normal: { label: 'ふつう', factor: 1.035, spread: 0.006, drift: 0.7, shortcut: 0.55 }, // drift: ドリフトターボを使うコーナーの割合
+  hard: { label: 'むずかしい', factor: 1.0, spread: 0.004, drift: 0.95, shortcut: 0.8 },
 };
+// コースごとの補正（ショートカットやジャンプで CPU が得をする量がコースで違うため）。
+// 「むずかしい」の先頭 CPU の 2 周（セクションはゴールまで）が金メダルの 99.5% 前後になるように実測で合わせた値
+export const CPU_TRIM = { greenhill: 0.999, kirimine: 1.014, bayside: 1.09, sunset: 1.008, rainforest: 1.006, frostpeak: 0.959, grandtour: 1.003, canyon: 1.03 };
 
 // コースごとに「上手なドライバー」の周回タイムと CPU の基準タイムを測る
 // CPU の加速を、プレイヤーと同じ車（アクセル全開・TCS あり・ギアチェンジ込み）の実測値に合わせる。
@@ -325,14 +329,14 @@ export class Race extends RaceBase {
     this.finishOrder = [];
     this.events = [];
     const L = this.stage ? this.START : track.length; // グリッドの基準（スタートラインの位置）
-    const player = new Car(track);
+    const player = new Car(track, opts.spec || undefined);
     player.assist = opts.assist;
     const pe = { kind: 'player', name: 'YOU', color: opts.playerColor, num: 1, car: player, lap: 0, prevS: 0, lapStart: 0, laps: [], best: Infinity, finished: false, finishTime: 0 };
     if (this.mode === 'race') {
       const diff = DIFFICULTY[opts.difficulty];
       const n = DRIVERS.length;
       const cal = calibrate(track);
-      const top = cal.aiLap / (cal.botLap * diff.factor);
+      const top = cal.aiLap / (cal.botLap * diff.factor * (CPU_TRIM[track.def.id] ?? 1));
       this.aiTop = top;
       // グリッド: 先頭から AI、プレイヤーは最後尾
       const paces = DRIVERS.map((_, i) => top - i * diff.spread);
