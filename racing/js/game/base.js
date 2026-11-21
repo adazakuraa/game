@@ -151,7 +151,7 @@ export class GameBase {
     const lx = Math.cos(this.camYaw), lz = -Math.sin(this.camYaw);
     const pos = new THREE.Vector3(p.x - fx * dist + lx * side, p.y + cfg.hgt, p.z - fz * dist + lz * side);
     const look = new THREE.Vector3(p.x + fx * (cfg.lookAhead ?? 4), p.y + (cfg.lookY ?? 0.95), p.z + fz * (cfg.lookAhead ?? 4));
-    let fov = (cfg.fov ?? 58) + sp * (cfg.fovSpeed ?? 0.16);
+    let fov = (cfg.fov ?? 58) + sp * (cfg.fovSpeed ?? 0.16) + (this.boostFov || 0) * 9;
     if (camera.userData.portrait) fov += 22;
     // 車からの相対位置をなめらかにする（絶対位置で後追いすると、速度が変わるたびに車との距離が伸び縮みする）
     const off = pos.sub(new THREE.Vector3(p.x, p.y, p.z));
@@ -227,7 +227,9 @@ export class GameBase {
     f.curbT -= dt;
     if ((c.onCurb || c.offTrack) && (c.speed || 0) > 8 && f.curbT <= 0) { this.vibrate(c.offTrack ? 18 : 10); f.curbT = 0.12; }
     if (c.impact > 3) this.vibrate(Math.min(80, c.impact * 8));
-    this.speedFx(dt, c.speed || 0, (c.draft || 0) * 0.35 + (c.boostT > 0 ? 0.6 : 0));
+    // ターボ中は画角が少し広がり、画面の外周に流れる線が強くなる
+    this.boostFov = (this.boostFov || 0) + ((c.boostT > 0 ? 1 : 0) - (this.boostFov || 0)) * Math.min(1, dt * (c.boostT > 0 ? 6 : 2.5));
+    this.speedFx(dt, c.speed || 0, (c.draft || 0) * 0.35 + this.boostFov * 0.8);
     // ジャンプの着地
     if (c.landed > 3) { this.shake = Math.max(this.shake, Math.min(0.9, c.landed * 0.06)); C.audio.impact(Math.min(8, c.landed * 0.5)); this.vibrate(Math.min(60, c.landed * 5)); c.landed = 0; }
     // ドリフトのチャージとターボ
@@ -237,9 +239,9 @@ export class GameBase {
     if ((c.driftLvl || 0) > (f.driftLvl || 0)) C.audio.beep(520 + 220 * c.driftLvl, 0.07, 0.18);
     f.driftLvl = c.driftLvl || 0;
     if (c.boostFired) {
-      this.showMsg(['', 'TURBO!', 'SUPER TURBO!', 'ULTRA TURBO!'][Math.min(3, c.boostFired)], 0.8, ['', '#5ab8ff', '#ff8c1f', '#d066ff'][Math.min(3, c.boostFired)], true);
-      C.audio.beep(180, 0.25, 0.25); setTimeout(() => C.audio.beep(360, 0.3, 0.2), 60);
-      this.shake = Math.max(this.shake, 0.25);
+      // 加速の合図は控えめに（短い風切り音と軽い揺れ）。疾走感は画角と流れる線で出す
+      C.audio.beep(140, 0.22, 0.14); setTimeout(() => C.audio.beep(260, 0.25, 0.1), 50);
+      this.shake = Math.max(this.shake, 0.12);
       c.boostFired = 0; // 表示したら消す（物理側は一度だけ立てる）
     }
     const dEl = $('#hDraft');
@@ -267,7 +269,7 @@ export class GameBase {
       const hx = Math.sin(c.psi), hz = Math.cos(c.psi);
       const pos = new THREE.Vector3(c.x + hx * 0.2, c.y + 1.12, c.z + hz * 0.2);
       const look = new THREE.Vector3(c.x + hx * 20, c.y + 0.9 + Math.sin(c.slopePitch || 0) * 20, c.z + hz * 20);
-      let fov = 68 + (c.speed || 0) * 0.08;
+      let fov = 68 + (c.speed || 0) * 0.08 + (this.boostFov || 0) * 9;
       if (camera.userData.portrait) fov += 22;
       if (!snap) {
         this.camVel.copy(pos).sub(this.camPos).divideScalar(Math.max(dt, 1e-3));

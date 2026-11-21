@@ -195,13 +195,12 @@ export class Effects {
       }
     }
     if (st.boostT > 0) {
-      const c = COL[Math.min(3, st.boostLvl || 1)];
+      // ターボ中: マフラーから短い炎（控えめ）
       for (const side of [1, -1]) {
+        if (Math.random() > 0.6) continue;
         const x = st.x - fx * 2.45 + lx * side * 0.3, z = st.z - fz * 2.45 + lz * side * 0.3;
-        for (let k = 0; k < 3; k++) {
-          const sp = 5 + Math.random() * 6;
-          this.emit(x, (st.y || 0) + 0.26, z, (st.vx || 0) - fx * sp, 0.2 + Math.random() * 0.4, (st.vz || 0) - fz * sp, 0.6 + Math.random() * 0.3, 1.6, 0.18 + Math.random() * 0.12, c[0] * 0.6 + 0.4, c[1] * 0.6 + 0.4, c[2] * 0.6 + 0.4, 0.95);
-        }
+        const sp = 4 + Math.random() * 4;
+        this.emit(x, (st.y || 0) + 0.25, z, (st.vx || 0) - fx * sp, 0.2 + Math.random() * 0.3, (st.vz || 0) - fz * sp, 0.22 + Math.random() * 0.08, 1.4, 0.08 + Math.random() * 0.06, 1.0, 0.72, 0.42, 0.7);
       }
     }
   }

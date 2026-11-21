@@ -253,7 +253,7 @@ export class AICar {
     // 横G に応じたわずかなスリップアングル（見た目）
     this.slip = Math.max(-0.08, Math.min(0.08, k * this.v * this.v * 0.0018));
     // ドリフト中は車体を大きく内側へ向ける（見た目）
-    this.driftAng = (this.driftAng || 0) + ((this.drift ? this.drift * Math.min(0.34, 0.12 + this.driftT * 0.6) : 0) - (this.driftAng || 0)) * Math.min(1, dt * 6);
+    this.driftAng = (this.driftAng || 0) + ((this.drift ? this.drift * Math.min(0.06, 0.02 + this.driftT * 0.1) : 0) - (this.driftAng || 0)) * Math.min(1, dt * 6);
     this.slip += this.driftAng;
     this.psi = p.hd - latAngle + this.slip;
     this.vx = (this.x - ox) / Math.max(dt, 1e-3);
