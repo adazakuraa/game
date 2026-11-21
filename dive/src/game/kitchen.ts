@@ -1,5 +1,5 @@
 import { SPECIES, SPECIES_BY_ID, type SpeciesDef } from '../life/species';
-import { runFuguExam, runUrchinSort, SORT } from './kitchenGames';
+import { runFuguExam } from './kitchenGames';
 import { CAT_NAME, DISH, FISHING, FUGU_EXAM, PENALTY, STORY, dishFor, edibleInfo, fits, isFugu, isGoodCatch, poisonFor, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
 import { yen } from './photoScore';
 
@@ -33,6 +33,8 @@ type Host = {
   known: (id: string) => boolean;
   /** a chart handed over in the story */
   grantMap: (id: string) => void;
+  /** go diving straight away for the urchin harvest */
+  urchinDive: () => void;
 };
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -125,7 +127,8 @@ export class Kitchen {
           const def = SPECIES_BY_ID.get(c.id)!;
           const e = edibleInfo(def);
           const dish = DISH[dishFor(def, c.kg)];
-          const knownPoison = poisonFor(def, this.licensed) && this.host.known(def.id);
+          const knownPoison = false;
+          void poisonFor;
           const fuguOk = this.licensed && isFugu(def);
           return `<div class="k-item ${knownPoison ? 'poison' : ''}"><div><div class="what">${this.host.known(def.id) ? def.name : '名前の分からない魚'}　${fmtKg(c.kg)}${knownPoison ? '　<span class="k-warn">毒あり</span>' : ''}${fuguOk ? '　<span class="k-ok">免許でさばける</span>' : ''}</div><div class="who">${e.ok ? CAT_NAME[e.cat] : ''} → ${dish.name}（食べると：${dish.short}）</div></div>
             <div class="acts"><button type="button" class="btn sec" data-eat="${i}">まかないで食べる</button><button type="button" class="btn sec" data-sell="${i}">市場へ${knownPoison ? '（処分）' : ' ' + yen(marketPrice(def, c.kg, this.licensed))}</button></div></div>`;
@@ -137,13 +140,16 @@ export class Kitchen {
     const lv2 = this.level;
     const sortDone = s.uniDay === s.day;
     const work: string[] = [];
-    work.push(`<div class="k-item"><div><div class="what">今日の仕込み：ウニの選別</div><div class="who">漁協から届いたウニの山から、食べられるウニだけを選ぶ（${SORT.time}秒・1日1回）</div></div><div class="acts"><button type="button" class="btn ${sortDone ? 'sec' : 'pri'}" id="k-sort" ${sortDone ? 'disabled' : ''}>${sortDone ? '今日は済んだ' : 'やる'}</button></div></div>`);
+    work.push(`<div class="k-item"><div><div class="what">今日の仕込み：ウニ漁</div><div class="who">ウニ丼用のウニを獲りに、店の前の岩場へすぐ潜る（1日1回）</div></div><div class="acts"><button type="button" class="btn ${sortDone ? 'sec' : 'pri'}" id="k-sort" ${sortDone ? 'disabled' : ''}>${sortDone ? '今日は済んだ' : '海へ'}</button></div></div>`);
     if (this.licensed) work.push(`<div class="k-item"><div><div class="what">ふぐ調理師免許 <span class="k-ok">取得済み</span></div><div class="who">トラフグ・ヒガンフグ・クサフグなどをさばいて出せる（ほかの毒魚はだめ）</div></div></div>`);
     else if (lv2 >= FUGU_EXAM.level) work.push(`<div class="k-item"><div><div class="what">ふぐ調理師試験</div><div class="who">学科と実技。合格するとフグ料理を出せる（受験料 ${yen(FUGU_EXAM.fee)}・1問でも間違えると不合格）</div></div><div class="acts"><button type="button" class="btn sec" id="k-exam">受験する</button></div></div>`);
-    else work.push(`<div class="k-item"><div><div class="what">ふぐ調理師試験</div><div class="who">評判Lv${FUGU_EXAM.level}で受けられるようになる</div></div></div>`);
+
     $('k-work').innerHTML = work.join('');
     document.getElementById('k-sort')?.addEventListener('click', () => this.playSort());
     document.getElementById('k-exam')?.addEventListener('click', () => this.playExam());
+    // the shop closes only after dark
+    const night = (s.clock ?? 0) >= FISHING.duskAt + FISHING.duskLen * 0.5;
+    $('k-sleep').classList.toggle('hidden', !night);
     $('k-sleep').textContent = `店を閉めて休む（${(s.day ?? 1) + 1}日目の朝へ）`;
 
     $('k-orders').querySelectorAll<HTMLButtonElement>('[data-serve]').forEach((b) => b.addEventListener('click', () => this.serve(b.dataset.serve!)));
@@ -167,15 +173,14 @@ export class Kitchen {
     if (s.uniDay === s.day) return;
     s.uniDay = s.day;
     this.host.write();
-    runUrchinSort(this.mgOpen(), (pts, aka, stings) => {
-      const y = pts * SORT.yenPerPoint;
-      const rep = pts >= SORT.repAt ? 1 : 0;
-      s.money = (s.money ?? 0) + y;
-      s.rep = (s.rep ?? 0) + rep;
-      this.host.write();
-      this.host.chime(rep > 0);
-      this.mgResult(`仕込み完了！<br><b>${pts}点</b>（アカウニ×${aka}${stings ? `・トゲに${stings}回刺された` : ''}）<br>ウニ丼の売上 +${yen(y)}${rep ? '　評判+1' : ''}`);
-    });
+    this.host.urchinDive();
+  }
+
+  /** Back from the urchin harvest. */
+  harvestResult(ok: boolean, earned: number): void {
+    this.mgOpen();
+    this.mgResult(ok ? `仕込み完了！<br><b>ウニ丼が出せる</b><br>売上 +${yen(earned)}　評判+1` : `時間切れ…<br><b>ウニが足りなかった</b><br>${earned ? `売上 +${yen(earned)}` : 'また明日がんばろう'}`, !ok);
+    if (ok) this.host.chime(true);
   }
 
   private playExam(): void {
@@ -280,6 +285,7 @@ export class Kitchen {
   /** End of the day: leftovers go to the market, the clock returns to morning, new guests come tomorrow. */
   sleep(): void {
     const s = this.host.save;
+    if ((s.clock ?? 0) < FISHING.duskAt + FISHING.duskLen * 0.5) return;
     const left = s.cooler ?? [];
     const v = left.reduce((a, c) => a + marketPrice(SPECIES_BY_ID.get(c.id)!, c.kg), 0);
     s.money = (s.money ?? 0) + v;

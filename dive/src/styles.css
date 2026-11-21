@@ -367,7 +367,7 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 #shop .gear-item { font-size: 12.5px; padding: 10px 6px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-brd); }
 #shop .gear-item .gdesc { font-size: 11px; }
 #shop .gear-item .req { font-size: 11.5px; }
-.hub { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.hub { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .hub-btn { flex-wrap: wrap; justify-content: flex-start; text-align: left; }
 .hub-btn svg { width: 22px; height: 22px; }
 .hub-btn small { flex-basis: 100%; font-size: 11px; font-weight: 700; color: var(--warn); margin-left: 30px; margin-top: -4px; }
@@ -447,3 +447,45 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 .tk-acts .btn { min-height: 40px; padding: 8px 12px; font-size: 13px; }
 .tk-acts .btn[disabled] { opacity: 0.45; }
 .reset-link { align-self: center; background: transparent; border: 0; color: var(--ink-dim); font-size: 12px; text-decoration: underline; cursor: pointer; padding: 8px; font-family: var(--jp); opacity: 0.7; }
+
+#album-body .sc-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+#album-body figure { margin: 0; background: var(--panel); border: 1px solid var(--glass-brd); border-radius: 12px; padding: 8px; font-size: 12px; color: var(--ink-dim); line-height: 1.5; }
+#album-body figure img, #album-body figure.locked div { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; display: block; }
+#album-body figure.locked div { display: grid; place-items: center; background: rgba(255,255,255,0.05); border: 1px dashed rgba(255,255,255,0.18); font-size: 22px; }
+#album-body figcaption b { display: block; color: var(--ink); font-size: 13.5px; }
+#album-body .al-count { font-size: 14px; margin-bottom: 8px; }
+#album-body .al-count b { color: var(--warn); font-family: var(--num); font-size: 18px; }
+.debug-row { display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-dim); opacity: 0.8; }
+
+/* ---- しおさい亭: a warm wooden diner, unlike the blue sea screens */
+#kitchen.screen.full { background:
+    repeating-linear-gradient(90deg, rgba(0,0,0,0.0) 0 118px, rgba(0,0,0,0.22) 118px 121px),
+    repeating-linear-gradient(0deg, rgba(255,220,170,0.025) 0 3px, rgba(0,0,0,0.03) 3px 7px),
+    linear-gradient(180deg, #5a3a22 0%, #3e2614 55%, #2c1a0c 100%); }
+#kitchen .full-wrap { color: #f6ead6; }
+#kitchen .noren { display: flex; justify-content: center; gap: 4px; margin: -4px auto 4px; width: min(420px, 100%); }
+#kitchen .noren span { flex: 1; height: 64px; background: linear-gradient(180deg, #1c2e5a, #14234a); color: #f4f0e6; font-weight: 900; font-size: 22px; display: grid; place-items: center; border-radius: 0 0 4px 4px; box-shadow: inset 0 -6px 0 rgba(255,255,255,0.06), 0 4px 10px rgba(0,0,0,0.35); }
+#kitchen .k-head h2 { color: #fff3dc; font-size: 26px; letter-spacing: 2px; }
+#kitchen .res-kicker { color: #f0b860; }
+#kitchen .k-status { color: #e8d6b8; }
+#kitchen .k-status b { color: #fff; }
+#kitchen .k-h { color: #f0b860; font-size: 15px; border-bottom: 1px dashed rgba(240,184,96,0.4); padding-bottom: 3px; }
+#kitchen .k-story { background: #f6ecd6; color: #3a2a1a; border-color: #c89a5a; }
+#kitchen .k-story h4 { color: #a8401a; }
+#kitchen .k-story .btn.sec { background: #3a2a1a; color: #f6ecd6; }
+/* order slips: paper tickets pinned to the wall */
+#kitchen .k-slips .k-item { background: #fbf6ea; color: #2a1e12; border: 0; border-radius: 3px; box-shadow: 0 3px 8px rgba(0,0,0,0.35); position: relative; border-top: 6px solid #c8382a; }
+#kitchen .k-slips .k-item .who, #kitchen .k-slips .k-item .hint { color: #7a6650; }
+#kitchen .k-slips .k-item .pay { color: #1a7a3a; }
+#kitchen .k-slips .k-item.ready { box-shadow: 0 0 0 3px #3ab06a, 0 3px 8px rgba(0,0,0,0.35); }
+#kitchen .k-slips .btn.sec { background: #e8dcc4; color: #6a5a44; border-color: #d0c0a0; }
+/* the cooler: ice-blue box */
+#kitchen .k-ice { background: linear-gradient(180deg, #2a6a8a, #1c4c66); border: 3px solid #e8f2f6; border-radius: 14px; padding: 8px; box-shadow: inset 0 0 18px rgba(255,255,255,0.18); }
+#kitchen .k-ice .k-item { background: rgba(230,246,252,0.14); border-color: rgba(255,255,255,0.25); color: #f2fbff; }
+#kitchen .k-ice .k-empty { color: #d8eef6; }
+/* shop work: a wooden board */
+#kitchen .k-board .k-item { background: rgba(20,10,4,0.35); border-color: rgba(240,184,96,0.35); }
+#kitchen .k-buff { background: rgba(240,184,96,0.12); color: #f6ead6; }
+#kitchen .k-buff b { color: #f0b860; }
+#kitchen .btn.pri { background: linear-gradient(180deg, #f0a040, #c86a18); color: #2a1404; }
+#kitchen #k-sleep { background: #1c2e5a; color: #f4f0e6; border-color: #2c3e6a; }
