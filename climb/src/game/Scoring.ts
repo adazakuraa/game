@@ -22,6 +22,8 @@ export const STANDARD: Record<string, StageStd> = {
   'k2-3': { up: 3.5 },
   'k2-4': { up: 2.7 },
   'k2-summit': { up: 9.9, round: 15.5 },
+  // practice climb (Kosciuszko): an autopilot run with every lesson took 1.73 h
+  kosciuszko: { up: 1.7 },
 };
 
 export interface Grade { name: string; tone: 'top' | 'good' | 'ok' | 'slow' }

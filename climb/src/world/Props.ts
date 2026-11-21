@@ -82,14 +82,16 @@ export class Props {
   ) {
     this.group.name = 'props';
     this.rng = createSeededRandom(def.seed + 5);
-    const base = def.campAltitude < 5600;
-    this.buildCamp(0, base ? 14 : 6, base);
-    if (def.goal === 'camp') this.buildCamp(route.length, 6, false);
+    const practice = def.id === 'kosciuszko';
+    const base = def.campAltitude < 5600 && !practice;
+    if (!practice) this.buildCamp(0, base ? 14 : 6, base);
+    if (practice) this.buildPracticeSummit();
+    else if (def.goal === 'camp') this.buildCamp(route.length, 6, false);
     else this.buildSummit();
     if (base) this.buildChorten();
     this.buildRocks();
     if (def.campAltitude >= 7000) this.buildLitter();
-    if (def.goal === 'summit') this.buildCache();
+    if (def.goal === 'summit' && !practice) this.buildCache();
     this.buildLadders();
     if (def.seracField) this.buildIceTowers();
     this.buildHazards();
@@ -491,6 +493,39 @@ export class Props {
     );
     pole.position.set(top.x, top.y + 0.7, top.z);
     this.group.add(pole);
+  }
+
+  /** Practice stage: a stone cairn on top and a signpost just below it (no prayer flags). */
+  readonly signpost = new THREE.Vector3();
+  private buildPracticeSummit(): void {
+    const stone = new THREE.MeshStandardMaterial({ color: 0x8b8680, roughness: 0.95 });
+    const top = this.route.pointAt(this.route.length);
+    for (let k = 0; k < 9; k++) {
+      const r = 0.55 - k * 0.04;
+      const m = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), stone);
+      const a = k * 2.1;
+      m.position.set(top.x + Math.cos(a) * (k < 6 ? 0.55 : 0.15), top.y + 0.2 + Math.floor(k / 3) * 0.45, top.z + Math.sin(a) * (k < 6 ? 0.55 : 0.15));
+      m.rotation.set(k, k * 1.3, 0);
+      m.castShadow = true;
+      this.group.add(m);
+    }
+    // signpost beside the track
+    const s = this.route.length - 28;
+    const p = this.route.pointAt(s);
+    const d = this.route.directionAt(s);
+    const x = p.x - d.z * 2.4, z = p.z + d.x * 2.4;
+    const y = this.ground(x, z);
+    const wood = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: 0.85 });
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.7, 0.12), wood);
+    post.position.set(x, y + 0.85, z);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.3, 0.05), new THREE.MeshStandardMaterial({ color: 0xe6dcc4, roughness: 0.8 }));
+    board.position.set(x, y + 1.5, z);
+    board.rotation.y = Math.atan2(d.x, d.z) + Math.PI / 2;
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.2), new THREE.MeshStandardMaterial({ color: 0xd9541e, roughness: 0.6 }));
+    cap.position.set(x, y + 1.74, z);
+    post.castShadow = board.castShadow = true;
+    this.group.add(post, board, cap);
+    this.signpost.set(x, y, z);
   }
 
   private buildFlags(origin: THREE.Vector3, lines: number, perLine: number, lenMin: number, lenMax: number): void {

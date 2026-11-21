@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { MountainDef, Vec3Tuple } from '../game/Mountains';
 import { altitudeToWorldY } from '../game/Mountains';
-import { Noise2D, smoothstep } from '../utils/noise';
+import { Noise2D, smoothstep, clamp } from '../utils/noise';
 import { createTerrainTextures } from './TerrainTextures';
 
 interface Segment {
@@ -38,6 +38,8 @@ function smax(a: number, b: number, k: number): number {
 /** Analytic mountain height field built from ridge polylines plus fractal noise. */
 export class MountainField {
   private readonly ridges: Segment[][];
+  /** soft terrain: smoothed crest as a function of distance along the camp->summit axis */
+  private readonly far: { ax: number; az: number; ux: number; uz: number; len: number; u: number[]; h: number[] } | null;
   private readonly noise: Noise2D;
   private readonly noise2: Noise2D;
   lastRouteDistance = 0;
@@ -46,6 +48,12 @@ export class MountainField {
 
   constructor(readonly def: MountainDef) {
     this.ridges = def.ridges.map(buildSegments);
+    if (def.farCrest) {
+      const a = def.route[0], b = def.route[def.route.length - 1];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const ux = (b[0] - a[0]) / len, uz = (b[1] - a[1]) / len;
+      this.far = { ax: a[0], az: a[1], ux, uz, len, u: def.farCrest.map((q) => (q[0] - a[0]) * ux + (q[1] - a[1]) * uz), h: def.farCrest.map((q) => q[2]) };
+    } else this.far = null;
     this.noise = new Noise2D(def.seed);
     this.noise2 = new Noise2D(def.seed * 7 + 3);
     this.flat = new Set(def.flatRidges ?? []);
@@ -119,6 +127,23 @@ export class MountainField {
       const d = Math.sqrt(best);
       if (r === 0) routeD = d;
       let rh: number;
+      let crestH = crest;
+      let dd = d;
+      if (r === 0 && this.far) {
+        // soft terrain: away from the route the ground follows a smooth crest along the axis, so the
+        // steep local features (the gully) do not turn into a wall across the whole plateau
+        const f = this.far;
+        const px = x - f.ax, pz = z - f.az;
+        const u = px * f.ux + pz * f.uz;
+        const lat = Math.abs(px * -f.uz + pz * f.ux);
+        let hi = 1;
+        while (hi < f.u.length - 1 && f.u[hi] < u) hi++;
+        const t = clamp((u - f.u[hi - 1]) / Math.max(1e-6, f.u[hi] - f.u[hi - 1]), 0, 1);
+        const hf = f.h[hi - 1] + (f.h[hi] - f.h[hi - 1]) * t;
+        const k = smoothstep(18, 90, d);
+        crestH = crest + (hf - crest) * k;
+        dd = d + (Math.hypot(lat, Math.max(0, -u, u - f.len)) - d) * k;
+      }
       if (r === 0 && def.valley) {
         // Glacier: U-shaped valley floor rising gently away from the route line.
         const dc = Math.min(d, 220);
@@ -129,7 +154,7 @@ export class MountainField {
       } else {
         // Faces get a little steeper higher up, flatter towards the glacier.
         const slope = s * (r === 0 ? 1 : 1.08);
-        rh = crest - slope * (Math.sqrt(d * d + w * w) - w) + 0.00022 * d * d;
+        rh = crestH - slope * (Math.sqrt(dd * dd + w * w) - w) + (def.soft ? 0.00005 : 0.00022) * dd * dd;
       }
       h = smax(h, rh, 28);
     }
@@ -139,15 +164,16 @@ export class MountainField {
     const away = smoothstep(4, 45, routeD);
     const rugged = this.noise.ridged(x * 0.012, z * 0.012, 5);
     const big = this.noise2.fbm(x * 0.004, z * 0.004, 3);
-    h += (rugged - 0.45) * (1.2 + away * 13) + big * away * 22;
+    const soft = def.soft ? 0.3 : 1; // rounded snowy ground (tutorial stage)
+    h += (rugged - 0.45) * (1.2 + away * 13 * soft) + big * away * 22 * soft;
     // Fall-line ribs and couloirs: noise stretched radially from the summit.
     const ang = Math.atan2(z, x);
     const rad = Math.hypot(x, z);
     const rib = this.noise2.ridged(Math.cos(ang) * 4.2, Math.sin(ang) * 4.2 + rad * 0.006, 4);
-    h += (rib - 0.5) * away * (def.valley ? 10 : 26) * smoothstep(60, 260, rad);
+    h += (rib - 0.5) * away * (def.valley ? 10 : 26) * soft * smoothstep(60, 260, rad);
     // Cliff bands: soft terracing on the faces away from the route gives layered
     // rock steps with snow ledges, as on real Himalayan walls.
-    if (away > 0.05 && !def.valley || (def.valley && routeD > 120)) {
+    if (!def.soft && (away > 0.05 && !def.valley || (def.valley && routeD > 120))) {
       const T = 7.5;
       const q = h / T;
       const fl = Math.floor(q);
@@ -534,7 +560,7 @@ export function buildTerrainMeshes(
     const z = cz + warp(j / n * 2 - 1) * half;
     const inside = patchInsideFactor(frame, x, z);
     out[0] = x;
-    out[1] = field.height(x, z) - inside * 9;
+    out[1] = field.height(x, z) - inside * (def.soft ? 1.5 : 9);
     out[2] = z;
   });
   const baseMesh = new THREE.Mesh(base, material);

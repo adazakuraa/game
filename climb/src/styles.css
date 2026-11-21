@@ -333,27 +333,6 @@ h1 span { color: transparent; -webkit-text-stroke: 2px var(--ink); }
   #hud-vitals { right: calc(10px + var(--safe-r)); }
 }
 
-#tutorial { position: absolute; inset: 0; z-index: 12; }
-#tutorial.dim { background: rgba(4, 6, 10, 0.62); }
-#tut-spot {
-  position: absolute; border-radius: 8px; border: 2px solid var(--signal);
-  box-shadow: 0 0 0 9999px rgba(4, 6, 10, 0.62); pointer-events: none;
-}
-#tut-card {
-  position: absolute; padding: 14px 16px; border-radius: 8px; background: rgba(12, 15, 20, 0.97);
-  border: 1px solid var(--panel-edge); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); display: grid; gap: 8px;
-}
-.tut-top { display: flex; justify-content: space-between; align-items: center; font-family: var(--num); font-size: 13px; color: var(--ink-dim); letter-spacing: 0.08em; }
-#tut-skip { background: none; border: 0; color: var(--ink-dim); font-size: 12px; padding: 6px; }
-#tut-title { margin: 0; font-size: 17px; font-weight: 900; color: var(--signal); }
-#tut-body { margin: 0; font-size: 13.5px; line-height: 1.75; color: #dfe5ea; }
-.tut-nav { display: flex; gap: 8px; justify-content: flex-end; }
-.tut-nav button { padding: 10px 16px; border-radius: 6px; font-size: 14px; }
-#tut-prev { background: rgba(255, 255, 255, 0.06); border: 1px solid var(--panel-edge); }
-#tut-prev:disabled { opacity: 0.35; }
-.tut-nav .primary { width: auto; padding: 10px 22px; font-size: 14px; box-shadow: none; }
-#hud.no-o2.tut #v-o2, #hud.no-o2.tut .flow-row { display: flex; opacity: 0.6; }
-
 #result { overflow-y: auto; align-items: safe center; padding-block: calc(12px + var(--safe-t)) calc(12px + var(--safe-b)); }
 #result-rest { padding: 12px; border-radius: 6px; border: 1px solid var(--panel-edge); background: rgba(255, 255, 255, 0.05); font-size: 14px; }
 @media (max-height: 480px) {
@@ -535,3 +514,43 @@ h1 span { color: transparent; -webkit-text-stroke: 2px var(--ink); }
 .lore-panel h2 { color: #2b2418; font-size: 20px; }
 #lore-body { margin: 0; line-height: 1.9; font-size: 14px; }
 .lore-note { margin: 0; font-size: 12px; color: #6d5a3a; }
+
+/* ---------------------------------------------------------------- practice climb (Kosciuszko) */
+#coach {
+  position: absolute; left: calc(10px + var(--safe-l)); top: calc(166px + var(--safe-t)); width: min(340px, 46vw);
+  padding: 8px 12px 9px; border-radius: 6px; background: rgba(8, 11, 15, 0.7); border: 1px solid rgba(255, 106, 26, 0.55);
+  display: grid; gap: 4px;
+}
+#coach.done { border-color: var(--ok); }
+.coach-head { display: flex; align-items: baseline; gap: 8px; }
+#coach-count { font-family: var(--num); font-size: 12px; color: var(--ink-dim); letter-spacing: 0.06em; }
+#coach-title { font-size: 14px; font-weight: 900; color: var(--signal); }
+.coach-check { display: none; margin-left: auto; font-style: normal; font-weight: 900; color: var(--ok); }
+#coach.done .coach-check { display: inline; }
+#coach.done #coach-title { color: var(--ok); }
+#coach-body { margin: 0; font-size: 12.5px; line-height: 1.6; color: #e4eaee; min-height: 2.9em; }
+#coach-bar { height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.14); overflow: hidden; }
+#coach-bar i { display: block; height: 100%; width: 0; background: var(--signal); transition: width 0.25s; }
+#coach.done #coach-bar i { background: var(--ok); }
+.pulse { animation: coachPulse 0.8s ease-in-out 6; }
+@keyframes coachPulse { 50% { box-shadow: 0 0 0 3px var(--signal), 0 0 16px 2px rgba(255, 106, 26, 0.8); } }
+/* the HUD grows with the lessons */
+#hud.coach:not(.s-map) #map-btn,
+#hud.coach:not(.s-rest) #rest-btn,
+#hud.coach:not(.s-stam) #hud-vitals,
+#hud.coach:not(.s-stam) #v-stam,
+#hud.coach:not(.s-body) #v-spo2, #hud.coach:not(.s-body) #v-temp, #hud.coach:not(.s-body) #v-wind,
+#hud.coach:not(.s-clip) #clip-btn, #hud.coach:not(.s-clip) #clip-status,
+#hud.coach:not(.s-clock) #clock-value, #hud.coach .alt-sub .sep, #hud.coach:not(.s-clock) #pace-value,
+#hud.coach #turn-value { display: none; }
+#hud.coach:not(.s-clock) .alt-sub { display: none; }
+#tutorial-btn:not(.primary) { background: transparent; color: var(--ink); border: 1px solid var(--panel-edge); box-shadow: none; padding: 10px; font-size: 13px; }
+@media (max-width: 560px) {
+  #coach { top: calc(152px + var(--safe-t)); width: calc(100vw - 20px - var(--safe-l) - var(--safe-r)); }
+  #hud.coach #radio { top: calc(268px + var(--safe-t)); }
+  #hud.coach #banner { top: calc(352px + var(--safe-t)); }
+}
+@media (max-height: 480px) {
+  #coach { top: calc(108px + var(--safe-t)); width: min(270px, 36vw); padding: 6px 10px 7px; }
+  #coach-body { font-size: 12px; line-height: 1.5; min-height: 0; }
+}

@@ -68,6 +68,11 @@
           <svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
         </button>
 
+        <div id="coach" class="hidden" aria-live="polite">
+          <div class="coach-head"><span id="coach-count">1 / 12</span><b id="coach-title"></b><i class="coach-check">✓</i></div>
+          <p id="coach-body"></p>
+          <div id="coach-bar"><i></i></div>
+        </div>
         <div id="banner"></div>
         <div id="radio" class="hidden" role="status">
           <svg viewBox="0 0 24 24" class="radio-ico"><rect x="5" y="8" width="14" height="13" rx="2"/><path d="M8 8l8-5M9 13h6M9 17h6"/></svg>
@@ -102,6 +107,7 @@
           <div class="options">
             <label class="check"><input type="checkbox" id="opt-sound" checked /> サウンド</label>
           </div>
+          <button id="tutorial-btn" class="primary" type="button">コジオスコで練習（チュートリアル・約5分）</button>
           <button id="continue-btn" class="primary hidden" type="button">続きから</button>
           <button id="start-btn" class="primary" type="button">ベースキャンプから遠征開始</button>
           <details class="controls">
@@ -119,7 +125,6 @@
         <div class="panel">
           <h2>一時停止</h2>
           <button id="resume-btn" class="primary" type="button">再開</button>
-          <button id="help-btn" type="button">画面の見かた</button>
           <button id="restart-btn" type="button">この区間をやり直す</button>
           <button id="quit-btn" type="button">山を選び直す</button>
         </div>
@@ -182,19 +187,6 @@
             <span><i class="lg ladder"></i>ハシゴ</span><span><i class="lg hazard"></i>落下物の危険帯</span>
           </div>
           <canvas id="profile-canvas" width="600" height="120"></canvas>
-        </div>
-      </section>
-
-      <section id="tutorial" class="hidden" aria-live="polite">
-        <div id="tut-spot"></div>
-        <div id="tut-card" role="dialog" aria-labelledby="tut-title">
-          <div class="tut-top"><span id="tut-count">1 / 1</span><button id="tut-skip" type="button">スキップ</button></div>
-          <h3 id="tut-title"></h3>
-          <p id="tut-body"></p>
-          <div class="tut-nav">
-            <button id="tut-prev" type="button">戻る</button>
-            <button id="tut-next" class="primary" type="button">次へ</button>
-          </div>
         </div>
       </section>
 

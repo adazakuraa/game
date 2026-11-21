@@ -23,7 +23,7 @@ export interface Crevasse {
 
 /** One leg of an expedition, from one camp to the next (or the summit push). */
 export interface MountainDef {
-  id: 'everest' | 'k2';
+  id: 'everest' | 'k2' | 'kosciuszko';
   stageKey: string;
   /** stage display name, e.g. クンブ・アイスフォール */
   stageName: string;
@@ -62,6 +62,10 @@ export interface MountainDef {
   seracZone?: [number, number];
   /** rock band altitude (display metres) for the "Yellow Band" style strata */
   rockBand: [number, number];
+  /** rounded, snowy terrain: tones down the rugged detail on the faces (tutorial stage) */
+  soft?: boolean;
+  /** soft terrain only: the same line with its steps smoothed out; far from the route the ground follows this */
+  farCrest?: Vec3Tuple[];
   baseWind: number;
   seed: number;
   description: string;
@@ -508,6 +512,81 @@ export const EXPEDITIONS: Record<'everest' | 'k2', ExpeditionDef> = {
 
 /** Summit-push stage per mountain (kept for tests and older code paths). */
 export const MOUNTAINS = SUMMIT_STAGES;
+
+// ------------------------------------------------------------------ tutorial stage
+/**
+ * Mt Kosciuszko (2,228 m), winter: from Lawson Pass to the summit cairn. A rounded snowy
+ * plateau with one short steep gully (fixed rope, one anchor) and a steeper snow slope
+ * (self-arrest practice). It is not part of EXPEDITIONS: the title screen offers it as practice.
+ */
+function buildTutorialStage(): MountainDef {
+  // legs: [horizontal metres, rise, heading change in degrees]
+  const legs: [number, number, number][] = [
+    [40, 1, 0], [50, 8, 10], [40, 1.5, -15],   // 0->3: walk, gentle climb, level ground
+    [24, 27.6, 0], [8, 0.2, 0],                // 3->4: steep gully (about 49 degrees), 4->5: level (rope end)
+    [20, 1, 20], [50, 30, 0],                  // 5->7: level, then the arrest slope (about 31 degrees)
+    [35, 3, -10], [30, 2.5, 10], [30, 4, 0],   // 7->10: gentle ground to the summit
+  ];
+  let x = 0, z = 0, h = 0, heading = 0;
+  const pts: P[] = [[0, 0, 0]];
+  for (const [len, rise, turn] of legs) {
+    heading += (turn * Math.PI) / 180;
+    x += Math.cos(heading) * len;
+    z += Math.sin(heading) * len;
+    h += rise;
+    pts.push([x, z, h]);
+  }
+  // translate so the summit sits at the origin (like every other stage)
+  const route: P[] = pts.map(([px, pz, ph]) => [px - x, pz - z, ph] as P);
+  const top = h;
+  const n = route.length;
+  const fl = Math.hypot(route[n - 1][0] - route[n - 2][0], route[n - 1][1] - route[n - 2][1]);
+  const fx = (route[n - 1][0] - route[n - 2][0]) / fl, fz = (route[n - 1][1] - route[n - 2][1]) / fl;
+  // beyond the summit the plateau rolls away and down; a side branch gives the far horizon some shape
+  const after: P[] = [[fx * 90, fz * 90, top - 6], [fx * 300 - fz * 60, fz * 300 + fx * 60, top - 40], [fx * 700 - fz * 140, fz * 700 + fx * 140, top - 100]];
+  const before: P[] = [[route[0][0] * 1.6, route[0][1] * 1.6, -6]];
+  // far-field crest: the route's heights averaged over about +-70 m, so the steep gully is a local feature
+  const dense: P[] = [];
+  const full = [...before, ...route, ...after];
+  for (let i = 0; i < full.length - 1; i++) {
+    const [ax, az, ah] = full[i], [bx, bz, bh] = full[i + 1];
+    const n2 = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 10));
+    for (let k = 0; k < n2; k++) dense.push([ax + ((bx - ax) * k) / n2, az + ((bz - az) * k) / n2, ah + ((bh - ah) * k) / n2]);
+  }
+  dense.push(full[full.length - 1]);
+  const farCrest: P[] = dense.map(([px, pz], i) => {
+    let sum = 0, cnt = 0;
+    for (let k = Math.max(0, i - 7); k <= Math.min(dense.length - 1, i + 7); k++) { sum += dense[k][2]; cnt++; }
+    return [px, pz, sum / cnt] as P;
+  });
+  return {
+    id: 'kosciuszko', stageKey: 'kosciuszko', stageName: 'ローソン峠から山頂へ',
+    goalName: '山頂', goal: 'summit', startHours: 10, o2: 'none', cloudAlt: 1860,
+    name: 'コジオスコ', subtitle: 'Mt Kosciuszko', summitAltitude: 2228, campAltitude: 2100,
+    campName: 'ローソン峠', routeName: '山頂への道', worldHeight: top, faceSlope: 0.38, crestWidth: 14, floor: -420,
+    seed: 2228, baseWind: 12, rockBand: [9000, 9100], soft: true, farCrest,
+    description: '冬のオーストラリア最高峰。雪のガリーと斜面を登りながら、操作と画面の見かたを覚える練習ステージ。',
+    difficulty: '★☆☆☆',
+    route,
+    ridges: [extend(route, before, after)],
+    landmarks: [
+      { name: 'ローソン峠', routeIndex: 0, note: '2,100m 冬の雪原' },
+      { name: '雪のガリー', routeIndex: 3, note: '急な雪の溝。フィックスロープ区間' },
+      { name: '雪の斜面', routeIndex: 6, note: 'やや急な雪面' },
+      { name: '道標', routeIndex: 9, note: '山頂まであとわずか' },
+      { name: '山頂', routeIndex: 10, note: '2,228m オーストラリア本土最高峰' },
+    ],
+    ropeSections: [[3, 5]],
+  };
+}
+
+export const TUTORIAL_STAGE: MountainDef = buildTutorialStage();
+/** Pseudo-expedition so the map overlay can draw the practice stage. */
+export const TUTORIAL_EXPEDITION: ExpeditionDef = {
+  id: 'kosciuszko' as unknown as 'everest', name: TUTORIAL_STAGE.name, subtitle: TUTORIAL_STAGE.subtitle,
+  summitAltitude: 2228, baseAltitude: 2100, routeName: TUTORIAL_STAGE.routeName, description: TUTORIAL_STAGE.description,
+  difficulty: TUTORIAL_STAGE.difficulty, stages: [TUTORIAL_STAGE],
+};
 
 export function displayAltitude(m: MountainDef, y: number): number {
   const scale = (m.summitAltitude - m.campAltitude) / m.worldHeight;

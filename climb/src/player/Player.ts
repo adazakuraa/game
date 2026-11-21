@@ -13,6 +13,8 @@ export interface PlayerContext {
   collapsed: boolean;
   frostbite: number;
   gust: number;
+  /** Tutorial: unroped, nobody walks up ground steeper than this (stops zig-zagging past the rope). */
+  steepLimit?: number;
   windDir: THREE.Vector3;
   rng: () => number;
   deepSnow: boolean;
@@ -291,7 +293,8 @@ export class Player {
       const ascending = !!this.clip && climbAngle > 30;
       if (ascending) speed *= 0.85; // jumaring
       const maxAngle = this.clip ? 72 : 47;
-      if (climbAngle > maxAngle) {
+      const tooSteepHere = ctx.steepLimit !== undefined && !this.clip && up > 0.05 && this.slopeDeg > ctx.steepLimit;
+      if (climbAngle > maxAngle || tooSteepHere) {
         speed = 0;
         if (performance.now() - this.lastBlockMsg > 2500) {
           this.events.push({ type: 'tooSteep' });

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Input } from '../core/Input';
-import { EXPEDITIONS, altitudeToWorldY, type MountainDef } from './Mountains';
+import { EXPEDITIONS, TUTORIAL_STAGE, TUTORIAL_EXPEDITION, altitudeToWorldY, type MountainDef } from './Mountains';
+import { Coach } from './Coach';
 import { MountainField, buildTerrainMeshes, createTerrainMaterial, type TerrainUniforms } from '../world/Terrain';
 import { Route } from '../world/Route';
 import { Environment } from '../world/Environment';
@@ -15,7 +16,6 @@ import { PostFX } from '../systems/PostFX';
 import { Audio } from '../systems/Audio';
 import { Hud, formatClock } from '../ui/Hud';
 import { MapView } from '../ui/MapView';
-import { Tutorial } from '../ui/Tutorial';
 import { Radio } from '../ui/Radio';
 import { Ambient } from '../world/Ambient';
 import { Plume } from '../world/Plume';
@@ -136,7 +136,8 @@ export class Game {
   private readonly attachTmp = new THREE.Vector3();
   private readonly gripTmp = new THREE.Vector3();
   private readonly map = new MapView(() => this.map.show(false));
-  private tutorial!: Tutorial;
+  /** Practice climb (Kosciuszko) in progress; null on the real expeditions. */
+  private coach: Coach | null = null;
   private readonly headlamp = new THREE.SpotLight(0xfff1dc, 0, 70, 0.42, 0.5, 1.2);
   private readonly mobile: boolean;
   private world: World | null = null;
@@ -270,7 +271,6 @@ export class Game {
     this.input.bindButton(document.getElementById('pause-btn')!, 'pause');
     this.input.bindButton(document.getElementById('map-btn')!, 'map');
 
-    this.tutorial = new Tutorial(this.mobile);
     this.setupMenus();
     this.buildStage(this.selected, 0);
     this.resize();
@@ -322,26 +322,40 @@ export class Game {
     this.refreshContinue();
     document.getElementById('resume-btn')!.addEventListener('click', () => this.setPaused(false));
 
-    document.getElementById('help-btn')!.addEventListener('click', () => {
-      this.showScreen(null);
-      this.state = 'play';
-      this.openTutorial();
+    document.getElementById('tutorial-btn')!.addEventListener('click', () => {
+      this.audio.unlock();
+      this.audio.setMuted(!(document.getElementById('opt-sound') as HTMLInputElement).checked);
+      this.withLoading(() => {
+        this.buildStage('kosciuszko', 0);
+        this.startRun();
+        if (!this.mobile) this.tryPointerLock();
+      });
     });
+    this.refreshTutorialBtn();
     document.getElementById('restart-btn')!.addEventListener('click', () => this.startRun());
     document.getElementById('quit-btn')!.addEventListener('click', () => this.toTitle());
     document.getElementById('result-primary')!.addEventListener('click', () => {
-      if (this.state === 'summit') this.beginDescent();
+      if (this.coach) this.withLoading(() => this.newExpedition('everest'));
+      else if (this.state === 'summit') this.beginDescent();
       else if (this.state === 'camp') this.withLoading(() => this.departNextStage());
       else if (this.state === 'won') this.withLoading(() => this.newExpedition(this.selected));
       else if (this.checkpoint) this.resumeCheckpoint();
       else this.startRun();
     });
-    document.getElementById('result-camp')!.addEventListener('click', () => this.startRun());
+    document.getElementById('result-camp')!.addEventListener('click', () => {
+      if (this.coach) this.withLoading(() => this.newExpedition('k2'));
+      else this.startRun();
+    });
     document.getElementById('result-rest')!.addEventListener('click', () => this.restDay());
     document.getElementById('result-secondary')!.addEventListener('click', () => this.toTitle());
     document.addEventListener('pointerlockchange', () => {
       if (!document.pointerLockElement && this.state === 'play' && !this.mobile) this.setPaused(true);
     });
+  }
+
+  /** The practice button is the main one until the practice climb has been finished once. */
+  private refreshTutorialBtn(): void {
+    document.getElementById('tutorial-btn')!.classList.toggle('primary', !Coach.done());
   }
 
   private tryPointerLock(): void {
@@ -412,7 +426,6 @@ export class Game {
     this.buildStage(exp, 0);
     this.save();
     this.startRun();
-    if (!Tutorial.seen()) this.openTutorial();
   }
 
   /** Sleep at camp, then set off on the next leg in the morning. */
@@ -442,19 +455,8 @@ export class Game {
     this.showCamp(true);
   }
 
-  private openTutorial(): void {
-    if (this.state === 'play' && this.world) this.updatePlay(0.0001); // fill the HUD with live values
-    this.input.enabled = false;
-    this.hud.root.classList.add('tut');
-    if (document.pointerLockElement) document.exitPointerLock();
-    this.tutorial.start(() => {
-      this.hud.root.classList.remove('tut');
-      this.input.enabled = this.state === 'play';
-      if (!this.mobile && this.state === 'play') this.tryPointerLock();
-    });
-  }
-
   private toTitle(): void {
+    this.endPractice();
     this.campScreen.close();
     this.closeLore();
     this.dogObj.group.visible = false;
@@ -467,8 +469,18 @@ export class Game {
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
+  /** Leave the practice climb: back to the mountain the title screen has selected. */
+  private endPractice(): void {
+    if (!this.coach && this.world?.def.id !== 'kosciuszko') return;
+    this.coach?.dispose();
+    this.coach = null;
+    this.withLoading(() => this.buildStage(this.selected, this.stageIndex));
+  }
+
   private setPaused(p: boolean): void {
     if (p && this.state === 'play') {
+      document.getElementById('restart-btn')!.textContent = this.coach ? 'チュートリアルを最初から' : 'この区間をやり直す';
+      document.getElementById('quit-btn')!.textContent = this.coach ? 'チュートリアルをやめる' : '山を選び直す';
       this.state = 'paused';
       this.input.enabled = false;
       this.showScreen('pause');
@@ -491,10 +503,10 @@ export class Game {
     return Math.min(d.summitAltitude, d.campAltitude + ((y - y0) / (y1 - y0)) * (d.summitAltitude - d.campAltitude));
   }
 
-  private buildStage(id: 'everest' | 'k2', stage: number): void {
-    const key = `${id}-${stage}`;
-    this.selected = id;
-    this.stageIndex = stage;
+  private buildStage(id: 'everest' | 'k2' | 'kosciuszko', stage: number): void {
+    const practice = id === 'kosciuszko';
+    const key = practice ? id : `${id}-${stage}`;
+    if (!practice) { this.selected = id; this.stageIndex = stage; }
     if (this.builtKey === key && this.world) return;
     this.builtKey = key;
     if (this.world) {
@@ -504,7 +516,7 @@ export class Game {
         if (m.geometry) m.geometry.dispose();
       });
     }
-    const def = EXPEDITIONS[id].stages[stage];
+    const def = practice ? TUTORIAL_STAGE : EXPEDITIONS[id].stages[stage];
     const field = new MountainField(def);
     const route = new Route(def, field);
     const { material, uniforms } = createTerrainMaterial(def, this.renderer.capabilities.getMaxAnisotropy());
@@ -531,7 +543,7 @@ export class Game {
     this.near.onSwap = (cx, cz, half) => this.world?.terrainUniforms.uNear.value.set(cx, cz, half);
     this.env.cirrus = 0.25 + ((def.seed * 7) % 10) / 14;
     this.buildLore(def, field, route, root);
-    this.map.build(def, field, route, props, EXPEDITIONS[id], stage, (y) => this.altitudeAt(y));
+    this.map.build(def, field, route, props, practice ? TUTORIAL_EXPEDITION : EXPEDITIONS[id], practice ? 0 : stage, (y) => this.altitudeAt(y));
     const marks = def.landmarks.slice(1, -1).map((l) => route.waypointS[l.routeIndex] / route.length);
     this.hud.setMarks(marks);
     this.renderer.compile(this.scene, this.camera);
@@ -541,15 +553,18 @@ export class Game {
     if (!this.world || !this.player) return;
     this.rng = createSeededRandom(this.seed);
     const def = this.world.def;
+    const practice = def.id === 'kosciuszko';
+    this.coach?.dispose();
+    this.coach = null;
     const legKey = `${this.selected}-${this.stageIndex}`;
-    if (legKey !== this.legKey) { this.legKey = legKey; this.legDeaths = 0; }
+    if (!practice && legKey !== this.legKey) { this.legKey = legKey; this.legDeaths = 0; }
     // Rescue without humiliation: after two deaths on a leg, base camp waits for a weather window.
-    this.assistOn = this.legDeaths >= 2;
+    this.assistOn = !practice && this.legDeaths >= 2;
     this.weather.stormChance = def.goal === 'summit' ? Math.min(0.9, 0.35 + Math.max(0, this.day - 7) * 0.08) : 0.3;
     this.weather.reset(this.rng);
-    if (this.assistOn) this.weather.willStorm = false;
+    if (this.assistOn || practice) this.weather.willStorm = false;
     this.physio.reset(def.o2 === 'summit' ? this.spares + (this.assistOn ? 1 : 0) : 0, {
-      o2: def.o2 !== 'none', acclim: this.acclim, frost: this.frostCarry,
+      o2: def.o2 !== 'none', acclim: practice ? 2000 : this.acclim, frost: practice ? 0 : this.frostCarry,
     });
     this.retries = 0;
     this.nearMisses = 0;
@@ -561,7 +576,7 @@ export class Game {
     this.lastDownMark = 99;
     this.player.rappelling = false;
     // last night's meal
-    const m = this.mealNext;
+    const m = practice ? null : this.mealNext;
     this.physio.mods = {
       heat: m === 'ramen' ? 0.14 : 0,
       recover: m === 'dalbhat' ? 1.3 : 1,
@@ -611,6 +626,7 @@ export class Game {
     this.radio.reset();
     this.ambient.reset();
     this.paceChecked = false;
+    if (practice) { this.beginPractice(); return; }
     if (this.assistOn) {
       this.radio.say('assist', def.o2 === 'summit'
         ? '無理をするな。今日は天気の窓だ、風も弱い。デポにボンベを1本足しておいた。'
@@ -631,6 +647,38 @@ export class Game {
     const best = bestFor(def.stageKey + (def.goal === 'summit' ? ':up' : ''));
     const target = std ? `<br>ガイド基準 ${formatDur(std.up)}${best !== null ? `（自己ベスト ${formatDur(best)}）` : ''}` : '';
     this.hud.banner(`${this.day}日目 — ${def.stageName}`, `${formatClock(this.hours)} ${def.campName}出発 · ${goal}${target}`, '', 5000);
+  }
+
+  // ---------------------------------------------------------------- practice climb
+  private beginPractice(): void {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const self = this;
+    this.physio.spo2 = 94;
+    this.coach = new Coach({
+      mobile: this.mobile,
+      get player() { return self.player!; },
+      get physio() { return self.physio; },
+      get weather() { return self.weather; },
+      get route() { return self.world!.route; },
+      get windDir() { return self.windDir; },
+      banner: (t, sub, tone, ms) => this.hud.banner(t, sub ?? '', tone ?? '', ms),
+      say: (key, text) => this.radio.say(key, text, 'ガイド'),
+      chime: () => this.audio.cleared(),
+      stumble: () => { this.audio.slip(); this.flash = 0.5; },
+      respawn: (s) => {
+        const p = this.player!;
+        p.reset(s);
+        const ph = this.physio;
+        ph.stamina = Math.max(ph.stamina, 70);
+        ph.coreTemp = Math.max(ph.coreTemp, 36.8);
+        ph.frostbite = Math.min(ph.frostbite, 10);
+        ph.hace = 0; ph.collapsed = false;
+        this.flash = 0; this.fade = 0; this.hitAnim = false; this.deathKind = null;
+        this.hud.clearBanner();
+      },
+      mapOpen: () => this.map.open,
+    });
+    this.hud.banner('コジオスコ — ローソン峠', '雪の高原を山頂へ。歩きながら覚えよう', '', 4200);
   }
 
   // ---------------------------------------------------------------- quick retry
@@ -806,6 +854,21 @@ export class Game {
     document.getElementById('lore')!.classList.add('hidden');
     this.input.enabled = this.state === 'play';
     if (!this.mobile && this.state === 'play') this.tryPointerLock();
+  }
+
+  /** The practice summit's signpost: plain facts, outside the relic notebook. */
+  private openSign(): void {
+    this.coach!.read();
+    document.getElementById('lore-item')!.textContent = '調べた：山頂手前の道標';
+    document.getElementById('lore-title')!.textContent = 'コジオスコ山 2,228m';
+    document.getElementById('lore-body')!.textContent =
+      'オーストラリア本土の最高峰。山の名は、ポーランドの英雄タデウシュ・コシチュシュコ（コジオスコ）にちなむ。1840年、ポーランド出身の探検家ストシェレツキが登頂し、この名を付けた。';
+    document.getElementById('lore-note')!.textContent = '練習用の道標。遺品の記録帳には数えない。';
+    this.reading = true;
+    this.input.enabled = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.audio.zip();
+    document.getElementById('lore')!.classList.remove('hidden');
   }
 
   // ---------------------------------------------------------------- the dog
@@ -986,8 +1049,8 @@ export class Game {
     if (intents.mapPressed && (this.state === 'play' || this.map.open)) this.map.show(!this.map.open);
     if (this.state !== 'play' && this.map.open) this.map.show(false);
     if (this.map.open && this.player) this.map.update(this.player.pos.x, this.player.pos.z, this.player.yaw, this.player.routeS);
-    if (this.state === 'play' && !this.tutorial.open && !this.reading) this.updatePlay(dt);
-    else if ((this.tutorial.open || this.reading) && this.player) { this.updateCamera(0); this.updateEnvironment(0, this.weather.state.storm); }
+    if (this.state === 'play' && !this.reading) this.updatePlay(dt);
+    else if (this.reading && this.player) { this.updateCamera(0); this.updateEnvironment(0, this.weather.state.storm); }
     else if (this.state === 'dead') this.updateDead(dt);
     else if (this.state === 'title') this.updateTitle(dt);
     this.input.consumeEdges();
@@ -1059,9 +1122,13 @@ export class Game {
     let interact: string | null = null;
     const cache = w.props.caches.find((c) => !c.taken && c.position.distanceTo(p.pos) < 3);
     const relic = this.loreItems.find((l) => !l.taken && l.pos.distanceTo(p.pos) < 2.8);
+    const sign = !!this.coach?.signActive && w.props.signpost.distanceTo(p.pos) < 3.4;
     if (relic && this.swapT <= 0) {
       interact = '拾う';
       if (intents.interactPressed) this.openLore(relic);
+    } else if (sign && this.swapT <= 0) {
+      interact = '調べる';
+      if (intents.interactPressed) this.openSign();
     } else if (this.swapT > 0) {
       this.swapT -= dt;
       if (this.swapT <= 0) {
@@ -1099,6 +1166,7 @@ export class Game {
       collapsed: ph.collapsed || swapping,
       frostbite: ph.frostbite,
       gust: ws.gust,
+      steepLimit: this.coach ? 44 : undefined,
       windDir: this.windDir,
       rng: this.rng,
       deepSnow,
@@ -1108,6 +1176,7 @@ export class Game {
       load: w.def.o2 === 'summit' && ph.hasO2 ? clamp(1 + 0.06 * (1 - ph.spares), 0.86, 1.08) : 1,
     });
     this.handlePlayerEvents();
+    this.coach?.update(dt);
     // Ladder crossings: a small "made it" each time.
     if (p.onLadder && this.ladderEnterS < 0) this.ladderEnterS = p.routeS;
     if (!p.onLadder && this.ladderEnterS >= 0) {
@@ -1161,7 +1230,7 @@ export class Game {
       altitude, day: this.day, night: this.env.state.dayFactor < 0.3, glacier: !!w.def.valley || !!w.def.crevasses?.length, storm: ws.storm,
     });
     const prog = p.routeS / w.route.length;
-    if (!this.paceChecked && prog > 0.5 && !p.descending) {
+    if (!this.paceChecked && prog > 0.5 && !p.descending && !this.coach) {
       this.paceChecked = true;
       const deadline = w.def.goal === 'summit' ? TURNAROUND : 18.5;
       const projected = w.def.startHours + (this.hours - w.def.startHours) / prog;
@@ -1617,6 +1686,8 @@ export class Game {
 
   private die(kind: DeathKind): void {
     if (this.state !== 'play') return;
+    // Practice climb: no death screen; back to a safe spot to try the lesson again.
+    if (this.coach && !this.coach.finished) { this.coach.fail(); return; }
     this.deathKind = kind;
     this.legDeaths += 1;
     this.state = 'dead';
@@ -1661,6 +1732,7 @@ export class Game {
     document.getElementById('result-rest')!.classList.add('hidden');
     document.getElementById('result-camp')!.classList.add('hidden');
     document.getElementById('result-extra')!.classList.add('hidden');
+    document.getElementById('result-secondary')!.textContent = '山を選び直す';
     this.showScreen('result');
   }
 
@@ -1683,7 +1755,29 @@ export class Game {
     }
   }
 
+  /** End of the practice climb: the real rating stamp, then on to the real mountains. */
+  private showPracticeDone(): void {
+    const w = this.world!;
+    this.coach?.complete();
+    try { localStorage.setItem(Coach.KEY, '1'); } catch { /* private mode: the button just stays prominent */ }
+    this.refreshTutorialBtn();
+    this.showResult(
+      `チュートリアル完了 · ${formatClock(this.summitHours)}`,
+      `${w.def.name} 山頂 ${w.def.summitAltitude.toLocaleString('en-US')}m`,
+      'オーストラリア本土の最高峰に立った。操作と画面の見かたは、もう身についている。次は本物の山へ。',
+      'win',
+      'エベレスト遠征へ',
+      this.legResult ? this.resultRows(this.legResult, '登頂までの時間') : [],
+    );
+    if (this.legResult) this.showGrade(this.legResult, Game.praiseFor(this.legResult.grade));
+    const k2 = document.getElementById('result-camp')!;
+    k2.textContent = 'K2 遠征へ';
+    k2.classList.remove('hidden');
+    document.getElementById('result-secondary')!.textContent = 'タイトルへ';
+  }
+
   private showSummit(): void {
+    if (this.coach) { this.showPracticeDone(); return; }
     const w = this.world!;
     const late = this.summitHours > TURNAROUND;
     this.showResult(
@@ -1882,6 +1976,7 @@ export class Game {
       prompt = 'フィックスロープ：<b>クリップ / E</b> で確保';
     }
     if (interact === '拾う') prompt = '先人の遺した物：<b>拾う / F</b>';
+    if (interact === '調べる') prompt = '山頂の道標：<b>調べる / F</b>';
     if (interact === '回収') prompt = 'デポしたボンベ：<b>回収 / F</b>';
     else if (interact === '交換' && !prompt) prompt = 'ボンベ残量わずか：<b>交換 / F</b>';
     if (p.mode === 'slide') prompt = '<b>ピッケル！</b> 休むボタン長押し / Space';
@@ -2002,11 +2097,18 @@ export class Game {
       case 'k2-bc': set('k2', 0.05, 7, 0, 0); break;
       case 'k2-chimney': set('k2', 0.55, 9, 0, 1); break;
       case 'k2-pyramid': set('k2', 0.5, 9, 0, 2); break;
-      case 'tutorial': {
-        set('everest', 0.0, 5.6, 0, 0);
-        this.player!.reset(0);
+      case 'tutorial':
+      case 'tutorial-summit': {
+        this.buildStage('kosciuszko', 0);
+        this.startRun();
+        this.hud.clearBanner();
+        if (name === 'tutorial-summit') {
+          const w = this.world!;
+          this.player!.reset(w.route.length - 12);
+          this.coach!.complete();
+          this.hud.root.classList.add('s-map', 's-rest', 's-stam', 's-body', 's-clip', 's-clock');
+        }
         this.updatePlay(0.016);
-        this.openTutorial();
         break;
       }
       case 'map':
@@ -2111,6 +2213,9 @@ export class Game {
     ext.altitude = this.world && p ? this.altitudeAt(p.pos.y) : 0;
     ext.routeS = p?.routeS;
     ext.slope = p?.slopeDeg;
+    ext.lesson = this.coach ? this.coach.idx + 1 : 0;
+    ext.lessonStarted = this.coach?.started ?? false;
+    ext.coachDone = this.coach?.finished ?? false;
     ext.worldTriangles = this.world?.triangles;
   }
 }

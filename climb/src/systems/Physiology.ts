@@ -152,6 +152,8 @@ export class Weather {
   private gustPeak = 0;
   private stormTarget = 0;
   private stormChecked = false;
+  /** Tutorial: no random gusts (they are scripted with triggerGust). */
+  calm = false;
   /** Chance that the afternoon brings a storm (rises as the season wears on). */
   stormChance = 0.55;
 
@@ -164,6 +166,8 @@ export class Weather {
     this.state.storm = 0;
     this.stormTarget = 0;
     this.stormChecked = false;
+    this.state.gust = 0;
+    this.state.gustWarning = -1;
     // Decide today's weather up front so base camp can forecast it.
     this.willStorm = this.rng() < this.stormChance;
     this.stormAt = 11.3 + this.rng() * 2.4;
@@ -185,6 +189,13 @@ export class Weather {
     this.nextGust = 15 + this.rng() * 10;
   }
 
+  /** Start a gust now (telegraphed ~2 s ahead, like a natural one). */
+  triggerGust(peak = 0.8): void {
+    if (this.gustT >= 0) return;
+    this.gustT = 0;
+    this.gustPeak = peak;
+  }
+
   forceStorm(v: number): void {
     this.stormTarget = v;
     this.state.storm = v;
@@ -197,15 +208,16 @@ export class Weather {
       this.stormChecked = true;
       if (this.willStorm) this.stormTarget = 0.85;
     }
-    if (hours > 14.5) this.stormTarget = Math.max(this.stormTarget, 0.9);
+    if (hours > 14.5 && !this.calm) this.stormTarget = Math.max(this.stormTarget, 0.9);
     s.storm += (this.stormTarget - s.storm) * Math.min(1, dt / 40);
 
-    const diurnal = hours < 6 ? 6 : hours > 12 ? (hours - 12) * 4 : 0;
+    const diurnal = this.calm ? 0 : hours < 6 ? 6 : hours > 12 ? (hours - 12) * 4 : 0;
     const altK = 1 + Math.max(0, altitude - 8000) / 1500;
     const base = (this.baseWind + diurnal + Math.sin(elapsed * 0.07) * 5) * altK + s.storm * 45;
 
     // Gust cycle: warning -> gust -> calm
     this.nextGust -= dt;
+    if (this.calm) this.nextGust = Math.max(this.nextGust, 1);
     if (this.nextGust <= 0 && this.gustT < 0) {
       this.gustT = 0;
       this.gustPeak = 0.5 + this.rng() * 0.5 + s.storm * 0.3;
@@ -220,7 +232,7 @@ export class Weather {
       if (this.gustT > warn + 2.6) { this.gustT = -1; s.gust = 0; s.gustWarning = -1; }
     }
     s.windKmh = base * (1 + s.gust * 1.4);
-    const night = hours < 6 || hours > 18 ? 1 : 0;
+    const night = !this.calm && (hours < 6 || hours > 18) ? 1 : 0;
     s.ambientC = -24 - (altitude - 8000) * 0.0065 - night * 8 - s.storm * 7 - s.gust * 2;
     s.snowfall = Math.min(1, s.storm * 1.1 + s.gust * 0.5 + 0.08);
   }

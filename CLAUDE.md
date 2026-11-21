@@ -96,7 +96,7 @@ bash scripts/latest-branches.sh climb      # 1 つだけ
 | `src/ui/CampScreen.ts` / `CampScene3D.ts` | キャンプ画面（到着演出・食事・犬・記録帳・C4 の酸素選択）と 3D の夜のキャンプ |
 | `src/ui/MapView.ts` | ルート地図と標高プロファイル |
 | `src/ui/Radio.ts` | BC 無線のセリフ |
-| `src/ui/Tutorial.ts` | HUD のコーチマーク |
+| `src/game/Coach.ts` | コジオスコ練習ステージのレッスン（12 個）とカード。`Mountains.ts` の `TUTORIAL_STAGE` が地形 |
 | `src/world/Terrain.ts` / `TerrainTextures.ts` / `NearGround.ts` | 山の高さ場（尾根＋ノイズ＋クレバス）、地形テクスチャ、足元の細かい起伏 |
 | `src/world/Route.ts` | 歩くライン・フィックスロープ・アンカー・ランドマーク位置 |
 | `src/world/Props.ts` | 岩・セラック・テント・ハシゴ・ボンベなどの配置とハザード |
