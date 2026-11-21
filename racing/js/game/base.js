@@ -130,10 +130,33 @@ export class GameBase {
     C.input.sens = this.opts.sens;
   }
 
+  // 縦方向のカメラばね（臨界減衰＋路面の速度フィードフォワード）。
+  // 段差・ジャンプ台・着地での高さの急変をなだらかにし、着地では少し沈んでから戻る
+  camSpringY(dt, snap, y) {
+    if (snap || this.camY === undefined || Math.abs(y - this.camY) > 3) {
+      this.camY = y; this.camVY = 0; this.camPrevY = y;
+      return y;
+    }
+    const W = 11;
+    const vT = Math.max(-30, Math.min(30, (y - this.camPrevY) / Math.max(dt, 1e-3)));
+    this.camPrevY = y;
+    const n = dt > 1 / 30 ? Math.ceil(dt * 120) : 1;
+    const h = dt / n;
+    for (let i = 0; i < n; i++) {
+      const a = W * W * (y - this.camY) + 2 * W * (vT - this.camVY);
+      this.camVY += a * h;
+      this.camY += this.camVY * h;
+      if (this.camY < y - 0.45) { this.camY = y - 0.45; if (this.camVY < 0) this.camVY = 0; }
+      else if (this.camY > y + 0.25) { this.camY = y + 0.25; if (this.camVY > 0) this.camVY = 0; }
+    }
+    return this.camY;
+  }
+
   // 追従カメラ。p: { x, y, z, psi, speed, slopePitch, rough }
   // cfg: { dist, hgt, lookAhead, lookY, fov, fovSpeed, follow }
   followCamera(dt, snap, p, cfg) {
     const camera = C.camera;
+    const ys = this.camSpringY(dt, snap, p.y);
     let d = 0;
     if (!snap) {
       d = p.psi - this.camYaw;
@@ -149,16 +172,16 @@ export class GameBase {
     const dist = cfg.dist;
     const side = -this.latS * 0.045;
     const lx = Math.cos(this.camYaw), lz = -Math.sin(this.camYaw);
-    const pos = new THREE.Vector3(p.x - fx * dist + lx * side, p.y + cfg.hgt, p.z - fz * dist + lz * side);
-    const look = new THREE.Vector3(p.x + fx * (cfg.lookAhead ?? 4), p.y + (cfg.lookY ?? 0.95), p.z + fz * (cfg.lookAhead ?? 4));
+    const pos = new THREE.Vector3(p.x - fx * dist + lx * side, ys + cfg.hgt, p.z - fz * dist + lz * side);
+    const look = new THREE.Vector3(p.x + fx * (cfg.lookAhead ?? 4), ys + (cfg.lookY ?? 0.95), p.z + fz * (cfg.lookAhead ?? 4));
     let fov = (cfg.fov ?? 58) + sp * (cfg.fovSpeed ?? 0.16) + (this.boostFov || 0) * 9;
     if (camera.userData.portrait) fov += 22;
     // 車からの相対位置をなめらかにする（絶対位置で後追いすると、速度が変わるたびに車との距離が伸び縮みする）
-    const off = pos.sub(new THREE.Vector3(p.x, p.y, p.z));
+    const off = pos.sub(new THREE.Vector3(p.x, ys, p.z));
     const prev = this.camPos.clone();
     if (!snap && this.camOff) this.camOff.lerp(off, Math.min(1, dt * (cfg.smooth ?? 14)));
     else this.camOff = off.clone();
-    this.camPos.set(p.x, p.y, p.z).add(this.camOff);
+    this.camPos.set(p.x, ys, p.z).add(this.camOff);
     if (!snap) this.camVel.copy(this.camPos).sub(prev).divideScalar(Math.max(dt, 1e-3));
     camera.position.copy(this.camPos);
     if (this.shake > 0) {
@@ -231,7 +254,8 @@ export class GameBase {
     this.boostFov = (this.boostFov || 0) + ((c.boostT > 0 ? 1 : 0) - (this.boostFov || 0)) * Math.min(1, dt * (c.boostT > 0 ? 6 : 2.5));
     this.speedFx(dt, c.speed || 0, (c.draft || 0) * 0.35 + this.boostFov * 0.8);
     // ジャンプの着地
-    if (c.landed > 3) { this.shake = Math.max(this.shake, Math.min(0.9, c.landed * 0.06)); C.audio.impact(Math.min(8, c.landed * 0.5)); this.vibrate(Math.min(60, c.landed * 5)); c.landed = 0; }
+    // 着地の衝撃は揺れではなくカメラのばねの沈み込みで表す（揺れは弱め）
+    if (c.landed > 3) { this.shake = Math.max(this.shake, Math.min(0.25, c.landed * 0.02)); C.audio.impact(Math.min(8, c.landed * 0.5)); this.vibrate(Math.min(60, c.landed * 5)); c.landed = 0; }
     // ドリフトのチャージとターボ
     const hd = $('#hDrift');
     hd.classList.toggle('on', !!c.drift);
@@ -267,13 +291,20 @@ export class GameBase {
       }
       this.camYaw = snap ? c.psi : this.camYaw + d * Math.min(1, dt * 30);
       const hx = Math.sin(c.psi), hz = Math.cos(c.psi);
-      const pos = new THREE.Vector3(c.x + hx * 0.2, c.y + 1.12, c.z + hz * 0.2);
-      const look = new THREE.Vector3(c.x + hx * 20, c.y + 0.9 + Math.sin(c.slopePitch || 0) * 20, c.z + hz * 20);
+      const ys = this.camSpringY(dt, snap, c.y);
+      // 視線のピッチ: 空中は速度の向きの半分、接地中は路面の勾配。生値だとジャンプ台の入口・先端と着地でカクッと切り替わる
+      const tp = c.air ? Math.atan2(c.vy || 0, Math.max(8, c.speed || 0)) * 0.5 : (c.slopePitch || 0);
+      this.camPitch = snap || this.camPitch === undefined ? tp : this.camPitch + (tp - this.camPitch) * Math.min(1, dt * 4);
+      const pos = new THREE.Vector3(c.x + hx * 0.2, ys + 1.12, c.z + hz * 0.2);
+      const look = new THREE.Vector3(c.x + hx * 20, ys + 0.9 + Math.tan(this.camPitch) * 20, c.z + hz * 20);
       let fov = 68 + (c.speed || 0) * 0.08 + (this.boostFov || 0) * 9;
       if (camera.userData.portrait) fov += 22;
       if (!snap) {
         this.camVel.copy(pos).sub(this.camPos).divideScalar(Math.max(dt, 1e-3));
-        this.camPos.lerp(pos, Math.min(1, dt * 60));
+        const k = Math.min(1, dt * 60);
+        this.camPos.x += (pos.x - this.camPos.x) * k;
+        this.camPos.z += (pos.z - this.camPos.z) * k;
+        this.camPos.y = pos.y; // 高さはばねの値をそのまま使う
       } else this.camPos.copy(pos);
       camera.position.copy(this.camPos);
       camera.lookAt(look);
