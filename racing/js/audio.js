@@ -136,15 +136,16 @@ export class Audio {
     const t = this.ctx.currentTime;
     const k = 0.05;
     const on = p.active ? 1 : 0;
+    const eng = p.engine ?? 1; // 0 にするとエンジン音なし（自転車）
     const f = (p.rpm / 60) * 3;
     this.oscs[0].frequency.setTargetAtTime(f, t, 0.02);
     this.oscs[1].frequency.setTargetAtTime(f * 0.5, t, 0.02);
     this.oscs[2].frequency.setTargetAtTime(f * 2.01, t, 0.02);
     this.oscs[3].frequency.setTargetAtTime(f * 0.25, t, 0.02);
     this.engLP.frequency.setTargetAtTime(380 + p.throttle * 2600 + p.rpm * 0.25, t, k);
-    this.engGain.gain.setTargetAtTime(on * (0.1 + p.throttle * 0.16), t, k);
+    this.engGain.gain.setTargetAtTime(on * eng * (0.1 + p.throttle * 0.16), t, k);
     this.intakeBP.frequency.setTargetAtTime(f * 4, t, k);
-    this.intakeGain.gain.setTargetAtTime(on * p.throttle * (p.rpm / 8000) * 0.12, t, k);
+    this.intakeGain.gain.setTargetAtTime(on * eng * p.throttle * (p.rpm / 8000) * 0.12, t, k);
     this.squealGain.gain.setTargetAtTime(on * Math.min(0.5, p.squeal * 0.5), t, 0.04);
     this.squealBP.frequency.setTargetAtTime(950 + p.squeal * 300, t, 0.1);
     const sp = Math.min(1, p.speed / 75);
@@ -154,6 +155,27 @@ export class Audio {
     this.rainGain.gain.setTargetAtTime(on * (p.rain ? 0.07 : 0), t, 0.3);
     this.aiOsc.frequency.setTargetAtTime((p.aiRpm / 60) * 3, t, 0.05);
     this.aiGain.gain.setTargetAtTime(on * Math.min(0.1, p.aiNear * 0.1), t, 0.05);
+  }
+
+  // アフターファイヤ（シフトアップやアクセルオフのパンッという音）
+  pop(vol = 0.35) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    for (let k = 0; k < 2; k++) {
+      const src = this.noise();
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 220 + Math.random() * 260;
+      bp.Q.value = 1.2;
+      const g = ctx.createGain();
+      const t0 = t + k * (0.05 + Math.random() * 0.05);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.09);
+      src.connect(bp).connect(g).connect(this.master);
+      src.stop(t0 + 0.12);
+    }
   }
 
   impact(power) {
