@@ -101,6 +101,7 @@ svg { fill: currentColor; }
 .lg-you { background: #fff; clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%); }
 .lg-boat { background: #ff9a3c; border-radius: 50%; }
 .lg-mark { border: 1.5px solid #fff; }
+.lg-area { border: 1.5px dashed rgba(255,205,80,0.9); background: rgba(255,200,60,0.16); border-radius: 50%; }
 
 /* reticle */
 #reticle { position: absolute; left: 50%; top: 50%; width: 120px; height: 90px; transform: translate(-50%, -50%); transition: width 0.2s, height 0.2s; }
@@ -284,10 +285,11 @@ button.gear-item.locked { opacity: 0.5; }
 button.gear-item.locked .req { color: var(--ink-dim); }
 @media (width <= 420px) { .gear { grid-template-columns: repeat(3, 1fr); } }
 
-#mission { position: absolute; left: 50%; top: calc(112px + var(--safe-t)); transform: translateX(-50%); min-width: 210px; max-width: calc(100vw - 260px); padding: 7px 14px 8px; border-radius: 12px; background: var(--panel); border: 1px solid var(--warn); text-align: center; pointer-events: none; }
-#ms-title { font-size: 12.5px; font-weight: 900; color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#ms-prog { font-family: var(--num); font-size: 15px; font-weight: 700; margin-top: 1px; }
-.ms-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); margin-top: 5px; overflow: hidden; }
+/* request panel: up at the top edge, out of the way of the viewfinder; toasts step down below it while it shows */
+#mission { position: absolute; left: 50%; top: calc(10px + var(--safe-t)); transform: translateX(-50%); min-width: 180px; max-width: min(420px, calc(100vw - 320px)); padding: 5px 12px 6px; border-radius: 12px; background: var(--panel); border: 1px solid var(--warn); text-align: center; pointer-events: none; }
+#ms-title { font-size: 11.5px; font-weight: 900; color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ms-prog { font-family: var(--num); font-size: 13.5px; font-weight: 700; margin-top: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.12); margin-top: 4px; overflow: hidden; }
 .ms-bar i { display: block; height: 100%; width: 100%; background: var(--warn); transition: width 0.25s linear; }
 .res-bonus { width: 100%; display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; padding: 7px 10px; border-radius: 10px; background: rgba(255,181,71,0.12); color: var(--warn); }
 .res-bonus b { font-family: var(--num); color: var(--ok); }
@@ -296,7 +298,13 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 #ms-ask button { min-width: 84px; min-height: 40px; border-radius: 10px; border: 1px solid var(--warn); font: inherit; font-size: 14px; font-weight: 900; cursor: pointer; }
 #ms-yes { background: var(--warn); color: #1a1206; }
 #ms-no { background: transparent; color: var(--warn); }
-@media (width <= 520px) { #mission { top: calc(214px + var(--safe-t)); max-width: calc(100vw - 32px); } }
+#app:has(#mission:not(.hidden)) #toast { top: calc(70px + var(--safe-t)); }
+/* portrait: between the minimap and the right-hand chips */
+@media (width <= 520px) {
+  #mission { top: calc(114px + var(--safe-t)); min-width: 0; max-width: calc(100vw - 212px); padding: 4px 10px 5px; }
+  #ms-prog { font-size: 12.5px; }
+  #app:has(#mission:not(.hidden)) #toast { top: calc(214px + var(--safe-t)); }
+}
 
 .night-toggle { justify-content: flex-start; gap: 10px; text-align: left; flex-wrap: wrap; }
 .night-toggle .moon { font-size: 20px; color: var(--warn); }

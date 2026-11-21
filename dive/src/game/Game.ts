@@ -393,7 +393,7 @@ export class Game {
     this.writeSave();
     const held = this.save.quests ?? [];
     const card = (q: Quest, act: string) => `<div class="k-item"><div><div class="who">${q.giver}　<span class="q-place">${ZONE_NAMES[q.zone]}</span></div><div class="what">${q.title}</div><div class="hint">${q.desc}</div><div class="pay">報酬 ${yen(q.reward)}</div></div><div class="acts">${act}</div></div>`;
-    $('q-held').innerHTML = held.length ? held.map((q) => card(q, `<button type="button" class="btn sec" data-drop="${q.id}">やめる</button>`)).join('') : '<div class="k-empty">まだ依頼を受けていない。受けた依頼の場所は、潜ったときのマップに印で出る。</div>';
+    $('q-held').innerHTML = held.length ? held.map((q) => card(q, `<button type="button" class="btn sec" data-drop="${q.id}">やめる</button>`)).join('') : '<div class="k-empty">まだ依頼を受けていない。受けた依頼の場所は、潜ったときのマップに金色の円で出る。円に入ると始まる。</div>';
     const full = held.length >= QUEST.maxHeld;
     $('q-board').innerHTML = (this.save.board ?? []).map((q) => card(q, `<button type="button" class="btn ${full ? 'sec' : 'pri'}" data-take="${q.id}" ${full ? 'disabled' : ''}>${full ? `同時に${QUEST.maxHeld}件まで` : '受ける'}</button>`)).join('');
     document.querySelectorAll<HTMLButtonElement>('[data-take]').forEach((b) => b.addEventListener('click', () => {
@@ -1648,7 +1648,7 @@ export class Game {
     $('narc').style.opacity = String(this.narc * 0.8);
     if (this.minimap && this.frame % 10 === 0) {
       if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
-      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.storyMarks, ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo').map((q) => ({ x: q.x, z: q.z, rare: true }))];
+      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.storyMarks, ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo' && q.id !== this.activeQuest).map((q) => ({ x: q.x, z: q.z, rare: true, r: QUEST.arrive }))];
     }
     this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());

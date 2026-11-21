@@ -37,6 +37,8 @@ export const MISSION = {
   pry: { hits: 3, reach: 1.8 },
   /** 【拾える距離】m */
   pickR: 1.15,
+  /** 【マップの範囲の円】radius (m) of the area drawn for one hidden target; the target is somewhere inside, never at the centre */
+  area: { r: 18, offset: 0.7 },
 };
 
 /**
@@ -74,7 +76,9 @@ export type MissionCtx = {
   stage: (id: string, pose: { p: THREE.Vector3; yaw: number; pitch: number } | null) => void;
 };
 
-type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; hold?: number; seen?: Set<string>; title: string; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number };
+type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; hold?: number; seen?: Set<string>; title: string; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number; area?: Area };
+/** a circle (world m) drawn on the map: the goal is somewhere inside it */
+export type Area = { x: number; z: number; r: number };
 
 export class Missions {
   readonly group = new THREE.Group();
@@ -180,15 +184,25 @@ export class Missions {
     this.nextCheck = 0;
   }
 
-  /** Points to show on the minimap while a request is running. */
-  marks(): { x: number; z: number; rare: boolean }[] {
+  /** Areas to show on the minimap while a request is running: a circle, with the goal somewhere inside (never a pin). */
+  marks(): { x: number; z: number; rare: boolean; r: number }[] {
     const a = this.active;
-    if (!a) return [];
-    if ((a.kind === 'lost' || a.kind === 'treasure' || a.kind === 'rescue') && a.spot) return [{ x: a.spot.x + 6, z: a.spot.z - 4, rare: true }]; // rough area only
-    if (a.kind === 'trash') return this.items.filter((_, i) => !this.taken[i]).map((p) => ({ x: p.x, z: p.z, rare: false }));
-    // urchins: only the area is marked; telling them apart is the game
-    if (a.kind === 'urchin' && this.items.length) return [{ x: this.items[0].x, z: this.items[0].z, rare: false }];
-    return [];
+    return a?.area ? [{ ...a.area, rare: true }] : [];
+  }
+
+  /** A circle around one hidden spot, its centre pushed off the spot so the circle says "around here", not "here". */
+  private areaAround(p: THREE.Vector3): Area {
+    const A = MISSION.area;
+    const ang = Math.random() * Math.PI * 2, d = A.r * A.offset * (0.45 + 0.55 * Math.random());
+    return { x: p.x + Math.cos(ang) * d, z: p.z + Math.sin(ang) * d, r: A.r };
+  }
+
+  /** The smallest-ish circle around scattered items (urchin rocks, trash patch), with a margin. */
+  private areaOver(ps: THREE.Vector3[]): Area | undefined {
+    if (!ps.length) return undefined;
+    const x = ps.reduce((s, p) => s + p.x, 0) / ps.length, z = ps.reduce((s, p) => s + p.z, 0) / ps.length;
+    const r = Math.max(10, ...ps.map((p) => Math.hypot(p.x - x, p.z - z))) + 4;
+    return { x, z, r };
   }
 
   update(c: MissionCtx): void {
@@ -249,7 +263,7 @@ export class Missions {
       if ((a.lastHint ?? 0) <= c.time - 6) {
         a.lastHint = c.time;
         const what = a.kind === 'lost' ? 'カメラはすぐ近く！ 黄色い箱を探そう' : '宝箱はすぐ近く！ 石の陰もよく見て';
-        c.toast(d < 6 ? what : d < 14 ? '近づいている…' : 'まだ遠い。マップの金色の印のあたり', 'warn', 2);
+        c.toast(d < 6 ? what : d < 14 ? '近づいている…' : 'まだ遠い。マップの金色の円の中のどこか', 'warn', 2);
       }
       if (d < MISSION.pickR + 0.3) a.got = 1;
     }
@@ -264,7 +278,7 @@ export class Missions {
         }
       } else if ((a.lastHint ?? 0) <= c.time - 7) {
         a.lastHint = c.time;
-        c.toast(d < 8 ? '網に絡まったウミガメがいる！ すぐそばでじっとして網を切ろう' : d < 18 ? '近づいている…' : 'マップの金色の印のあたり', 'warn', 2);
+        c.toast(d < 8 ? '網に絡まったウミガメがいる！ すぐそばでじっとして網を切ろう' : d < 18 ? '近づいている…' : 'マップの金色の円の中のどこか', 'warn', 2);
       }
     }
     if (a.kind === 'tag' && a.target) {
@@ -428,7 +442,7 @@ export class Missions {
         this.urchinMeshes[ti].visible = true;
       });
       const reward = c.zone === 'cold' ? U.coldReward : U.reward;
-      this.active = { kind, t: U.time, time: U.time, need: U.need, got: 0, reward, aka: 0, title: 'ウニ漁（磯焼け対策）' };
+      this.active = { kind, t: U.time, time: U.time, need: U.need, got: 0, reward, aka: 0, title: 'ウニ漁（磯焼け対策）', area: this.areaOver(this.items) };
       c.toast(`ウニ漁の場所に着いた。ウニに近づいてバールで3回突いてはがそう。ムラサキウニ（黒紫・トゲ長め）は1点、アカウニ（赤茶色・トゲ少し短め・高級）は2点。トゲがとても長いガンガゼと、花のような桃色のラッパウニは触ると痛い！ ${U.time}秒で${U.need}点`, 'warn', 8);
     } else if (kind === 'trash') {
       const T = MISSION.trash;
@@ -441,7 +455,7 @@ export class Missions {
       }
       this.writeTrash(c.time);
       this.trashMesh.visible = true;
-      this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '海のごみ拾い' };
+      this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '海のごみ拾い', area: this.areaOver(this.items) };
       c.toast(`ごみがたまっている場所に着いた。${T.time}秒で${T.need}個拾おう（近づくと拾える）`, 'warn', 4.5);
     } else if (kind === 'rescue') {
       const T = MISSION.rescue;
@@ -457,8 +471,8 @@ export class Missions {
       this.netMesh.position.copy(spot);
       this.netMesh.visible = true;
       c.stage('turtle', { p: spot.clone(), yaw: Math.random() * 6, pitch: 0.15 });
-      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '網に絡まったウミガメ', spot, hold: 0 };
-      c.toast(`近くでウミガメが捨てられた網に絡まって動けなくなっている！ マップの印のあたり。そばで${T.cut}秒じっとして網を切ってあげよう`, 'warn', 5);
+      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '網に絡まったウミガメ', spot, hold: 0, area: this.areaAround(spot) };
+      c.toast(`近くでウミガメが捨てられた網に絡まって動けなくなっている！ マップの金色の円の中のどこか。そばで${T.cut}秒じっとして網を切ってあげよう`, 'warn', 5);
     } else if (kind === 'survey') {
       const T = MISSION.survey;
       this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '生き物調査', seen: new Set() };
@@ -477,7 +491,7 @@ export class Missions {
       this.chestMesh.position.copy(spot);
       this.chestMesh.rotation.set(0.15, a, 0.1);
       this.chestMesh.visible = true;
-      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '遺跡の宝探し', spot };
+      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '遺跡の宝探し', spot, area: this.areaAround(spot) };
       c.toast(`このあたりに宝箱が沈んでいるはず。${T.time}秒以内に探し出そう（石の陰もよく見て）`, 'warn', 4.5);
     } else {
       const L = MISSION.lost;
@@ -487,7 +501,7 @@ export class Missions {
       this.camMesh.position.copy(spot);
       this.camMesh.rotation.set(0.3, a, 0.2);
       this.camMesh.visible = true;
-      this.active = { kind, t: L.time, time: L.time, need: 1, got: 0, reward: L.reward, title: '落とし物のカメラ探し', spot };
+      this.active = { kind, t: L.time, time: L.time, need: 1, got: 0, reward: L.reward, title: '落とし物のカメラ探し', spot, area: this.areaAround(spot) };
       c.toast(`このあたりに黄色い水中カメラが落ちているはず。${L.time}秒以内に見つけよう`, 'warn', 4.5);
     }
     if (!fromOffer) this.count++;
@@ -508,10 +522,15 @@ export class Missions {
   private renderHud(): void {
     const a = this.active!;
     this.el.title.textContent = a.title;
-    this.el.prog.textContent = a.kind === 'rescue' ? (a.hold ? `網を切っている… ${Math.min(100, Math.round(((a.hold ?? 0) / MISSION.rescue.cut) * 100))}%　残り${Math.ceil(a.t)}秒` : `残り${Math.ceil(a.t)}秒`)
-      : a.kind === 'survey' ? `${a.got} / ${a.need}種類　残り${Math.ceil(a.t)}秒`
-      : a.kind === 'tag' ? `読み取り ${Math.min(100, Math.round(((a.hold ?? 0) / MISSION.tag.hold) * 100))}%　残り${Math.ceil(a.t)}秒`
-      : a.kind === 'urchin' ? `${Math.min(a.got, a.need)} / ${a.need}点${a.aka ? `（アカウニ×${a.aka}）` : ''}　残り${Math.ceil(a.t)}秒` : a.kind === 'trash' ? `${a.got} / ${a.need}個　残り${Math.ceil(a.t)}秒` : `残り${Math.ceil(a.t)}秒`;
+    // time first: on a narrow screen the tail may be cut, the countdown never is
+    const left = `残り${Math.ceil(a.t)}秒`;
+    const pct = (v: number, of: number) => `${Math.min(100, Math.round((v / of) * 100))}%`;
+    const detail = a.kind === 'rescue' ? (a.hold ? `網を切っている… ${pct(a.hold, MISSION.rescue.cut)}` : '')
+      : a.kind === 'survey' ? `${a.got} / ${a.need}種類`
+      : a.kind === 'tag' ? `読み取り ${pct(a.hold ?? 0, MISSION.tag.hold)}`
+      : a.kind === 'urchin' ? `${Math.min(a.got, a.need)} / ${a.need}点${a.aka ? `（アカウニ×${a.aka}）` : ''}`
+      : a.kind === 'trash' ? `${a.got} / ${a.need}個` : '';
+    this.el.prog.textContent = detail ? `${left}　${detail}` : left;
     this.el.bar.style.width = `${Math.max(0, (a.t / a.time) * 100)}%`;
   }
 

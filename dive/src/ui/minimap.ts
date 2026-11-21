@@ -127,8 +127,23 @@ export class Minimap {
     return Math.atan2(Math.sin(yaw), -Math.cos(yaw));
   }
 
-  /** fish-finder blips, set by the game when the sonar is owned */
-  blips: { x: number; z: number; rare: boolean }[] = [];
+  /** fish-finder blips and request marks; with `r` (m) a mark is an area (the goal is somewhere inside), not a point */
+  blips: { x: number; z: number; rare: boolean; r?: number }[] = [];
+
+  /** a request area: soft fill, dashed rim, so it reads as "somewhere in here" */
+  private area(g: CanvasRenderingContext2D, sx: number, sy: number, rad: number, lw: number, t: number): void {
+    g.save();
+    g.fillStyle = 'rgba(255,200,60,0.16)';
+    g.strokeStyle = 'rgba(255,205,80,0.9)';
+    g.lineWidth = lw;
+    g.setLineDash([lw * 3, lw * 2.2]);
+    g.lineDashOffset = -t * lw * 4;
+    g.beginPath();
+    g.arc(sx, sy, rad, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.restore();
+  }
 
   update(x: number, z: number, yaw: number, boat: { x: number; z: number } | null, force = false): void {
     if (!force && this.frame++ % 4 !== 0) return;
@@ -158,8 +173,16 @@ export class Minimap {
       g.arc(sx, sy, size * 0.035, 0, Math.PI * 2);
       g.fill();
     }
+    // request areas under everything else
+    const t = performance.now() / 1000;
+    for (const b of this.blips) {
+      if (!b.r) continue;
+      const [lx, ly] = this.px(b.x, b.z);
+      this.area(g, (lx - px) * sc + size / 2, (ly - py) * sc + size / 2, Math.max(size * 0.07, (b.r / RES) * sc), 1.6 * dpr, t);
+    }
     // fish-finder blips (sonar gear): unphotographed species nearby
     for (const b of this.blips) {
+      if (b.r) continue;
       const [lx, ly] = this.px(b.x, b.z);
       const sx = (lx - px) * sc + size / 2, sy = (ly - py) * sc + size / 2;
       g.fillStyle = b.rare ? 'rgba(255,200,60,0.95)' : 'rgba(120,255,170,0.85)';
@@ -220,6 +243,11 @@ export class Minimap {
       g.arc(sx, sy, 6, 0, Math.PI * 2);
       g.fill();
       g.stroke();
+    }
+    for (const b of this.blips) {
+      if (!b.r) continue;
+      const [ax, ay] = P(b.x, b.z);
+      this.area(g, ax, ay, Math.max(7, (b.r / RES) * sc), 1.5, performance.now() / 1000);
     }
     const [sx, sy] = P(x, z);
     this.arrow(g, sx, sy, Minimap.angle(yaw), 9);

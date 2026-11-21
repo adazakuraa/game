@@ -13,9 +13,9 @@
 | --- | --- | --- | --- | --- |
 | `climb/` | DEATH ZONE 8000（高所登山） | https://claude.ai/artifact/Y6AmowkXBB8HND5EP9osHX | `ccr-1b79a73c-q3y30y` | main より 32 コミット先（キャンプ・犬・遺品・評価など） |
 | `racing/` | APEX LINE（GT・ラリー・ロードバイク） | https://claude.ai/artifact/UB1cbzTRiNqA9dTLkbRodb | `ccr-4a7da7a1-rd8ajk` | main より先（ラリー・バイク・ガレージ・ドリフト・性能パーツ・金メダル基準の難易度・ジャンプ着地のカメラなど） |
-| `dive/` | BLUE DEPTHS（ダイビング図鑑） | https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk | `main`（= `ccr-15ad1488-xpaney`） | 同じ |
+| `dive/` | BLUE DEPTHS（ダイビング図鑑） | https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk | `ccr-084c01d7-stoku4` | main より先（依頼の範囲の円・依頼パネルを上端へ） |
 | `kanken/` | 漢検ランダム漢字 | （未公開） | `main` | 同じ |
-| このドキュメント | README.md / CLAUDE.md / scripts/ | — | `ccr-4a7da7a1-rd8ajk` | main より先（未マージ） |
+| このドキュメント | README.md / CLAUDE.md / scripts/ | — | `ccr-084c01d7-stoku4` | main より先（未マージ） |
 
 **この表は古くなる**。実際の最新は次のコマンドで確かめる（フォルダごとに、最新コミットを含むリモートブランチを表示）：
 
