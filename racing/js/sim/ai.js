@@ -15,7 +15,8 @@ export function mulberry32(seed) {
 // AI の車両特性（加速・減速・回転数）。既定は GT カー
 export const CAR_AI = {
   accel: (v, grip) => Math.min(9.5 * grip, 395000 / (1320 * Math.max(v, 4))) - (0.5 * 1.2 * 0.78 * v * v) / 1320,
-  brake: (grip) => 13 * grip,
+  brake: (grip) => 22 * grip, // 理想速度の減速カーブ（プレイヤーの車で約 1.5〜2.2G）に沿えるだけの強さ
+  dragK: (0.5 * 1.2 * 0.78) / 1320, // 空気抵抗 / 質量（スリップストリームの計算用）
   rpm: null,
   wheelR: 0.335,
 };
@@ -56,7 +57,7 @@ export class AICar {
   targetSpeed(s) {
     const tr = this.track;
     const seg = Math.floor((((s % tr.length) + tr.length) % tr.length) / (tr.length / 64));
-    return tr.sampleArr(tr.profile, s) * this.pace * (1 + this.noise[seg]);
+    return tr.sampleArr(tr.aiProfile || tr.profile, s) * this.pace * (1 + this.noise[seg]);
   }
 
   // others: 他車の配列（{progress, d, v, x, z}）
@@ -64,7 +65,8 @@ export class AICar {
   update(dt, others, myProgress, started, forceVt = null) {
     const tr = this.track;
     if (!started) { this.updatePose(dt); return; }
-    let vt = Math.min(this.targetSpeed(this.s + 3), this.targetSpeed(this.s + 3 + this.v * 0.25));
+    // 目標速度はすぐ先で見る（先を見すぎると、コーナーの手前から必要以上に遅くなる）
+    let vt = Math.min(this.targetSpeed(this.s + 2), this.targetSpeed(this.s + 2 + this.v * 0.05));
     if (forceVt != null) vt = forceVt;
     const lineD = tr.sampleArr(tr.line, this.s + 8) + this.lineBias;
     const hw = tr.halfW - 1.2;
@@ -95,13 +97,14 @@ export class AICar {
         }
         // 抜けないときは追従
         const sideClear = this.passSide !== 0 && Math.abs(this.d - blocker.d) > 2.0;
-        if (!sideClear && bgap < 12) vt = Math.min(vt, blocker.v - 0.3 + (bgap - 7) * 0.4);
+        // 抜けないときは前の車に合わせる（車間 5m で同じ速さ。必要以上に下げて後ろへ渋滞を連鎖させない）
+        if (!sideClear && bgap < 10) vt = Math.min(vt, blocker.v + (bgap - 5) * 0.35);
       }
     }
     if (this.passTimer > 0) this.passTimer -= dt;
     // 直線（目標速度が高い所）では、スリップストリームで少しだけ伸びる
     this.draft = draft;
-    if (draft > 0 && vt > 50) vt += draft * 1.8;
+    if (draft > 0 && vt > 50) vt += draft * 1.2;
     wantD = Math.max(-hw, Math.min(hw, wantD));
 
     // 横方向
@@ -113,7 +116,8 @@ export class AICar {
 
     // 縦方向
     if (this.v < vt) {
-      const a = this.spec.accel(this.v, tr.grip) * (1 + 0.5 * (this.draft || 0));
+      // スリップストリームはプレイヤーと同じく「空気抵抗が最大 40% 減る」ぶんだけ
+      const a = this.spec.accel(this.v, tr.grip) + (this.spec.dragK || 0) * 0.4 * (this.draft || 0) * this.v * this.v;
       this.v = Math.min(vt, this.v + Math.max(a, 0) * dt);
       this.throttle = 1;
       this.braking = 0;

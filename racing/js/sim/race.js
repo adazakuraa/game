@@ -1,20 +1,57 @@
 // レース進行: スタート、周回・順位・タイム計測、車同士の接触
 import { Car } from './car.js';
-import { STAGE_START } from './track.js';
-import { AICar } from './ai.js';
+import { Track, STAGE_START } from './track.js';
+import { AICar, CAR_AI } from './ai.js';
+import { poly } from './trackdata.js';
 import { Recovery } from './recovery.js';
 import { BotDriver } from './bot.js';
 
 // factor: トップ CPU の周回タイム ÷ 上手な自動ドライバーの周回タイム
 export const DIFFICULTY = {
   // factor: 上手な自動ドライバーの周回タイムに対する、先頭 CPU の速さ（小さいほど速い）
-  easy: { label: 'かんたん', factor: 1.03, spread: 0.008 }, // 以前の「ふつう」
+  easy: { label: 'かんたん', factor: 1.045, spread: 0.008 },
   normal: { label: 'ふつう', factor: 1.0, spread: 0.006 }, // 以前の「むずかしい」
   hard: { label: 'むずかしい', factor: 0.985, spread: 0.004 },
 };
 
 // コースごとに「上手なドライバー」の周回タイムと CPU の基準タイムを測る
+// CPU の加速を、プレイヤーと同じ車（アクセル全開・TCS あり・ギアチェンジ込み）の実測値に合わせる。
+// 長い直線で 0 → 最高速まで走らせ、速度ごとの平均加速度の表を作る（シフトでの息つぎも平均に含まれる）
+let accelReady = false;
+export function matchAIAccel() {
+  if (accelReady) return;
+  accelReady = true;
+  const tr = new Track({ id: 'accel-test', width: 14, runoff: 10, grip: 1, env: {}, points: poly([[-3500, 0, 150, 0], [3500, 0, 150, 0], [3500, 800, 150, 0], [-3500, 800, 150, 0]]) });
+  const car = new Car(tr);
+  car.assist = true;
+  car.reset(0, 0);
+  const dt = 1 / 120;
+  const step = 2; // m/s ごと
+  const tAt = []; // 速度 k*step に初めて達した時刻
+  let t = 0;
+  while (t < 60 && car.s < 3200) {
+    car.step(dt, { steer: Math.max(-1, Math.min(1, car.d * 0.08 + car.vl * 0.05)), throttle: 1, brake: 0 });
+    t += dt;
+    const k = Math.floor(car.u / step);
+    for (let j = tAt.length; j <= k; j++) tAt[j] = t;
+  }
+  const n = tAt.length;
+  const table = new Float32Array(n + 1);
+  for (let j = 0; j < n - 1; j++) table[j] = step / Math.max(1e-3, tAt[j + 1] - tAt[j]);
+  table[n - 1] = table[n - 2] * 0.5;
+  table[n] = 0;
+  const top = n * step;
+  CAR_AI.accelTable = table;
+  CAR_AI.accel = (v, grip) => {
+    if (v >= top) return -0.5;
+    const f = Math.max(0, v) / step, i = Math.floor(f), a = f - i;
+    const base = table[i] + (table[Math.min(n, i + 1)] - table[i]) * a;
+    return Math.min(base, 9.5 * grip);
+  };
+}
+
 export function calibrate(track) {
+  matchAIAccel();
   if (track.calib) return track.calib;
   if (track.stageEnd) return (track.calib = calibrateSection(track));
   const dt = 1 / 120;
@@ -24,12 +61,15 @@ export function calibrate(track) {
   car.reset(L - 300, track.sampleArr(track.line, L - 300));
   const bot = new BotDriver(car, track, 1.0);
   let prev = car.s, t = 0, crosses = [];
+  const trace = new Float32Array(track.N).fill(NaN);
   while (t < 600 && crosses.length < 2) {
     car.step(dt, bot.update());
     t += dt;
     if (prev > L * 0.75 && car.s < L * 0.25) crosses.push(t);
     prev = car.s;
+    if (crosses.length === 1) recordTrace(track, trace, car);
   }
+  setAIProfile(track, trace, 0, track.N);
   const botLap = crosses.length === 2 ? crosses[1] - crosses[0] : track.profileLapTime * 1.08;
   const ai = new AICar(track, 1.0, 1);
   ai.noise.fill(0);
@@ -50,6 +90,30 @@ export function calibrate(track) {
 
 export { STAGE_START };
 
+// CPU の目標速度: 上手な自動ドライバーが実際の車で走った速度の記録（ブレーキの踏み始め・コーナーの速さが人の走りと同じになる）
+function recordTrace(track, trace, car) {
+  const i = Math.floor(car.s / track.ds) % track.N;
+  if (Number.isNaN(trace[i]) || car.u < trace[i]) trace[i] = car.u;
+}
+function setAIProfile(track, trace, i0, i1) {
+  const N = track.N;
+  const out = Float32Array.from(track.profile);
+  // 記録のない点は前後から補間
+  let last = -1;
+  for (let i = i0; i < i1; i++) {
+    if (Number.isNaN(trace[i])) continue;
+    if (last >= 0 && i - last > 1) for (let k = last + 1; k < i; k++) trace[k] = trace[last] + ((trace[i] - trace[last]) * (k - last)) / (i - last);
+    last = i;
+  }
+  // 少しならす（±2 点）
+  for (let i = i0; i < i1; i++) {
+    let acc = 0, n = 0;
+    for (let o = -2; o <= 2; o++) { const v = trace[(i + o + N) % N]; if (!Number.isNaN(v)) { acc += v; n++; } }
+    if (n) out[i] = acc / n;
+  }
+  track.aiProfile = out;
+}
+
 // セクションコース: スタートライン（走りながら通過）からゴールまでの時間で、上手な自動ドライバーと CPU を比べる
 function calibrateSection(track) {
   const dt = 1 / 120;
@@ -59,11 +123,14 @@ function calibrateSection(track) {
   car.reset(10, track.sampleArr(track.line, 10));
   const bot = new BotDriver(car, track, 1.0);
   let t = 0, t0 = null;
+  const trace = new Float32Array(track.N).fill(NaN);
   while (t < 900 && car.s < end) {
     car.step(dt, bot.update());
     t += dt;
     if (t0 == null && car.s >= S0) t0 = t;
+    recordTrace(track, trace, car);
   }
+  setAIProfile(track, trace, Math.round(S0 / track.ds), track.stageN);
   const botLap = t - (t0 ?? 0);
   const ai = new AICar(track, 1.0, 1);
   ai.noise.fill(0);
