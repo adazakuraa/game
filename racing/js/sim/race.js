@@ -85,7 +85,7 @@ export function calibrate(track) {
 // 先頭ノイズなしの CPU（pace）が 1 周（セクションはスタートライン通過からゴール）にかかる時間を測る
 function measureAI(track, pace) {
   const dt = 1 / 120;
-  const ai = new AICar(track, pace, 1);
+  const ai = new AICar(track, pace, 1, undefined, true); // 最低速度なしで測る（直線のペースを変えないため）
   ai.noise.fill(0);
   ai.lineBias = 0;
   if (track.stageEnd) {
