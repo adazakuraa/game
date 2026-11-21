@@ -15,7 +15,7 @@ export const MISSION = {
   /** 【依頼の最短間隔】s */
   gap: 120,
   /** 【1ダイブの依頼上限】 */
-  maxPerDive: 2,
+  maxPerDive: 1,
   /** 【発生判定の間隔】s and 【発生確率】per check */
   checkEvery: 10,
   chance: 0.3,
@@ -50,7 +50,7 @@ export const URCHINS = [
   { id: 'rappa', name: 'ラッパウニ', edible: false, pts: 0, n: 3, geo: { spine: 0.2, n: 170, thin: 0.045 }, color: 0xc8a0ac, emissive: 0x2a1418, scale: 0.17, sting: 14, text: 'ラッパウニの毒でしびれる！（エア -14）' },
 ] as const;
 
-type Kind = 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag';
+export type Kind = 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag';
 
 export type MissionCtx = {
   dt: number;
@@ -79,6 +79,21 @@ type Active = { kind: Kind; t: number; time: number; need: number; got: number; 
 export class Missions {
   readonly group = new THREE.Group();
   active: Active | null = null;
+  /** called when a request or happening is finished (ok) or runs out of time */
+  onEnd: ((kind: string, ok: boolean) => void) | null = null;
+  /** where a request taken on land takes place */
+  private startAt: THREE.Vector3 | null = null;
+
+  /** Begin a request at its place (the diver has just arrived there). */
+  begin(kind: Kind, c: MissionCtx, at: THREE.Vector3, sp?: SpeciesDef, reward?: number): void {
+    if (this.active) return;
+    this.startAt = at.clone();
+    this.start(c, kind, sp, true);
+    this.startAt = null;
+    const act = this.active as Active | null;
+    if (act && reward) { act.reward = reward; this.renderHud(); }
+  }
+
   /** called when a staged animal must be let go (mission ended) */
   onRelease: (() => void) | null = null;
   /** test hook: start this kind at the next update */
@@ -200,7 +215,8 @@ export class Missions {
       this.nextCheck -= c.dt;
       if (this.count >= MISSION.maxPerDive || c.diveTime < MISSION.firstAfter || c.time - this.lastEnd < MISSION.gap || this.nextCheck > 0) return;
       this.nextCheck = MISSION.checkEvery;
-      if (Math.random() < MISSION.chance) this.propose(c);
+      // only happenings start by themselves at sea (requests are taken on land)
+      if (Math.random() < MISSION.chance * 0.5 && (c.zone === 'lagoon' || c.zone === 'reef' || c.zone === 'rocky')) this.start(c, 'rescue');
       return;
     }
     const a = this.active;
@@ -261,14 +277,18 @@ export class Missions {
     this.renderHud();
     if (a.got >= a.need) {
       c.reward(a.reward, a.title);
-      c.toast(`依頼達成！ ${a.title}　報酬 ¥${a.reward.toLocaleString('ja-JP')}`, '', 3.5);
+      c.toast(a.kind === 'rescue' ? `ウミガメが元気に泳いでいった！ 漁協からお礼 ¥${a.reward.toLocaleString('ja-JP')}` : `依頼達成！ ${a.title}　報酬 ¥${a.reward.toLocaleString('ja-JP')}`, '', 3.5);
       c.chime(true);
+      const k = a.kind;
       this.end(true);
       this.lastEnd = c.time;
+      this.onEnd?.(k, true);
     } else if (a.t <= 0) {
-      c.toast(`時間切れ… 「${a.title}」はまた今度`, 'warn', 3);
+      c.toast(a.kind === 'rescue' ? 'ウミガメを見失ってしまった…' : `時間切れ… 「${a.title}」はまた挑戦できる`, 'warn', 3);
+      const k = a.kind;
       this.end(false);
       this.lastEnd = c.time;
+      this.onEnd?.(k, false);
     }
   }
 
@@ -369,7 +389,8 @@ export class Missions {
 
   private start(c: MissionCtx, forced?: Kind, sp0?: SpeciesDef, fromOffer = false): void {
     const kind = forced ?? 'photo';
-    const ahead = c.player.clone().addScaledVector(c.forward.clone().setY(0).normalize(), 8);
+    const ahead = this.startAt ? this.startAt.clone() : c.player.clone().addScaledVector(c.forward.clone().setY(0).normalize(), 8);
+    const near = this.startAt ?? c.player;
     this.items = [];
     this.taken = [];
     if (kind === 'photo') {
@@ -408,7 +429,7 @@ export class Missions {
       });
       const reward = c.zone === 'cold' ? U.coldReward : U.reward;
       this.active = { kind, t: U.time, time: U.time, need: U.need, got: 0, reward, aka: 0, title: 'ウニ漁（磯焼け対策）' };
-      c.toast(`【依頼】ウニに近づいてバールで3回突いてはがそう。ムラサキウニ（黒紫・トゲ長め）は1点、アカウニ（赤茶色・トゲ少し短め・高級）は2点。トゲがとても長いガンガゼと、花のような桃色のラッパウニは触ると痛い！ ${U.time}秒で${U.need}点`, 'warn', 8);
+      c.toast(`ウニ漁の場所に着いた。ウニに近づいてバールで3回突いてはがそう。ムラサキウニ（黒紫・トゲ長め）は1点、アカウニ（赤茶色・トゲ少し短め・高級）は2点。トゲがとても長いガンガゼと、花のような桃色のラッパウニは触ると痛い！ ${U.time}秒で${U.need}点`, 'warn', 8);
     } else if (kind === 'trash') {
       const T = MISSION.trash;
       for (let i = 0; i < T.spawn; i++) {
@@ -421,7 +442,7 @@ export class Missions {
       this.writeTrash(c.time);
       this.trashMesh.visible = true;
       this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '海のごみ拾い' };
-      c.toast(`【依頼】海のごみが流れてきた！ ${T.time}秒で${T.need}個拾おう（近づくと拾える）`, 'warn', 4.5);
+      c.toast(`ごみがたまっている場所に着いた。${T.time}秒で${T.need}個拾おう（近づくと拾える）`, 'warn', 4.5);
     } else if (kind === 'rescue') {
       const T = MISSION.rescue;
       let spot: THREE.Vector3 | null = null;
@@ -436,8 +457,8 @@ export class Missions {
       this.netMesh.position.copy(spot);
       this.netMesh.visible = true;
       c.stage('turtle', { p: spot.clone(), yaw: Math.random() * 6, pitch: 0.15 });
-      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: 'ウミガメの救出', spot, hold: 0 };
-      c.toast(`【依頼】捨てられた網（ゴーストネット）にウミガメが絡まっているらしい！ ${T.time}秒以内に見つけて、すぐそばで${T.cut}秒じっとして網を切ろう`, 'warn', 5);
+      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '網に絡まったウミガメ', spot, hold: 0 };
+      c.toast(`近くでウミガメが捨てられた網に絡まって動けなくなっている！ マップの印のあたり。そばで${T.cut}秒じっとして網を切ってあげよう`, 'warn', 5);
     } else if (kind === 'survey') {
       const T = MISSION.survey;
       this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '生き物調査', seen: new Set() };
@@ -447,27 +468,27 @@ export class Missions {
       const sp = sp0 ?? c.nearbyBig();
       if (!sp) { this.end(false, true); return; }
       this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: `${sp.name}の標識読み取り`, target: sp, hold: 0 };
-      c.toast(`【依頼】${sp.name}に研究用の標識がついている。${T.dist}m以内まで近づいて、照準に${T.hold}秒収め続けて番号を読み取ろう`, 'warn', 4.5);
+      c.toast(`このあたりに標識のついた${sp.name}がいる。${T.dist}m以内まで近づいて、照準に${T.hold}秒収め続けて番号を読み取ろう`, 'warn', 4.5);
     } else if (kind === 'treasure') {
       const T = MISSION.treasure;
-      const a = Math.random() * Math.PI * 2, d = 12 + Math.random() * T.radius;
-      const x = c.player.x + Math.cos(a) * d, z = c.player.z + Math.sin(a) * d;
+      const a = Math.random() * Math.PI * 2, d = 4 + Math.random() * 12;
+      const x = near.x + Math.cos(a) * d, z = near.z + Math.sin(a) * d;
       const spot = new THREE.Vector3(x, surfaceAt(x, z) + 0.2, z);
       this.chestMesh.position.copy(spot);
       this.chestMesh.rotation.set(0.15, a, 0.1);
       this.chestMesh.visible = true;
       this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '遺跡の宝探し', spot };
-      c.toast(`【依頼】古い地図によると、この遺跡のどこかに宝箱が沈んでいる！ ${T.time}秒以内に探し出そう`, 'warn', 4.5);
+      c.toast(`このあたりに宝箱が沈んでいるはず。${T.time}秒以内に探し出そう（石の陰もよく見て）`, 'warn', 4.5);
     } else {
       const L = MISSION.lost;
-      const a = Math.random() * Math.PI * 2, d = 10 + Math.random() * L.radius;
-      const x = c.player.x + Math.cos(a) * d, z = c.player.z + Math.sin(a) * d;
+      const a = Math.random() * Math.PI * 2, d = 4 + Math.random() * 12;
+      const x = near.x + Math.cos(a) * d, z = near.z + Math.sin(a) * d;
       const spot = new THREE.Vector3(x, surfaceAt(x, z) + 0.06, z);
       this.camMesh.position.copy(spot);
       this.camMesh.rotation.set(0.3, a, 0.2);
       this.camMesh.visible = true;
       this.active = { kind, t: L.time, time: L.time, need: 1, got: 0, reward: L.reward, title: '落とし物のカメラ探し', spot };
-      c.toast(`【依頼】ダイバーが水中カメラを落とした！ ${L.time}秒以内に見つけて（マップの金色の印のあたり）`, 'warn', 4.5);
+      c.toast(`このあたりに黄色い水中カメラが落ちているはず。${L.time}秒以内に見つけよう`, 'warn', 4.5);
     }
     if (!fromOffer) this.count++;
     this.el.ask.classList.add('hidden');

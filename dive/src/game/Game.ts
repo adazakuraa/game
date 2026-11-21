@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { Missions } from './missions';
+import { Missions, type MissionCtx } from './missions';
 import { Kitchen, type LandSave } from './kitchen';
 import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } from './story';
 import { SCENE_AT, Scenes } from './scenes';
+import { makeQuest, QUEST, type Quest } from './quests';
 import { FIND_NAME, FINDS, Finds, openFind, type FindKind } from './finds';
 import { buildBar, buildHandSpear, buildSpeargun } from './gearModels';
-import { BIG_KG, DISH, FISHING, PENALTY, edibleInfo, isFugu, isGoodCatch, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
+import { BIG_KG, DISH, FISHING, PENALTY, STORY, edibleInfo, isFugu, isGoodCatch, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
 import { AIR_TANK, evaluateShot, LEGACY_NEED, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
@@ -30,6 +31,10 @@ type Save = LandSave & {
   tutorial?: boolean;
   /** air tank upgrade level (AIR_TANK) */
   airLv?: number;
+  /** requests on the notice board, and the ones taken */
+  board?: Quest[];
+  quests?: Quest[];
+  questsDone?: number;
  found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
@@ -108,6 +113,14 @@ export class Game {
   /** first-dive tutorial: current step (-1 = off) */
   private tut = { step: -1, t: 0, moved: 0, looked: 0, praise: 0, from: new THREE.Vector3() };
   private nightAnnounced = 0;
+  private lastDt = 0;
+  private questT = 0;
+  /** the request whose task is running right now */
+  private activeQuest: string | null = null;
+  /** species photographed (B or better) in each zone this dive, for surveys */
+  private surveySeen = new Map<string, Set<string>>();
+  /** diner urchin harvest: a short dive that returns straight to the diner */
+  private quick: { kind: 'urchin'; started: boolean; done?: boolean; ok?: boolean } | null = null;
   private missions!: Missions;
   /** request rewards earned this dive */
   private bonuses: { label: string; value: number }[] = [];
@@ -158,6 +171,18 @@ export class Game {
     this.missions = new Missions();
     this.scene.add(this.missions.group);
     this.missions.onRelease = () => this.creatures.stage.delete('turtle');
+    this.missions.onEnd = (_kind, ok) => {
+      if (this.activeQuest) {
+        if (ok) this.completeQuest(this.activeQuest);
+        this.activeQuest = null;
+      }
+      if (this.quick) {
+        // back to the diner as soon as the harvest is over
+        this.quick.done = true;
+        this.quick.ok = ok;
+        window.setTimeout(() => { if (this.state === 'diving' || this.state === 'paused') this.endDive('surface'); }, 1600);
+      }
+    };
     this.spearFx = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 1, 6).rotateX(Math.PI / 2).translate(0, 0, -0.5), new THREE.MeshStandardMaterial({ color: 0xc8ccd0, metalness: 0.9, roughness: 0.28 }));
     this.spearFx.visible = false;
     this.spearFx.frustumCulled = false;
@@ -187,6 +212,7 @@ export class Game {
       changed: () => this.renderTitle(),
       known: (id) => !!this.save.found[id],
       grantMap: (id) => this.grantMap(id),
+      urchinDive: () => this.quickUrchin(),
     });
     this.kitchen.ensureOrders();
     this.audio.onExhale = () => {
@@ -201,6 +227,26 @@ export class Game {
       try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ }
       window.location.reload();
     });
+    $('unlock-all').addEventListener('click', () => {
+      if (!window.confirm('デバッグ用：装備・漁具・海図・免許・ストーリー・評判・タンクをすべて解禁した状態にします（図鑑と実績はそのまま）。よろしいですか？')) return;
+      const sv = this.save;
+      sv.owned = [...new Set([...(sv.owned ?? []), ...SHOP.map((g) => g.id), 'fugulicense'])];
+      sv.discovered = DIVE_POINTS.map((d) => d.id);
+      sv.money = Math.max(sv.money ?? 0, 999999);
+      sv.rep = Math.max(sv.rep ?? 0, FISHING.repLevels[FISHING.repLevels.length - 1]);
+      sv.story = STORY.length;
+      sv.storyMain = CHAPTERS.length;
+      sv.storyRead = CHAPTERS.length;
+      sv.airLv = AIR_TANK.length - 1;
+      sv.tutorial = true;
+      sv.dives = Math.max(sv.dives, 1);
+      this.writeSave();
+      window.location.reload();
+    });
+    $('open-quests').addEventListener('click', () => { $('quests').classList.remove('hidden'); this.renderQuests(); });
+    $('quests-close').addEventListener('click', () => { $('quests').classList.add('hidden'); this.renderTitle(); });
+    $('open-album').addEventListener('click', () => { $('album').classList.remove('hidden'); this.renderAlbum(); });
+    $('album-close').addEventListener('click', () => $('album').classList.add('hidden'));
     $('open-shop').addEventListener('click', () => { this.audio.unlock(); $('shop').classList.remove('hidden'); this.renderShop(); });
     $('shop-close').addEventListener('click', () => { $('shop').classList.add('hidden'); this.renderTitle(); });
     $('res-kitchen').addEventListener('click', () => { this.toTitle(); this.kitchen.open(); });
@@ -332,16 +378,98 @@ export class Game {
     }
   }
 
+  // ------------------------------------------------------------------ requests (taken on land)
+  private fillBoard(): void {
+    const b = (this.save.board ??= []);
+    const taken = [...b, ...(this.save.quests ?? [])].map((q) => q.kind);
+    for (let k = 0; b.length < QUEST.board && k < 10; k++) {
+      const q = makeQuest(this.discovered, Math.random, taken);
+      if (q) { b.push(q); taken.push(q.kind); }
+    }
+  }
+
+  private renderQuests(): void {
+    this.fillBoard();
+    this.writeSave();
+    const held = this.save.quests ?? [];
+    const card = (q: Quest, act: string) => `<div class="k-item"><div><div class="who">${q.giver}　<span class="q-place">${ZONE_NAMES[q.zone]}</span></div><div class="what">${q.title}</div><div class="hint">${q.desc}</div><div class="pay">報酬 ${yen(q.reward)}</div></div><div class="acts">${act}</div></div>`;
+    $('q-held').innerHTML = held.length ? held.map((q) => card(q, `<button type="button" class="btn sec" data-drop="${q.id}">やめる</button>`)).join('') : '<div class="k-empty">まだ依頼を受けていない。受けた依頼の場所は、潜ったときのマップに印で出る。</div>';
+    const full = held.length >= QUEST.maxHeld;
+    $('q-board').innerHTML = (this.save.board ?? []).map((q) => card(q, `<button type="button" class="btn ${full ? 'sec' : 'pri'}" data-take="${q.id}" ${full ? 'disabled' : ''}>${full ? `同時に${QUEST.maxHeld}件まで` : '受ける'}</button>`)).join('');
+    document.querySelectorAll<HTMLButtonElement>('[data-take]').forEach((b) => b.addEventListener('click', () => {
+      const q = this.save.board!.find((x) => x.id === b.dataset.take);
+      if (!q || (this.save.quests ?? []).length >= QUEST.maxHeld) return;
+      this.save.board = this.save.board!.filter((x) => x !== q);
+      (this.save.quests ??= []).push(q);
+      this.audio.chime(false);
+      this.renderQuests();
+    }));
+    document.querySelectorAll<HTMLButtonElement>('[data-drop]').forEach((b) => b.addEventListener('click', () => {
+      this.save.quests = (this.save.quests ?? []).filter((x) => x.id !== b.dataset.drop);
+      this.renderQuests();
+    }));
+  }
+
+  /** Arriving at a request's place starts it (with how-to text); photo and survey requests finish on their own. */
+  private questCheck(p: THREE.Vector3): void {
+    if (this.ads || this.missions.active || this.tut.step >= 0) return;
+    for (const q of this.save.quests ?? []) {
+      if (q.kind === 'photo' || q.kind === 'survey') continue;
+      if (Math.hypot(p.x - q.x, p.z - q.z) > QUEST.arrive) continue;
+      const at = new THREE.Vector3(q.x, heightAt(q.x, q.z), q.z);
+      const sp = q.species ? SPECIES_BY_ID.get(q.species) : undefined;
+      if (q.kind === 'tag' && sp) this.creatures.placeNear(sp.id, new THREE.Vector3(q.x + 4, Math.max(at.y + 2, -12), q.z + 4));
+      this.activeQuest = q.id;
+      this.missions.begin(q.kind, this.missionCtx(), at, sp, q.reward);
+      this.audio.chime(false);
+      return;
+    }
+  }
+
+  private completeQuest(id: string, label?: string): void {
+    const q = (this.save.quests ?? []).find((x) => x.id === id);
+    if (!q) return;
+    this.save.quests = this.save.quests!.filter((x) => x !== q);
+    this.save.questsDone = (this.save.questsDone ?? 0) + 1;
+    if (label !== undefined) {
+      this.bonuses.push({ label: `依頼達成：${label}`, value: q.reward });
+      this.updateDexChip();
+      this.toast(`依頼達成！ ${q.title}　報酬 ${yen(q.reward)}`, '', 3.5);
+      this.audio.chime(true);
+    }
+    this.writeSave();
+  }
+
+  /** A photo may finish a magazine request or count toward a survey. */
+  private questPhoto(id: string, grade: string, zone: string): void {
+    if (!['S', 'A', 'B'].includes(grade)) return;
+    for (const q of [...(this.save.quests ?? [])]) {
+      if (q.kind === 'photo' && q.species === id) this.completeQuest(q.id, q.title);
+      if (q.kind === 'survey' && q.zone === zone) {
+        const set = this.surveySeen.get(q.id) ?? new Set();
+        set.add(id);
+        this.surveySeen.set(q.id, set);
+        if (set.size >= QUEST.surveyNeed) this.completeQuest(q.id, q.title);
+        else this.toast(`${q.title}：${set.size} / ${QUEST.surveyNeed}種類`, '', 1.6);
+      }
+    }
+  }
+
+  /** Achievements: the special sights, on their own screen. */
+  private renderAlbum(): void {
+    const all = Object.keys(SCENES) as SceneId[];
+    const got = all.filter((id) => this.save.scenes?.[id]);
+    $('album-body').innerHTML = `<div class="al-count">出会えた光景 <b>${got.length}</b> / ${all.length}</div><div class="sc-photos">${all.map((id) => this.save.scenes?.[id]
+      ? `<figure><img src="${this.save.scenes[id]!.photo}" alt=""><figcaption><b>${SCENES[id].name}</b>${SCENES[id].desc}</figcaption></figure>`
+      : `<figure class="locked"><div>？</div><figcaption><b>？？？</b>${SCENES[id].hint}</figcaption></figure>`).join('')}</div>`;
+  }
+
   private renderStory(): void {
     const el = $('story-card');
     const i = this.save.storyMain ?? 0;
     const ch = CHAPTERS[i];
     const cleared = this.storyCleared.length ? `<div class="sc-clear">${this.storyCleared.join('<br>')}</div>` : '';
-    const all = Object.keys(SCENES) as SceneId[];
-    const got = all.filter((id) => this.save.scenes?.[id]);
-    const album = `<div class="sc-album"><div class="sc-kicker">特別な光景（実績）　${got.length} / ${all.length}</div><div class="sc-photos">${all.map((id) => this.save.scenes?.[id]
-      ? `<figure><img src="${this.save.scenes[id]!.photo}" alt=""><figcaption>${SCENES[id].name}</figcaption></figure>`
-      : `<figure class="locked"><div>？</div><figcaption>${SCENES[id].hint}</figcaption></figure>`).join('')}</div></div>`;
+    const album = '';
     if (!ch) {
       el.innerHTML = `<div class="sc-kicker">写真家の評価：表紙の写真家</div>${cleared}<div class="sc-intro">${ENDING}</div>${album}`;
       return;
@@ -453,7 +581,7 @@ export class Game {
     if (hiddenN) {
       const d = document.createElement('div');
       d.className = 'pt unknown';
-      d.innerHTML = `<span class="ico" style="background:#2a3a44;color:#8aa">？</span><span><div class="nm">未発見のポイント ×${hiddenN}</div><div class="sb">潜って泳いだ先で見つけるか、海図を手に入れると、ボートから直接行けるようになる</div></span><span></span>`;
+      d.innerHTML = `<span class="ico" style="background:#2a3a44;color:#8aa">？</span><span><div class="nm">未発見のポイント ×${hiddenN}</div><div class="sb">まだ知らない海がある</div></span><span></span>`;
       pts.appendChild(d);
     }
     this.renderDaytime();
@@ -467,6 +595,7 @@ export class Game {
     const money = this.save.money ?? 0;
     const buyable = SHOP.filter((g) => !this.owns(g) && this.stockGap(g) === 0 && money >= g.price && (!g.req || this.has(g.req))).length;
     $('shop-badge').textContent = buyable ? `${buyable}個 買える！` : '';
+    $('album-badge').textContent = `${Object.keys(this.save.scenes ?? {}).length} / ${Object.keys(SCENES).length}`;
     const goal = this.nextGoal();
     const goalText = (gl: NonNullable<ReturnType<Game['nextGoal']>>) =>
       gl.species > 0
@@ -566,14 +695,15 @@ export class Game {
     const buff = this.save.buff ? `<small>まかない：${DISH[this.save.buff].name}（${DISH[this.save.buff].short}）が次のダイブに効く</small>` : '';
     if (free) {
       const night = nightOf(c) >= 0.5;
-      el.innerHTML = `${now}<button type="button" class="btn sec" data-time="day" aria-pressed="${!night}">☀ 昼の海</button><button type="button" class="btn sec" data-time="night" aria-pressed="${night}">☾ 夜の海</button><small>評判が上がり、潜る時間帯を選べるようになった。</small>${buff}`;
+      el.innerHTML = `${now}<button type="button" class="btn sec" data-time="day" aria-pressed="${!night}">☀ 昼の海</button><button type="button" class="btn sec" data-time="night" aria-pressed="${night}">☾ 夜の海</button>${buff}`;
       el.querySelectorAll<HTMLButtonElement>('[data-time]').forEach((b) => b.addEventListener('click', () => {
         this.save.clock = b.dataset.time === 'night' ? FISHING.duskAt + FISHING.duskLen : Math.min(this.save.clock ?? 0, 0);
         this.writeSave();
         this.renderTitle();
       }));
     } else {
-      el.innerHTML = `${now}<small>${c < FISHING.duskAt ? `潜っている時間があと約${Math.ceil(left / 60)}分たつと日が暮れて、夜の海になる。` : '日が暮れた。夜の海では夜行性の生き物が出てくる。食堂で休むと朝になる。'}（食堂の評判Lv${FISHING.nightFreeLevel}で、昼・夜を自由に選べる）</small>${buff}`;
+      el.innerHTML = `${now}${buff}`;
+      void left;
     }
   }
 
@@ -702,7 +832,16 @@ export class Game {
     this.camera.rotation.set(-0.12 + Math.sin(t * 0.1) * 0.03, Math.PI + 0.4 + Math.sin(t * 0.05) * 0.25, 0, 'YXZ');
   }
 
-  private startDive(dp: DivePoint): void {
+  /** The diner's urchin harvest: straight to the rocks, straight back afterwards. */
+  private quickUrchin(): void {
+    const dp = DIVE_POINTS.find((d) => d.id === 'rocky')!;
+    $('kitchen').classList.add('hidden');
+    this.quick = { kind: 'urchin', started: false };
+    this.startDive(dp, true);
+  }
+
+  private startDive(dp: DivePoint, quick = false): void {
+    if (!quick) this.quick = null;
     this.audio.unlock();
     const fade = $('fade');
     fade.classList.add('on');
@@ -753,6 +892,8 @@ export class Game {
       this.diveCatch = [];
       this.diveFinds = [];
       this.pendingScenes.clear();
+      this.activeQuest = null;
+      this.surveySeen.clear();
       this.spearFx.visible = false;
       $('hud').classList.remove('spear');
       $('btn-tool').classList.toggle('hidden', !this.has('spear') || this.ads);
@@ -959,6 +1100,16 @@ export class Game {
       ...affordable.map((g) => `「${g.name}」が買えるようになった！ ボートのショップへ`),
     ].join('<br>') || (goal ? `<span class="res-goal">所持金 ${yen(this.save.money!)}　次の目標「${goal.name}」${goal.species > 0 ? `入荷まで図鑑あと${goal.species}種` : `まであと${yen(goal.need)}`}</span>` : '');
     if (affordable.length || stockedNow.length || earn > 0) this.audio.chime(affordable.length + stockedNow.length > 0);
+    if (this.quick) {
+      // the diner's harvest: no result screen, straight back to the shop
+      const ok = !!this.quick.ok;
+      this.quick = null;
+      if (ok) { this.save.rep = (this.save.rep ?? 0) + 1; this.writeSave(); }
+      $('result').classList.add('hidden');
+      this.toTitle();
+      this.kitchen.open();
+      this.kitchen.harvestResult(ok, earn);
+    }
   }
 
   private toTitle(): void {
@@ -981,6 +1132,7 @@ export class Game {
 
   // ------------------------------------------------------------------ simulation
   private updateDiver(dt: number): void {
+    this.lastDt = dt;
     const inp = this.input;
     inp.poll();
     const [lx, ly] = inp.takeLook();
@@ -1129,18 +1281,18 @@ export class Game {
     }
 
     // occasional requests (mini-games), not during the tutorial
-    if (this.tut.step < 0) this.missions.update({
-      dt, time: this.time, diveTime: this.diveTime, player: p, forward: this.tmpDir.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).clone(),
-      zone: zoneAt(p.x, p.z),
-      nearbySpecies: () => this.creatures.randomNear(p, 25),
-      toast: (t, k, d) => this.toast(t, k ?? '', d),
-      chime: (big) => this.audio.chime(big),
-      nearbyBig: () => this.creatures.randomNear(p, 30, 0.8),
-      aim: () => (this.target && this.target.inRange ? { id: this.target.rt.def.id, dist: this.target.dist } : null),
-      stage: (id, pose) => { if (pose) this.creatures.stage.set(id, [pose]); else this.creatures.stage.delete(id); },
-      sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); },
-      reward: (v, label) => { this.bonuses.push({ label: `依頼達成：${label}`, value: v }); this.shake = Math.max(this.shake, 0.4); this.freezeT = 0.15; this.updateDexChip(); },
-    });
+    if (this.tut.step < 0) {
+      this.missions.update(this.missionCtx());
+      this.questT -= dt;
+      if (this.questT <= 0) { this.questT = 0.5; this.questCheck(p); }
+    }
+    if (this.quick && !this.quick.started && this.diveTime > 0.6) {
+      // diner urchin harvest: the urchins are right there when the diver arrives
+      this.quick.started = true;
+      const at = p.clone().addScaledVector(new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), 6);
+      at.y = heightAt(at.x, at.z);
+      this.missions.begin('urchin', this.missionCtx(), at);
+    }
 
     // photo target & shutter
     // sharp-photo distance: where water haze stays under ~50 % (FogExp2), shortened by narcosis
@@ -1177,6 +1329,23 @@ export class Game {
       void f.offsetWidth;
       f.classList.add('go');
     }
+  }
+
+  /** What a request or happening needs from the dive. */
+  private missionCtx(): MissionCtx {
+    const p = this.camera.position;
+    return {
+      dt: this.lastDt, time: this.time, diveTime: this.diveTime, player: p, forward: this.tmpDir.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).clone(),
+      zone: zoneAt(p.x, p.z),
+      nearbySpecies: () => this.creatures.randomNear(p, 25),
+      toast: (t, k, d) => this.toast(t, k ?? '', d),
+      chime: (big) => this.audio.chime(big),
+      nearbyBig: () => this.creatures.randomNear(p, 30, 0.8),
+      aim: () => (this.target && this.target.inRange ? { id: this.target.rt.def.id, dist: this.target.dist } : null),
+      stage: (id, pose) => { if (pose) this.creatures.stage.set(id, [pose]); else this.creatures.stage.delete(id); },
+      sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); },
+      reward: (v, label) => { this.bonuses.push({ label: label === '網に絡まったウミガメ' ? 'ウミガメを助けた（漁協からお礼）' : `依頼達成：${label}`, value: v }); this.shake = Math.max(this.shake, 0.4); this.freezeT = 0.15; this.updateDexChip(); },
+    };
   }
 
   /** weight carried: the catch and anything picked up */
@@ -1285,8 +1454,8 @@ export class Game {
     if (!this.save.found[def.id] && !this.pending.has(def.id)) return '';
     const e = edibleInfo(def);
     if (!e.ok) return '';
-    if (e.protected) return '　<span class="gC">保護種：獲ると罰金</span>';
-    if (e.poison) return this.has('fugulicense') && isFugu(def) ? '　<span class="gA">ふぐ：免許でさばける</span>' : '　<span class="gC">毒あり</span>';
+    if (e.protected) return '　<span class="gC">獲ってはいけない生き物</span>';
+    if (e.poison && this.has('fugulicense') && isFugu(def)) return '　<span class="gA">ふぐ：免許でさばける</span>';
     return '';
   }
 
@@ -1396,6 +1565,7 @@ export class Game {
     const depth = -t.agent.p.y;
     const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2, this.env.night >= 0.5);
     this.missions.onPhoto(def.id, ev.grade.g);
+    this.questPhoto(def.id, ev.grade.g, zoneAt(this.camera.position.x, this.camera.position.z));
     // a known species pays a share unless this beats the best photo on record
     const best = this.save.found[def.id]?.score ?? -1;
     const value = known && ev.score <= best ? Math.round((ev.value * PHOTO.repeatShare) / 10) * 10 : ev.value;
@@ -1478,7 +1648,7 @@ export class Game {
     $('narc').style.opacity = String(this.narc * 0.8);
     if (this.minimap && this.frame % 10 === 0) {
       if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
-      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.storyMarks];
+      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.storyMarks, ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo').map((q) => ({ x: q.x, z: q.z, rare: true }))];
     }
     this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());

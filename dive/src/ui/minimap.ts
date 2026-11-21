@@ -1,7 +1,8 @@
 import { ARCH, DIVE_POINTS, heightAt, rockyWeight, VENT, WORLD, WRECK, zoneAt } from '../world/layout';
 
 const RES = 2.5; // meters per map pixel
-const LANDMARKS = [
+// landmarks are not drawn on the chart (the player finds them); kept for reference
+export const LANDMARKS = [
   { x: WRECK.x, z: WRECK.z, label: '沈没船', id: 'dropoff' },
   { x: ARCH.x, z: ARCH.z, label: '岩のアーチ', id: 'rocky' },
   { x: VENT.x, z: VENT.z, label: '熱水噴出孔', id: 'deep' },
@@ -166,13 +167,6 @@ export class Minimap {
       g.arc(sx, sy, size * (b.rare ? 0.03 : 0.022), 0, Math.PI * 2);
       g.fill();
     }
-    for (const l of LANDMARKS) {
-      const [lx, ly] = this.px(l.x, l.z);
-      const sx = (lx - px) * sc + size / 2, sy = (ly - py) * sc + size / 2;
-      g.strokeStyle = 'rgba(255,255,255,0.8)';
-      g.lineWidth = dpr;
-      g.strokeRect(sx - size * 0.025, sy - size * 0.025, size * 0.05, size * 0.05);
-    }
     g.restore();
     this.arrow(g, size / 2, size / 2, Minimap.angle(yaw), size * 0.075);
     g.strokeStyle = 'rgba(150,230,245,0.45)';
@@ -208,16 +202,6 @@ export class Minimap {
       g.fillText(l.label, sx + 1, sy + 1);
       g.fillStyle = 'rgba(235,250,255,0.9)';
       g.fillText(l.label, sx, sy);
-    }
-    g.font = `500 ${Math.max(10, sc * 4.6)}px "Zen Kaku Gothic New", sans-serif`;
-    for (const l of LANDMARKS) {
-      if (!this.known.has(l.id)) continue;
-      const [sx, sy] = P(l.x, l.z);
-      g.strokeStyle = '#fff';
-      g.lineWidth = 1.5;
-      g.strokeRect(sx - 4, sy - 4, 8, 8);
-      g.fillStyle = 'rgba(255,255,255,0.85)';
-      g.fillText(l.label, sx, sy + 13);
     }
     for (const dp of DIVE_POINTS) {
       if (!this.known.has(dp.id)) continue;

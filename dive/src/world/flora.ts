@@ -863,21 +863,32 @@ export class Flora {
           const tone = 0.4 + r() * 0.2;
           slabs.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x - ctr.x, bottom + TH / 2 - ctr.y, z - ctr.z), q, new THREE.Vector3(sx, sy, sz)), c: new THREE.Color(tone, tone * 0.97, tone * 0.92) });
           // the slab is solid only between its underside and top, so the gap below stays open
-          for (const u of [-W * 0.3, 0, W * 0.3]) for (const v of [-D * 0.22, D * 0.22]) {
+          for (const u of [-W * 0.3, 0, W * 0.3]) for (const v of [-D * 0.3, 0]) {
             const p = at(u, v);
-            addCollider({ x: p.x, z: p.z, r: Math.min(W, D) * 0.3, y0: bottom - 0.05, y1: bottom + TH, roof: true });
+            addCollider({ x: p.x, z: p.z, r: Math.min(W, D) * 0.28, y0: bottom - 0.05, y1: bottom + TH, roof: true });
           }
-          // two pillars at the back and one at a side; the front and the other side stay open to swim in
-          for (const [u, v] of [[-W * 0.4, D * 0.4], [W * 0.4, D * 0.4], [W * 0.45, -D * 0.2]]) {
+          // an enclosed overhang: back wall and both side walls of rock, open only at the front (v < 0)
+          const wallH = bottom + TH + 0.6;
+          const mass = (u: number, v: number, wx: number, wz: number, h0: number) => {
             const p = at(u, v);
-            const g = heightAt(p.x, p.z);
-            const h = bottom - g + 0.4, rad = 0.75;
-            const lx = (rad * 2) / (lb.max.x - lb.min.x), ly = h / (lb.max.y - lb.min.y), lz = (rad * 2) / (lb.max.z - lb.min.z);
-            legs.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(p.x, g - lb.min.y * ly - 0.2, p.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, r() * 6, 0)), new THREE.Vector3(lx, ly, lz)), c: new THREE.Color(tone * 0.95, tone * 0.93, tone * 0.88) });
-            addCollider({ x: p.x, z: p.z, r: rad * 0.9, y0: g - 0.5, y1: bottom });
-          }
+            const g = Math.min(heightAt(p.x, p.z), gmin);
+            const h = h0 - g + 0.7;
+            const lx = wx / (lb.max.x - lb.min.x), ly = h / (lb.max.y - lb.min.y), lz = wz / (lb.max.z - lb.min.z);
+            legs.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(p.x, g - lb.min.y * ly - 0.5, p.z), q, new THREE.Vector3(lx, ly, lz)), c: new THREE.Color(tone * 0.96, tone * 0.94, tone * 0.9) });
+            // colliders along the long side
+            const along = wx >= wz;
+            const n = Math.max(1, Math.round((along ? wx : wz) / 1.4));
+            for (let k = 0; k < n; k++) {
+              const t = (k + 0.5) / n - 0.5;
+              const c = at(u + (along ? t * wx : 0), v + (along ? 0 : t * wz));
+              addCollider({ x: c.x, z: c.z, r: Math.max(0.8, Math.min(wx, wz) * 0.5), y0: g - 0.5, y1: h0 });
+            }
+          };
+          mass(0, D * 0.42, W * 1.08, 1.9, wallH); // back
+          mass(-W * 0.5, D * 0.1, 1.7, D * 0.95, wallH); // left
+          mass(W * 0.5, D * 0.1, 1.7, D * 0.95, wallH); // right
           // where the shade-lovers live
-          for (const [u, v] of [[-W * 0.15, 0], [W * 0.12, -D * 0.1], [0, D * 0.15]]) {
+          for (const [u, v] of [[-W * 0.15, -D * 0.15], [W * 0.1, -D * 0.25], [-W * 0.3, -D * 0.05]]) {
             const p = at(u, v);
             this.homes.underTables.push(new THREE.Vector3(p.x, heightAt(p.x, p.z) + 0.55, p.z));
           }

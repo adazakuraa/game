@@ -6,7 +6,7 @@ import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
-import { caveRoofAt, heightAt, VENT } from '../world/layout';
+import { caveRoofAt, heightFast, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
 import { resolveCapsule, resolveSphere } from '../world/colliders';
@@ -325,18 +325,18 @@ export class Creatures {
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;
-      p = new THREE.Vector3(x, heightAt(x, z), z);
+      p = new THREE.Vector3(x, heightFast(x, z), z);
     } else if (reg === 'eelPatch') {
       const a = r() * Math.PI * 2, d = Math.sqrt(r()) * GARDEN_EEL_PATCH.r;
       const x = GARDEN_EEL_PATCH.x + Math.cos(a) * d, z = GARDEN_EEL_PATCH.z + Math.sin(a) * d;
-      p = new THREE.Vector3(x, heightAt(x, z), z);
+      p = new THREE.Vector3(x, heightFast(x, z), z);
     } else {
       let x = 0, z = 0, ground = 0, y = 0;
       for (let k = 0; k < 40; k++) {
         const rg = reg as [number, number, number, number];
         x = rg[0] + r() * (rg[1] - rg[0]);
         z = rg[2] + r() * (rg[3] - rg[2]);
-        ground = heightAt(x, z);
+        ground = heightFast(x, z);
         y = -(def.depth[0] + r() * (def.depth[1] - def.depth[0]));
         if (y > ground + 1) break;
       }
@@ -402,7 +402,7 @@ export class Creatures {
     }
     if (b.anchor === 'home') out.y = g.home.y + rnd(b.lo, b.hi);
     else if (b.anchor === 'abs') out.y = rnd(b.lo, b.hi);
-    else out.y = Math.min(heightAt(out.x, out.z) + rnd(b.lo, b.hi), -0.8);
+    else out.y = Math.min(heightFast(out.x, out.z) + rnd(b.lo, b.hi), -0.8);
     return true;
   }
 
@@ -445,7 +445,7 @@ export class Creatures {
     for (let gi = 0; gi < def.groups; gi++) {
       const home = this.pickHome(def, homes, gi);
       if (def.behavior !== 'static' && def.behavior !== 'buried' && def.behavior !== 'crevice' && def.behavior !== 'anemone') {
-        const g0 = heightAt(home.x, home.z);
+        const g0 = heightFast(home.x, home.z);
         home.y = Math.max(home.y, g0 + this.altitude(def));
       }
       const roam = def.behavior === 'pelagic' ? 60 : def.behavior === 'drift' ? 14 : def.region === 'reefSpots' ? 5 : 20;
@@ -474,12 +474,12 @@ export class Creatures {
         if (def.region === 'eelPatch') {
           const a2 = r() * Math.PI * 2, d = Math.sqrt(r()) * GARDEN_EEL_PATCH.r;
           a.p.set(GARDEN_EEL_PATCH.x + Math.cos(a2) * d, 0, GARDEN_EEL_PATCH.z + Math.sin(a2) * d);
-          a.p.y = heightAt(a.p.x, a.p.z) - 0.12 * a.s;
+          a.p.y = heightFast(a.p.x, a.p.z) - 0.12 * a.s;
           a.fixed = true;
         } else {
           // goby hovering over its burrow (or a tube worm fixed on coral)
           a.p.set(g.home.x + (r() - 0.5) * 1.2, 0, g.home.z + (r() - 0.5) * 1.2);
-          a.p.y = def.anchorHome ? g.home.y + (r() - 0.5) * 0.2 : heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+          a.p.y = def.anchorHome ? g.home.y + (r() - 0.5) * 0.2 : heightFast(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
           if (def.anchorHome) a.fixed = true;
         }
       } else if (def.behavior === 'crevice') {
@@ -490,14 +490,14 @@ export class Creatures {
         const dir = new THREE.Vector3(Math.sin(a.yaw), 0, Math.cos(a.yaw));
         const d = rad * (def.kind === 'lobster' ? 1.05 : 0.95) + (def.kind === 'lobster' ? 0 : def.size * 0.25);
         a.p.set(c.x + dir.x * d, 0, c.z + dir.z * d);
-        a.p.y = heightAt(a.p.x, a.p.z) + (def.kind === 'lobster' ? 0.05 : 0.35 + r() * 0.4);
+        a.p.y = heightFast(a.p.x, a.p.z) + (def.kind === 'lobster' ? 0.05 : 0.35 + r() * 0.4);
         a.fixed = true;
       } else if (def.behavior === 'static') {
         const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots';
         const spread = onTop ? 1.2 : 3;
         a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * spread, 0, (r() - 0.5) * spread));
         a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
-        if (def.kind === 'none') a.p.set(VENT.x, heightAt(VENT.x, VENT.z) + 1.5, VENT.z);
+        if (def.kind === 'none') a.p.set(VENT.x, heightFast(VENT.x, VENT.z) + 1.5, VENT.z);
       }
       if (def.instColors) a.col = new THREE.Color(def.instColors[Math.floor(r() * def.instColors.length)]);
       rt.agents.push(a);
@@ -667,7 +667,7 @@ export class Creatures {
       for (let k = 0; k < 30 && !p; k++) {
         const x = x0 + r() * (x1 - x0), z = z0 + r() * (z1 - z0);
         if (!ok(x, z)) continue;
-        const ground = heightAt(x, z);
+        const ground = heightFast(x, z);
         const y = -(def.depth[0] + r() * (def.depth[1] - def.depth[0]));
         if (y < ground + 0.5 && def.behavior !== 'bottom' && def.behavior !== 'static') continue;
         p = new THREE.Vector3(x, Math.max(y, ground + this.altitude(def)), z);
@@ -692,11 +692,11 @@ export class Creatures {
         a.alarm = 0;
       } else if (def.behavior === 'buried') {
         a.p.set(p.x + (r() - 0.5) * 1.2, 0, p.z + (r() - 0.5) * 1.2);
-        a.p.y = def.anchorHome ? p.y + (r() - 0.5) * 0.2 : heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+        a.p.y = def.anchorHome ? p.y + (r() - 0.5) * 0.2 : heightFast(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
         a.retract = 0;
       } else {
         a.p.copy(g.c).add(a.off);
-        const gy = heightAt(a.p.x, a.p.z) + 0.1;
+        const gy = heightFast(a.p.x, a.p.z) + 0.1;
         if (a.p.y < gy) a.p.y = gy;
       }
     }
@@ -777,7 +777,11 @@ export class Creatures {
     }
   }
 
-  update(dt: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir?: THREE.Vector3): void {
+  private frameNo = 0;
+
+  update(dt0: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir?: THREE.Vector3): void {
+    const dt = dt0;
+    this.frameNo++;
     // re-home far groups (a few species per frame)
     this.relocT += dt;
     if (this.relocT > 0.05) {
@@ -844,9 +848,9 @@ export class Creatures {
         }
         if (def.behavior === 'bottom') {
           // bottom dwellers follow the seafloor wherever it is, regardless of their listed depth range
-          g.t.y = heightAt(g.t.x, g.t.z) + this.altitude(def);
+          g.t.y = heightFast(g.t.x, g.t.z) + this.altitude(def);
         } else if (!def.hab) {
-          const ground = heightAt(g.t.x, g.t.z);
+          const ground = heightFast(g.t.x, g.t.z);
           g.t.y = clamp(g.t.y, Math.max(ground + this.altitude(def), -def.depth[1]), Math.min(-def.depth[0], -0.6));
         } else g.t.y = Math.min(g.t.y, -0.3);
         if (def.behavior === 'anemone') g.t.copy(g.home);
@@ -863,7 +867,7 @@ export class Creatures {
           g.v.addScaledVector(_v, dt * def.speed * 2);
         }
         g.c.addScaledVector(g.v, dt);
-        const gg = heightAt(g.c.x, g.c.z);
+        const gg = heightFast(g.c.x, g.c.z);
         const minAlt = def.hab ? (def.hab === 'sandForage' || def.hab === 'under' ? 0.1 : 0.2) : this.altitude(def) * 0.8;
         g.c.y = clamp(g.c.y, gg + minAlt, -0.3);
       }
@@ -898,13 +902,17 @@ export class Creatures {
         }
         if (g.absent || a.taken) continue;
         if (Math.abs(g.c.x - player.x) > 100 || Math.abs(g.c.z - player.z) > 100) continue;
+        // far individuals are simulated every third frame (with three frames' worth of time): nobody sees the difference
+        const lod = Math.abs(a.p.x - player.x) + Math.abs(a.p.z - player.z) > 45 && !a.aggro ? 3 : 1;
+        if (lod > 1 && (this.frameNo + i) % lod !== 0) { this.writeInstance(rt, a, i); continue; }
+        const dt = dt0 * lod;
         const dPlayer = a.p.distanceTo(player);
         if (def.behavior === 'buried') {
           const want = dPlayer < def.flee + playerVel.length() * 1.5 ? 1 : 0;
           a.retract += (want - a.retract) * Math.min(1, dt * (want ? 6 : 0.35));
           // face roughly toward the current (gobies hover and slowly turn)
           a.yaw = def.region === 'eelPatch' ? 0.6 + Math.sin(a.ph) * 0.4 : a.ph + Math.sin(this.time * 0.3 + a.ph) * 0.6;
-          if (def.region !== 'eelPatch' && !def.anchorHome) a.p.y = heightAt(a.p.x, a.p.z) + 0.1 + a.s * 0.3 + Math.sin(this.time * 1.3 + a.ph) * 0.02;
+          if (def.region !== 'eelPatch' && !def.anchorHome) a.p.y = heightFast(a.p.x, a.p.z) + 0.1 + a.s * 0.3 + Math.sin(this.time * 1.3 + a.ph) * 0.02;
           this.orient(rt, a, 1);
           this.writeInstance(rt, a, i);
           continue;
@@ -1032,7 +1040,7 @@ export class Creatures {
         // keep a minimum cruising speed for pelagics so they never hover
         if (def.behavior === 'pelagic' && vl < def.speed * 0.4) a.v.add(_v2.set(Math.sin(a.yaw), 0, Math.cos(a.yaw)).multiplyScalar(def.speed * 0.4 * dt * 3));
         a.p.addScaledVector(a.v, dt);
-        const gy = heightAt(a.p.x, a.p.z);
+        const gy = heightFast(a.p.x, a.p.z);
         const minY = gy + Math.max(0.06, def.behavior === 'bottom' ? this.altitude(def) : def.hab === 'sandForage' ? a.s * 0.15 : a.s * 0.3);
         if (a.p.y < minY) { a.p.y = minY; a.v.y = Math.max(a.v.y, 0); }
         if (a.p.y > -0.4) { a.p.y = -0.4; a.v.y = Math.min(a.v.y, 0); }
@@ -1247,7 +1255,7 @@ export class Creatures {
     for (let i = 1; i < n; i++) {
       const t = i / n;
       const x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t, z = from.z + (to.z - from.z) * t;
-      if (heightAt(x, z) > y + 0.15) return true;
+      if (heightFast(x, z) > y + 0.15) return true;
     }
     return false;
   }
