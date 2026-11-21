@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { buildCar } from '../render/carmodel.js';
 import { radialTexture } from '../render/textures.js';
-import { SLOTS, ITEMS, garage, resolveLook } from '../garage.js';
+import { SLOTS, ITEMS, PART_SLOTS, PARTS, STATS, STAT_MAX, garage, resolveLook } from '../garage.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -30,7 +30,9 @@ export class GarageView {
     this.onBack = onBack;
     this.quality = quality;
     this.open_ = false;
+    this.mode = 'look'; // 'look' 見た目 / 'perf' 性能
     this.slot = 'paint';
+    this.sel = null; // 性能タブで選んでいるパーツ id
     this.pending = null; // 購入前に試している { slot, id }
     this.zoom = 1;
     this.lastInput = 0;
@@ -118,8 +120,8 @@ export class GarageView {
   }
 
   applyView() {
-    const slot = SLOTS.find((s) => s.id === this.slot);
-    this.view = VIEWS[slot.view] || VIEWS.front;
+    const slot = this.mode === 'perf' ? null : SLOTS.find((s) => s.id === this.slot);
+    this.view = (slot && VIEWS[slot.view]) || VIEWS.front;
     this.zoom = 1;
     this.layout();
   }
@@ -149,13 +151,8 @@ export class GarageView {
   // ---------- UI ----------
   buildUI() {
     $('#garageBack').onclick = () => this.onBack();
-    const tabs = $('#gTabs');
-    SLOTS.forEach((s) => {
-      const b = el('button', 'g-tab', s.name);
-      b.dataset.slot = s.id;
-      b.onclick = () => this.selectSlot(s.id);
-      tabs.appendChild(b);
-    });
+    this.buildTabs();
+    for (const b of document.querySelectorAll('.g-mode')) b.onclick = () => this.setMode(b.dataset.mode);
     $('#gAction').onclick = () => this.onAction();
     // ドラッグで回転、ホイール・ピンチでズーム
     const area = $('#garagePreview');
@@ -191,8 +188,119 @@ export class GarageView {
     this.zoom = nz;
   }
 
+  buildTabs() {
+    const tabs = $('#gTabs');
+    tabs.textContent = '';
+    for (const s of this.mode === 'perf' ? PART_SLOTS : SLOTS) {
+      const b = el('button', 'g-tab', s.name);
+      b.dataset.slot = s.id;
+      b.onclick = () => this.selectSlot(s.id);
+      tabs.appendChild(b);
+    }
+  }
+
+  setMode(m) {
+    if (m === this.mode) return;
+    this.mode = m;
+    this.slot = m === 'perf' ? PART_SLOTS[0].id : 'paint';
+    this.pending = null;
+    this.sel = null;
+    this.buildTabs();
+    this.syncMode();
+    this.renderTabs();
+    this.renderItems();
+    this.applyView();
+    this.refresh();
+  }
+
+  syncMode() {
+    const perf = this.mode === 'perf';
+    document.querySelectorAll('.g-mode').forEach((b) => b.classList.toggle('on', b.dataset.mode === this.mode));
+    $('#gStats').classList.toggle('hidden', !perf);
+    $('#garage').classList.toggle('perf', perf);
+  }
+
+  // 性能タブ: 選んでいるパーツに替えたときのステータス
+  previewParts() {
+    const p = garage.parts;
+    if (this.sel) p[this.slot] = this.sel;
+    return p;
+  }
+
+  renderStats() {
+    const box = $('#gStats');
+    const cur = garage.stats();
+    const nxt = garage.stats(this.previewParts());
+    if (!box.children.length) {
+      for (const st of STATS) {
+        const row = el('div', 'st-row');
+        row.dataset.stat = st.id;
+        row.append(el('span', 'st-name', st.name));
+        const bar = el('span', 'st-bar');
+        for (const c of ['base', 'gain', 'loss']) bar.appendChild(el('i', 'st-' + c));
+        for (let i = 1; i < STAT_MAX * 2; i++) { const t = el('u', 'st-tick'); t.style.left = (i / (STAT_MAX * 2)) * 100 + '%'; bar.appendChild(t); }
+        row.append(bar, el('span', 'st-val'));
+        box.appendChild(row);
+      }
+    }
+    for (const st of STATS) {
+      const row = box.querySelector(`[data-stat="${st.id}"]`);
+      const a = cur[st.id], b = nxt[st.id];
+      const pc = (v) => (v / STAT_MAX) * 100 + '%';
+      row.querySelector('.st-base').style.width = pc(Math.min(a, b));
+      const gain = row.querySelector('.st-gain'), loss = row.querySelector('.st-loss');
+      gain.style.left = pc(a); gain.style.width = pc(Math.max(0, b - a));
+      loss.style.left = pc(b); loss.style.width = pc(Math.max(0, a - b));
+      const d = b - a;
+      const val = row.querySelector('.st-val');
+      val.textContent = d ? `${b} (${d > 0 ? '+' : '−'}${Math.abs(d)})` : String(a);
+      val.className = 'st-val' + (d > 0 ? ' up' : d < 0 ? ' down' : '');
+    }
+  }
+
+  deltaChips(v) {
+    const box = el('span', 'g-deltas');
+    let n = 0;
+    for (const st of STATS) {
+      const d = v[st.id];
+      if (!d) continue;
+      n++;
+      box.appendChild(el('span', 'g-delta ' + (d > 0 ? 'up' : 'down'), `${st.name}${d > 0 ? '+' : '−'}${Math.abs(d)}`));
+    }
+    if (!n) box.appendChild(el('span', 'g-delta', '変化なし'));
+    return box;
+  }
+
+  renderParts() {
+    const box = $('#gItems');
+    box.classList.add('list', 'parts');
+    const eqId = garage.parts[this.slot];
+    for (const p of PARTS[this.slot]) {
+      const owned = garage.partOwned(this.slot, p.id);
+      const equipped = eqId === p.id;
+      const b = el('button', 'g-item txt' + (this.sel === p.id || (!this.sel && equipped) ? ' sel' : ''));
+      b.dataset.id = p.id;
+      b.appendChild(el('span', 'g-name', p.name));
+      b.appendChild(el('span', 'g-desc', p.desc));
+      b.appendChild(this.deltaChips(p.v));
+      const tag = el('span', 'g-tag');
+      if (equipped) { tag.textContent = '装備中'; tag.classList.add('eq'); }
+      else if (owned) tag.textContent = '所持';
+      else {
+        tag.classList.add('price');
+        tag.appendChild(el('i', 'coin'));
+        tag.appendChild(document.createTextNode(String(p.price)));
+        if (p.price > garage.coins) tag.classList.add('short');
+      }
+      b.appendChild(tag);
+      b.onclick = () => { this.sel = p.id === eqId ? null : p.id; this.renderItems(); this.refresh(); };
+      box.appendChild(b);
+    }
+  }
+
   selectSlot(id) {
     this.slot = id;
+    this.sel = null;
     this.pending = null;
     this.renderTabs();
     this.renderItems();
@@ -201,6 +309,7 @@ export class GarageView {
   }
 
   renderTabs() {
+    this.syncMode();
     document.querySelectorAll('.g-tab').forEach((b) => b.classList.toggle('on', b.dataset.slot === this.slot));
     const on = document.querySelector('.g-tab.on');
     if (on && on.scrollIntoView) on.scrollIntoView({ inline: 'nearest', block: 'nearest' });
@@ -217,8 +326,11 @@ export class GarageView {
   renderItems() {
     const box = $('#gItems');
     box.textContent = '';
-    box.classList.toggle('numbers', this.slot === 'number');
-    box.classList.toggle('list', !SWATCH_SLOTS.includes(this.slot) && this.slot !== 'number');
+    const perf = this.mode === 'perf';
+    box.classList.toggle('parts', perf);
+    box.classList.toggle('numbers', !perf && this.slot === 'number');
+    box.classList.toggle('list', perf || (!SWATCH_SLOTS.includes(this.slot) && this.slot !== 'number'));
+    if (perf) return this.renderParts();
     if (this.slot === 'number') return this.renderNumber(box);
     const eq = garage.equipped;
     for (const it of ITEMS[this.slot]) {
@@ -279,7 +391,26 @@ export class GarageView {
     this.refresh();
   }
 
+  onPartAction() {
+    const id = this.sel;
+    if (!id) return;
+    const slot = this.slot;
+    let msg = '装備しました';
+    if (!garage.partOwned(slot, id)) {
+      if (!garage.buyPart(slot, id)) return;
+      msg = '購入して装備しました';
+      const c = $('#garageCoins');
+      c.classList.remove('pop'); void c.offsetWidth; c.classList.add('pop');
+    }
+    garage.equipPart(slot, id);
+    this.sel = null;
+    this.toast(msg);
+    this.renderItems();
+    this.refresh();
+  }
+
   onAction() {
+    if (this.mode === 'perf') return this.onPartAction();
     if (!this.pending) return;
     const { slot, id } = this.pending;
     if (garage.buy(slot, id)) {
@@ -304,8 +435,9 @@ export class GarageView {
     $('#garageCoins').textContent = String(garage.coins);
     const pr = garage.progress();
     $('#garageProg').textContent = `パーツ ${pr.have}/${pr.all}`;
-    this.setCarLook(resolveLook(this.previewEq()));
+    this.setCarLook(resolveLook(this.mode === 'perf' ? garage.equipped : this.previewEq()));
     const bar = $('.g-buy');
+    if (this.mode === 'perf') return this.refreshPerf(bar);
     const name = $('#gSelName'), sub = $('#gSelSub'), btn = $('#gAction');
     if (this.slot === 'number') {
       bar.classList.add('hidden');
@@ -332,6 +464,28 @@ export class GarageView {
     }
   }
 
+  refreshPerf(bar) {
+    this.renderStats();
+    bar.classList.remove('hidden');
+    const name = $('#gSelName'), sub = $('#gSelSub'), btn = $('#gAction');
+    const id = this.sel || garage.parts[this.slot];
+    const p = garage.part(this.slot, id);
+    name.textContent = p.name;
+    if (!this.sel) { sub.textContent = p.desc; btn.textContent = '装備中'; btn.disabled = true; return; }
+    if (garage.partOwned(this.slot, id)) {
+      sub.textContent = 'ステータスの変化を確認して装備できます';
+      btn.textContent = '装備する'; btn.disabled = false;
+      return;
+    }
+    const short = p.price - garage.coins;
+    sub.textContent = short > 0 ? `あと ${short} コイン必要です` : '購入すると装備されます';
+    btn.textContent = '';
+    btn.appendChild(document.createTextNode('購入 '));
+    btn.appendChild(el('i', 'coin'));
+    btn.appendChild(document.createTextNode(String(p.price)));
+    btn.disabled = short > 0;
+  }
+
   // ---------- 表示 ----------
   open() {
     this.open_ = true;
@@ -339,9 +493,12 @@ export class GarageView {
     const r = this.renderer;
     r.toneMappingExposure = 1;
     r.shadowMap.enabled = this.quality >= 1;
+    this.mode = 'look';
     this.slot = 'paint';
     this.pending = null;
+    this.sel = null;
     this.lookSig = null;
+    this.buildTabs();
     this.renderTabs();
     this.renderItems();
     this.view = VIEWS.front;

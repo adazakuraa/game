@@ -7,6 +7,7 @@ import { Effects } from '../render/effects.js';
 import { buildCar } from '../render/carmodel.js';
 import { RallyRun } from '../sim/rally.js';
 import { DIFFICULTY } from '../sim/race.js';
+import { makeSpec } from '../sim/car.js';
 import { garage, stageReward } from '../garage.js';
 import { store } from '../store.js';
 
@@ -36,7 +37,7 @@ export class RallyGame extends GameBase {
     this.fx = new Effects(this.scene, track, { rain: false, snow: this.world.snow, quality: opts.quality });
     this.fx.setViewport(innerHeight * C.renderer.getPixelRatio());
     this.look = garage.look();
-    this.race = new RallyRun(track, { difficulty: opts.difficulty, assist: opts.assist, playerColor: this.look.color });
+    this.race = new RallyRun(track, { difficulty: opts.difficulty, assist: opts.assist, playerColor: this.look.color, spec: makeSpec(garage.stats()) });
     this.model = buildCar({ quality: opts.quality, look: this.look, kit: 'rally' });
     this.scene.add(this.model.root);
     if (this.world.snow) {

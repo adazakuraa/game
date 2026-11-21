@@ -29,6 +29,24 @@ export const CAR_SPEC = {
   halfWid: 0.98,
 };
 
+// 性能パーツのステータス（0〜6、3 が標準）から車の spec を作る。CAR_SPEC 自体は書き換えない
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
+export function makeSpec(stats = {}) {
+  const st = (k) => clampN(stats[k] ?? 3, 0, 6) - 3;
+  const sp = st('speed'), ac = st('accel'), ha = st('handling'), di = st('dirt'), tu = st('turbo');
+  const c = { ...CAR_SPEC };
+  c.CdA = CAR_SPEC.CdA * (1 - 0.075 * sp);
+  c.torqueMul = (1 + 0.025 * sp) * (1 + 0.1 * ac);
+  const mk = 1 - 0.025 * ac;
+  c.mass = CAR_SPEC.mass * mk;
+  c.Iz = CAR_SPEC.Iz * mk;
+  c.mu = CAR_SPEC.mu * (1 + 0.05 * ha);
+  c.brakeMax = CAR_SPEC.brakeMax * (1 + 0.05 * ha);
+  c.dirt = clampN(0.1 * di, -0.3, 0.3);
+  c.turbo = 1 + 0.12 * tu;
+  return c;
+}
+
 function torque(rpm) {
   // おおよそ 4.0L 自然吸気 6気筒 のトルクカーブ (Nm)
   const pts = [[800, 260], [2000, 380], [3500, 470], [5000, 520], [6300, 515], [7200, 480], [7900, 430], [8300, 0]];
@@ -139,11 +157,14 @@ export class Car {
     const sRR = tr.surfaceAt(projR.d - hw * latDot, projR.curb, projR.i);
     this.wheelSurf[0] = sFL.type; this.wheelSurf[1] = sFR.type;
     this.wheelSurf[2] = sRL.type; this.wheelSurf[3] = sRR.type;
-    const baseMu = c.mu * tr.gripArr[proj.i];
+    // ダート性能: グリップが 1 未満の路面だけ、1 に近づける（マイナスなら遠ざける）。舗装には効かない
+    const dirt = c.dirt ?? 0;
+    const dg = dirt ? (g) => (g < 1 ? Math.max(0.1, Math.min(1, g + (1 - g) * dirt)) : g) : (g) => g;
+    const baseMu = c.mu * dg(tr.gripArr[proj.i]);
     this.roadSurf = tr.surfArr[proj.i]; // 路面の種類（砂煙・雪煙の演出用）
-    const muF = (baseMu * (sFL.grip + sFR.grip)) / 2;
-    let muR = (baseMu * (sRL.grip + sRR.grip)) / 2;
-    const surfDrag = (sFL.drag + sFR.drag + sRL.drag + sRR.drag) / 4;
+    const muF = (baseMu * (dg(sFL.grip) + dg(sFR.grip))) / 2;
+    let muR = (baseMu * (dg(sRL.grip) + dg(sRR.grip))) / 2;
+    const surfDrag = ((sFL.drag + sFR.drag + sRL.drag + sRR.drag) / 4) * (1 - 0.8 * dirt);
     this.offTrack = (sFL.type >= 2) + (sFR.type >= 2) + (sRL.type >= 2) + (sRR.type >= 2);
     this.onCurb = (sFL.type === 1) + (sFR.type === 1) + (sRL.type === 1) + (sRR.type === 1);
 
@@ -189,7 +210,7 @@ export class Car {
         if (this.driftOffT > 0.12) {
           if (this.driftLvl > 0 && this.offTrack < 3 && !(this.crashT > 0)) {
             this.boostLvl = this.driftLvl;
-            this.boostT = DRIFT.boostTime[this.driftLvl - 1];
+            this.boostT = DRIFT.boostTime[this.driftLvl - 1] * (1 + ((c.turbo ?? 1) - 1) * 0.5);
             this.boostFired = this.driftLvl;
           }
           this.drift = 0; this.driftLvl = 0; this.driftT = 0;
@@ -229,14 +250,15 @@ export class Car {
     } else {
       this.reverseTimer = 0;
     }
+    const tm = c.torqueMul ?? 1;
     let Fd = 0;
     if (reverse) {
       Fd = u > -7 ? -5200 * brake : 0;
       brake = 0;
     } else if (this.shiftTimer <= 0 && rpm < c.redline + 250) {
-      Fd = (throttle * torque(rpm) * ratio * c.eff) / c.wheelR;
+      Fd = (throttle * torque(rpm) * tm * ratio * c.eff) / c.wheelR;
     } else if (this.shiftTimer > 0) {
-      Fd = (throttle * torque(rpm) * ratio * c.eff * 0.15) / c.wheelR;
+      Fd = (throttle * torque(rpm) * tm * ratio * c.eff * 0.15) / c.wheelR;
     }
     // エンジンブレーキ
     if (throttle < 0.05 && !reverse && u > 2) Fd -= 380 + rpm * 0.08;
@@ -290,7 +312,7 @@ export class Car {
     const cd = Math.cos(delta), sd = Math.sin(delta);
     let du = (Fxr + Fxf * cd - Fyf * sd - Fdrag - Froll + Fg) / c.mass + vl * r;
     // ターボ（アクセルを踏んでいる間だけ押し出す）
-    if (this.boostT > 0 && throttle > 0.3) du += DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl) * Math.max(0.4, 1 - Math.abs(u) / 110); // 高速ほど控えめ
+    if (this.boostT > 0 && throttle > 0.3) du += DRIFT.boostAccel * (c.turbo ?? 1) * (0.85 + 0.15 * this.boostLvl) * Math.max(0.4, 1 - Math.abs(u) / 110); // 高速ほど控えめ
     let dvl = (Fyr + Fyf * cd + Fxf * sd) / c.mass - u * r;
     let dr = (c.a * (Fyf * cd + Fxf * sd) - c.b * Fyr) / c.Iz;
 

@@ -292,6 +292,41 @@ body.force-touch .touch { display: block; }
   .g-hint { display: none; }
 }
 
+/* ガレージ: 見た目 / 性能 */
+.g-modes { display: flex; gap: 6px; flex: none; }
+.g-mode { flex: 1; border: 1px solid var(--line); background: rgba(14, 17, 22, 0.8); border-radius: 10px; padding: 7px 0; font-size: 14px; font-weight: 800; color: var(--sub); letter-spacing: 0.06em; }
+.g-mode.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.g-stats { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 12px; background: rgba(14, 17, 22, 0.92); border: 1px solid var(--line); }
+.g-stats.hidden { display: none; }
+.st-row { display: grid; grid-template-columns: 6.2em 1fr 4.6em; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
+.st-name { color: var(--sub); white-space: nowrap; }
+.st-bar { position: relative; height: 10px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.st-bar i { position: absolute; top: 0; bottom: 0; left: 0; width: 0; transition: width 0.2s, left 0.2s; }
+.st-base { background: #e8ecf2; }
+.st-gain { background: #34c759; }
+.st-loss { background: #ff453a; }
+.st-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(8, 10, 13, 0.55); }
+.st-val { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.st-val.up { color: #34c759; }
+.st-val.down { color: #ff6b61; }
+.g-deltas { display: flex; flex-wrap: wrap; gap: 3px 6px; }
+.g-delta { font-size: 10.5px; font-weight: 700; color: var(--sub); }
+.g-delta.up { color: #34c759; }
+.g-delta.down { color: #ff6b61; }
+.g-items.parts .g-item { gap: 3px; position: relative; }
+.g-items.parts .g-tag { position: absolute; right: 10px; top: 10px; margin: 0; }
+.g-items.parts .g-name { padding-right: 70px; }
+@media (max-height: 520px) and (orientation: landscape) {
+  .g-panel { gap: 5px; }
+  .g-mode { padding: 4px 0; font-size: 13px; }
+  .g-stats { padding: 5px 8px; gap: 2px; }
+  .st-row { font-size: 11px; }
+  .st-bar { height: 7px; }
+  .g-tab { padding: 4px 11px; }
+  .g-items.parts .g-desc { display: none; }
+  .g-items.parts .g-item { padding: 6px 10px; min-height: 0; }
+}
+
 .row.switches { gap: 8px; }
 #genreSeg button { padding: 9px 14px; }
 @media (max-width: 760px) {

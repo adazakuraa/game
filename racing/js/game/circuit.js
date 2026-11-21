@@ -5,6 +5,7 @@ import { World } from '../render/world.js';
 import { buildCar } from '../render/carmodel.js';
 import { Effects } from '../render/effects.js';
 import { store } from '../store.js';
+import { makeSpec } from '../sim/car.js';
 import { garage, raceReward, TA_LAP_COINS, TA_BEST_COINS, MEDALS, medalOf } from '../garage.js';
 import { GameBase } from './base.js';
 import { C, $, fmt, drawTrackMap, isTouch } from './common.js';
@@ -26,6 +27,7 @@ export class CircuitGame extends GameBase {
       laps: opts.laps,
       playerColor: garage.look().color,
       assist: opts.assist,
+      spec: makeSpec(garage.stats()),
     });
     // 車のモデル（プレイヤーはガレージで選んだ見た目）
     this.look = garage.look();

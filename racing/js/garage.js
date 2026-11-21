@@ -1,4 +1,5 @@
-// ガレージ: コイン・パーツカタログ・所持と装備のセーブ。見た目だけで、性能には一切影響しない。
+// ガレージ: コイン・パーツカタログ・所持と装備のセーブ。見た目パーツ（SLOTS / ITEMS）は性能に影響しない。
+// 性能パーツ（PART_SLOTS / PARTS）は 5 つのステータスを通して GT・ラリーの車に効く（ロードバイクには効かない）。
 import { store } from './store.js';
 
 // slot: カテゴリ。view: プレビューのカメラ位置
@@ -179,6 +180,70 @@ export const ITEMS = {
   ],
 };
 
+// ---------- 性能パーツ ----------
+export const STATS = [
+  { id: 'speed', name: 'スピード' },
+  { id: 'accel', name: '加速' },
+  { id: 'handling', name: 'ハンドリング' },
+  { id: 'dirt', name: 'ダート' },
+  { id: 'turbo', name: 'ターボ' },
+];
+export const STAT_MAX = 6;
+export const PART_SLOTS = [
+  { id: 'engine', name: 'エンジン' },
+  { id: 'tire', name: 'タイヤ' },
+  { id: 'frame', name: 'フレーム' },
+  { id: 'gear', name: 'ギア・ターボ' },
+];
+// v: 各ステータスへの加算（ステータス = 3 + 装備 4 パーツの合計。0〜6 にクランプ）。price 0 は最初から所持
+export const PARTS = {
+  engine: [
+    { id: 'stock', name: 'ノーマル 2.0L', desc: '最初のエンジン。非力', v: { speed: -0.5, accel: -0.5 }, price: 0 },
+    { id: 'sport', name: 'スポーツ 3.0L', desc: '素直な特性', v: {}, price: 1500 },
+    { id: 'highcam', name: 'ハイカム NA', desc: '高回転で吹け上がる。加速型', v: { accel: 1, speed: -0.5 }, price: 3000 },
+    { id: 'bigturbo', name: 'ビッグタービン', desc: '伸びは最強、立ち上がりは鈍い', v: { speed: 1, accel: -0.5, turbo: 0.5 }, price: 4500 },
+    { id: 'v8', name: 'V8 レーシング', desc: '速さも加速も一級品', v: { speed: 1, accel: 1 }, price: 9000 },
+  ],
+  tire: [
+    { id: 'eco', name: 'エコタイヤ', desc: '最初のタイヤ。グリップが弱い', v: { handling: -0.5 }, price: 0 },
+    { id: 'sport', name: 'スポーツ', desc: 'バランス型', v: {}, price: 1200 },
+    { id: 'allterrain', name: 'オールテレーン', desc: '未舗装に強い。舗装では少し鈍い', v: { handling: -0.5, dirt: 1.5 }, price: 2500 },
+    { id: 'semislick', name: 'セミスリック', desc: '舗装で食いつく。土は苦手', v: { handling: 1, dirt: -1 }, price: 3500 },
+    { id: 'rally', name: 'ラリータイヤ', desc: '砂利・土・雪を得意とする', v: { dirt: 2 }, price: 5000 },
+    { id: 'slick', name: 'レーシングスリック', desc: '舗装なら最強。土では滑る', v: { handling: 1.5, dirt: -1.5 }, price: 8000 },
+  ],
+  frame: [
+    { id: 'steel', name: 'スチール', desc: '最初のフレーム。重い', v: { accel: -0.5, handling: -0.5 }, price: 0 },
+    { id: 'reinforced', name: '強化フレーム', desc: 'バランス型', v: {}, price: 1500 },
+    { id: 'alloy', name: '軽量アルミ', desc: '軽くてよく曲がる。最高速は少し落ちる', v: { accel: 0.5, handling: 0.5, speed: -0.5 }, price: 4000 },
+    { id: 'gt', name: 'ロング GT', desc: '重く安定。高速域に強い', v: { speed: 1, accel: -0.5, handling: -0.5 }, price: 4000 },
+    { id: 'rallycage', name: 'ラリーケージ', desc: '荒れた路面でも跳ねない', v: { dirt: 1, handling: 0.5, speed: -0.5 }, price: 4500 },
+    { id: 'carbon', name: 'カーボンモノコック', desc: '軽く強い最高級', v: { accel: 1, handling: 1 }, price: 10000 },
+  ],
+  gear: [
+    { id: 'stock', name: 'ノーマルミッション', desc: '最初のギア', v: { turbo: -0.5 }, price: 0 },
+    { id: 'close', name: 'クロスミッション', desc: '加速重視', v: { accel: 0.5, speed: -0.5 }, price: 2000 },
+    { id: 'tall', name: 'ハイギア', desc: '最高速重視', v: { speed: 0.5, accel: -0.5 }, price: 2000 },
+    { id: 'boost', name: 'ブーストキット', desc: 'ドリフトターボが長く強い', v: { turbo: 1.5 }, price: 3500 },
+    { id: 'sequential', name: 'シーケンシャル', desc: '加速もターボも上がる', v: { accel: 0.5, turbo: 1 }, price: 7000 },
+  ],
+};
+const DEFAULT_PARTS = { engine: 'stock', tire: 'eco', frame: 'steel', gear: 'stock' };
+const partKey = (slot, id) => slot + ':' + id;
+const findPart = (slot, id) => (PARTS[slot] || []).find((p) => p.id === id);
+
+// 装備の組み合わせ → 5 ステータス（0〜6）
+export function statsOf(parts) {
+  const out = {};
+  for (const st of STATS) out[st.id] = 3;
+  for (const slot of PART_SLOTS) {
+    const p = findPart(slot.id, parts[slot.id]);
+    if (p) for (const k of Object.keys(p.v)) out[k] += p.v[k];
+  }
+  for (const k of Object.keys(out)) out[k] = Math.max(0, Math.min(STAT_MAX, out[k]));
+  return out;
+}
+
 const DEFAULT_EQUIP = {
   paint: 'ruby', finish: 'metallic', stripe: 'none', stripeColor: 'white', wheel: 'twin', wheelColor: 'silver',
   caliper: 'yellow', wing: 'gt', glow: 'none', smoke: 'white', number: 1,
@@ -192,6 +257,8 @@ function load() {
     owned: Array.isArray(s.owned) ? s.owned : [],
     equipped: Object.assign({}, DEFAULT_EQUIP, s.equipped || {}),
     earned: Number.isFinite(s.earned) ? s.earned : 0,
+    partsOwned: Array.isArray(s.partsOwned) ? s.partsOwned : [],
+    parts: Object.assign({}, DEFAULT_PARTS, s.parts || {}),
   };
 }
 const state = load();
@@ -208,6 +275,14 @@ export function isOwned(slot, id) {
 // 装備が不正な場合は初期値に戻す（カタログ変更への備え）
 for (const slot of Object.keys(ITEMS)) {
   if (!ITEMS[slot].some((i) => i.id === state.equipped[slot]) || !isOwned(slot, state.equipped[slot])) state.equipped[slot] = DEFAULT_EQUIP[slot];
+}
+
+export function partOwned(slot, id) {
+  const p = findPart(slot, id);
+  return !!p && (p.price === 0 || state.partsOwned.includes(partKey(slot, id)));
+}
+for (const slot of Object.keys(DEFAULT_PARTS)) {
+  if (!partOwned(slot, state.parts[slot])) state.parts[slot] = DEFAULT_PARTS[slot];
 }
 
 export const garage = {
@@ -235,6 +310,25 @@ export const garage = {
     save();
     return true;
   },
+  // 性能パーツ
+  get parts() { return { ...state.parts }; },
+  stats(parts = state.parts) { return statsOf(parts); },
+  part(slot, id) { return findPart(slot, id); },
+  partOwned,
+  buyPart(slot, id) {
+    const p = findPart(slot, id);
+    if (!p || partOwned(slot, id) || state.coins < p.price) return false;
+    state.coins -= p.price;
+    state.partsOwned.push(partKey(slot, id));
+    save();
+    return true;
+  },
+  equipPart(slot, id) {
+    if (!partOwned(slot, id)) return false;
+    state.parts[slot] = id;
+    save();
+    return true;
+  },
   setNumber(n) {
     state.equipped.number = Math.max(0, Math.min(99, n | 0));
     save();
@@ -243,6 +337,7 @@ export const garage = {
   progress() {
     let have = 0, all = 0;
     for (const slot of Object.keys(ITEMS)) for (const it of ITEMS[slot]) { all++; if (isOwned(slot, it.id)) have++; }
+    for (const slot of Object.keys(PARTS)) for (const p of PARTS[slot]) { all++; if (partOwned(slot, p.id)) have++; }
     return { have, all };
   },
   look(eq = state.equipped) { return resolveLook(eq); },

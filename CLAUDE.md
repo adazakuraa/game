@@ -12,7 +12,7 @@
 | フォルダ | タイトル | アーティファクト URL | 最新コードのブランチ | `main` との関係 |
 | --- | --- | --- | --- | --- |
 | `climb/` | DEATH ZONE 8000（高所登山） | https://claude.ai/artifact/Y6AmowkXBB8HND5EP9osHX | `ccr-1b79a73c-q3y30y` | main より 32 コミット先（キャンプ・犬・遺品・評価など） |
-| `racing/` | APEX LINE（GT・ラリー・ロードバイク） | https://claude.ai/artifact/UB1cbzTRiNqA9dTLkbRodb | `ccr-91ff027e-e8eh53` | main より 20 コミット先（ラリー・バイク・ガレージ・ドリフトなど） |
+| `racing/` | APEX LINE（GT・ラリー・ロードバイク） | https://claude.ai/artifact/UB1cbzTRiNqA9dTLkbRodb | `ccr-2e69a26a-xnep0v` | main より先（ラリー・バイク・ガレージ・ドリフト・性能パーツ・金メダル基準の難易度など） |
 | `dive/` | BLUE DEPTHS（ダイビング図鑑） | https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk | `main`（= `ccr-15ad1488-xpaney`） | 同じ |
 | `kanken/` | 漢検ランダム漢字 | （未公開） | `main` | 同じ |
 | このドキュメント | README.md / CLAUDE.md / scripts/ | — | `ccr-79abba39-cmnsno` | main より先（未マージ） |
@@ -114,7 +114,7 @@ bash scripts/latest-branches.sh climb      # 1 つだけ
 ### racing/ — APEX LINE（Three.js + 素の JS ES モジュール、ビルドなし）
 
 GT サーキット（レース／ゴースト付きタイムアタック）、ラリー（路面とペースノート）、ロードバイク（W' とスリップストリーム）。ドリフトターボ、ショートカット、ジャンプ台、自動復帰、コインとガレージ（見た目のみ）。
-説明: `racing/README.md`。以下は最新ブランチ `ccr-91ff027e-e8eh53` の構成（`main` には `js/game/`・ガレージ・ラリー・バイクがまだない）。
+説明: `racing/README.md`。以下は最新ブランチ `ccr-2e69a26a-xnep0v` の構成（`main` には `js/game/`・ガレージ・ラリー・バイクがまだない）。
 
 | ファイル | 役割 |
 | --- | --- |
@@ -135,7 +135,7 @@ GT サーキット（レース／ゴースト付きタイムアタック）、�
 | `js/render/rallyworld.js` / `bikeworld.js` | ラリーとバイクのステージ描画 |
 | `js/render/carmodel.js` / `bikemodel.js` | 車（断面ロフト）と自転車・選手のモデル |
 | `js/render/textures.js` / `effects.js` | 手続きテクスチャ、スキッド・煙・火花・雨 |
-| `js/garage.js` / `js/ui/garageview.js` | パーツカタログ・所持と装備・報酬計算、ガレージの 3D プレビュー |
+| `js/garage.js` / `js/ui/garageview.js` | 見た目パーツと性能パーツ（`PARTS`・`STATS`）のカタログ・所持と装備・報酬計算、ガレージの 3D プレビューと性能バー |
 | `js/ui/input.js` | タッチ（スライド・ボタン・傾き）・キーボード・ゲームパッド |
 | `js/audio.js` | エンジン音などの合成 |
 | `js/store.js` | localStorage ラッパー（キーは `apexline.` で始まる） |
