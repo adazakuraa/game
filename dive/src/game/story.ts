@@ -6,7 +6,7 @@
  * meet it, then left to chance.
  */
 
-export type SceneId = 'whalesleep' | 'spawning' | 'baitball' | 'mantatrain' | 'whaleshark' | 'humpback' | 'dolphins' | 'hammers' | 'noctiluca' | 'orcas' | 'tornado';
+export type SceneId = 'whalesleep' | 'spawning' | 'baitball' | 'mantatrain' | 'whaleshark' | 'humpback' | 'dolphins' | 'hammers' | 'noctiluca' | 'orcas' | 'tornado' | 'mantanight' | 'lanternrise' | 'flashlight';
 
 /**
  * Rare, photogenic sights (achievements). Each has the dive points where it can happen, day or night,
@@ -25,6 +25,10 @@ export const SCENES: Record<SceneId, { name: string; desc: string; pay: number; 
   noctiluca: { name: '夜光虫の青い光', desc: '夜の海で手を動かすと、夜光虫が青白く光って星空のように瞬く。', pay: 8000, chance: 0.25, points: ['lagoon', 'reef', 'rocky', 'kelp'], night: true, hint: '浅い海・夜', sense: '体のまわりで、何かが青く光った…' },
   orcas: { name: 'シャチの家族', desc: '群れごとに独自の言葉をもつシャチの家族が、一列になって通り過ぎていく。', pay: 16000, chance: 0.08, points: ['cold', 'dropoff'], star: 'shachi', n: 3, hint: '流氷の入り江・沖', sense: '白と黒の背びれが水面を切っていく…' },
   tornado: { name: 'ギンガメアジのトルネード', desc: '何百匹ものギンガメアジが、竜巻のように渦を巻いて泳ぐ。', pay: 11000, chance: 0.14, points: ['dropoff', 'reef', 'rocky'], star: 'giganmeaji', n: 50, hint: 'サンゴ礁・岩礁・ドロップオフ・昼', sense: '中層に、銀色の柱が渦巻いている…' },
+  // ---- night-only sights (light-dependent, so they are never met by day)
+  mantanight: { name: 'ライトに集まるマンタ', desc: '夜、ダイバーのライトにプランクトンが集まると、それを食べに大きなマンタが現れて、光の中で宙返りを繰り返す。', pay: 15000, chance: 0.18, points: ['reef', 'dropoff'], night: true, star: 'manta', n: 2, hint: 'サンゴ礁・ドロップオフ・夜（ライトが必要）', sense: 'ライトの光の中を、大きな影がよぎった…' },
+  lanternrise: { name: 'ハダカイワシの日周鉛直移動', desc: '夜になると、深みにいる無数の小さな発光魚がエサを求めて浮上してくる。光の粒が柱のように立ちのぼる。', pay: 12000, chance: 0.2, points: ['dropoff'], night: true, star: 'hadakaiwashi', n: 60, hint: 'ドロップオフ・夜', sense: '足元の暗い深みから、小さな光の粒が昇ってくる…' },
+  flashlight: { name: 'ヒカリキンメダイの群れの明滅', desc: '目の下の発光器をまばたきさせる魚たちが、夜の岩のそばで青白い光を点けたり消したりしている。', pay: 13000, chance: 0.18, points: ['reef', 'rocky'], night: true, star: 'hikarikinme', n: 30, hint: 'サンゴ礁・岩礁・夜', sense: '暗闇の中で、青白い光がいくつも点いたり消えたりしている…' },
 };
 
 export type StoryState = {

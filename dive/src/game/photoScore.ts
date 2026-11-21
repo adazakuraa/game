@@ -6,6 +6,8 @@ import type { PhotoTarget } from '../life/creatures';
  * All tuning values live here.
  */
 export const PHOTO = {
+  /** 【1ダイブ1種1回】a species' photo pays only once per dive (the first shot's value is final; a better shot only upgrades the dex photo) */
+  oncePerDive: true,
   /** 【写真の基本報酬】by rarity ★1..★3, ★4 = legendary (yen) */
   base: [0, 300, 900, 2400, 8000],
   /** 【評価の重み】size in frame / side view / centring / clarity */
@@ -79,8 +81,9 @@ export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCur
  */
 export type ShopItem = { id: string; need: number; price: number; name: string; desc: string; icon: string; rep?: number; req?: string; map?: string };
 export const SHOP: readonly ShopItem[] = [
+  { id: 'torch', need: 0, price: 800, name: '水中ライト', desc: '暗い所や夜の海を照らせる（夜の海に潜るのに必要）', icon: '<path d="M9 3h6l-1 5h-4zM9 9h6v3l-1 1v8a2 2 0 0 1-4 0v-8l-1-1z"/>' },
   { id: 'fins', need: 3, price: 1500, name: 'ロングフィン', desc: '泳ぐ速さ +30%', icon: '<path d="M7 3h4l1 8 4 8-3 2-5-7z"/>' },
-  { id: 'light', need: 5, price: 2500, name: '強力ライト', desc: '暗い所でも遠くまで照らして撮れる', icon: '<path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/>' },
+  { id: 'light', need: 5, price: 2500, req: 'torch', name: '強力ライト', desc: '暗い所でも遠くまで照らして撮れる', icon: '<path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/>' },
   { id: 'spear', need: 4, price: 2500, name: '手銛', desc: '魚を獲れる（しおさい亭から頼まれごとが来る）', icon: '<path d="M3 21L18 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M15 3.5l5.5-1-1 5.5z"/>' },
   { id: 'drysuit', need: 7, price: 4000, name: 'ドライスーツ', desc: '冷たい海でもエアが普通にもつ', icon: '<path d="M8 3h8l2 6-2 1v11h-3v-7h-2v7H8V10L6 9z"/>' },
   { id: 'macro', need: 12, price: 6000, name: 'マクロレンズ', desc: '小さな生き物（20cm未満）を大きく写せる', icon: '<circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.6"/>' },

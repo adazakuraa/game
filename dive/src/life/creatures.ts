@@ -257,6 +257,18 @@ function fleeDir(away: THREE.Vector3, vel: THREE.Vector3, radialW: number, out: 
 
 export type CreatureEvent = { type: 'warn' | 'charge' | 'hit' | 'repel'; def: SpeciesDef; p: THREE.Vector3 };
 
+/** Night dive risk: daytime fish sleep (fewer groups show), and needlefish rush at the diver's light. */
+export const NIGHT = {
+  /** chance multiplier for a daytime species' group to be out at night (rarity-1 species keep one group) */
+  dayPresence: 0.4,
+  /** 'light' aggro only reacts to a diver shallower than this (m) */
+  lightDepth: 8,
+  /** seconds a needlefish hangs in the beam before it charges */
+  lightWind: 0.8,
+};
+/** A rescued animal swimming with the diver. */
+const COMPANION = { ahead: 2.2, side: 1.6, minSpeed: 1.2, warp: 25, warpBack: 4 };
+
 export class Creatures {
   /** encounters for the game layer (warnings, charges, bites); drained every frame */
   events: CreatureEvent[] = [];
@@ -271,6 +283,10 @@ export class Creatures {
   stage = new Map<string, { p: THREE.Vector3; yaw: number; pitch: number; s?: number; still?: boolean }[]>();
   /** test-only: pin agent 0 of a species */
   pin: { id: string; p: THREE.Vector3; yaw: number } | null = null;
+  /** a rescued animal that swims beside the diver for the rest of the dive (agent 0 of that species) */
+  companion: { id: string; p: THREE.Vector3; v: THREE.Vector3; yaw: number } | null = null;
+  /** the diver's light is on (set by the game each frame); 'light' aggro species react to it at night */
+  lightOn = false;
   readonly group = new THREE.Group();
   readonly list: SpeciesRuntime[] = [];
   private rnd = mulberry32(77);
@@ -703,6 +719,42 @@ export class Creatures {
     return true;
   }
 
+  /** Night dives: daytime species are asleep (hidden in the reef), so fewer of them show up. */
+  private nightGate(def: SpeciesDef): number {
+    return this.night && def.when !== 'night' ? (def.aggro?.kind === 'light' ? 1 : NIGHT.dayPresence) : 1;
+  }
+
+  /** Rescued animal: swims at the diver's right front, easing toward a point ahead of the camera. */
+  private stepCompanion(rt: SpeciesRuntime, a: Agent, i: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir: THREE.Vector3 | undefined, dt: number): void {
+    const c = this.companion!;
+    rt.groups[a.g].absent = false;
+    a.taken = false;
+    let fx = viewDir ? viewDir.x : 0, fz = viewDir ? viewDir.z : 1;
+    const fl = Math.hypot(fx, fz);
+    if (fl < 0.05) { fx = Math.sin(c.yaw); fz = Math.cos(c.yaw); } else { fx /= fl; fz /= fl; }
+    if (a.p.distanceTo(player) > COMPANION.warp) {
+      a.p.set(player.x - fx * COMPANION.warpBack, player.y, player.z - fz * COMPANION.warpBack);
+      a.v.set(0, 0, 0);
+    }
+    const tx = player.x + fx * COMPANION.ahead + fz * COMPANION.side + Math.sin(this.time * 0.7) * 0.4;
+    const tz = player.z + fz * COMPANION.ahead - fx * COMPANION.side + Math.cos(this.time * 0.6) * 0.4;
+    const gy = heightFast(tx, tz);
+    const ty = clamp(player.y - 0.3 + Math.sin(this.time * 0.9) * 0.25, gy + 0.6, -0.8);
+    _v2.set(tx - a.p.x, ty - a.p.y, tz - a.p.z);
+    a.v.addScaledVector(_v2, dt * 2.2);
+    a.v.multiplyScalar(1 - Math.min(0.9, dt * 1.6));
+    const maxV = Math.max(COMPANION.minSpeed, playerVel.length() + 0.6);
+    const vl = a.v.length();
+    if (vl > maxV) a.v.multiplyScalar(maxV / vl);
+    a.p.addScaledVector(a.v, dt);
+    const want = vl > 0.15 ? Math.atan2(a.v.x, a.v.z) : Math.atan2(fx, fz);
+    let dy = want - c.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    c.yaw += dy * Math.min(1, dt * 2.5);
+    a.yaw = c.yaw;
+    a.q.setFromEuler(_e.set(clamp(-a.v.y * 0.15, -0.3, 0.3), c.yaw, 0));
+    this.writeInstance(rt, a, i);
+  }
+
   /** Chance that a group shows up on a given dive, by rarity. */
   private presence(rarity: number): number {
     return rarity >= 4 ? 0.07 : rarity === 3 ? 0.3 : rarity === 2 ? 0.6 : 0.9;
@@ -716,7 +768,7 @@ export class Creatures {
     this.rnd = mulberry32(seed);
     this.homeUse.clear();
     for (const rt of this.list) {
-      const p = rt.def.when === 'night' && !this.night ? 0 : this.presence(rt.def.rarity);
+      const p = rt.def.when === 'night' && !this.night ? 0 : rt.def.aggro?.kind === 'light' && this.night ? 1 : this.presence(rt.def.rarity) * this.nightGate(rt.def);
       const movable = this.canRelocate(rt.def);
       rt.groups.forEach((g, gi) => {
         g.absent = this.rnd() > p;
@@ -792,7 +844,7 @@ export class Creatures {
         if (rt.def.rarity >= 3 && this.rnd() > 0.15) continue;
         rt.groups.forEach((g, gi) => {
           if (Math.hypot(g.c.x - player.x, g.c.z - player.z) > 100) {
-            g.absent = this.rnd() > this.presence(rt.def.rarity);
+            g.absent = this.rnd() > this.presence(rt.def.rarity) * this.nightGate(rt.def);
             if (!g.absent) this.relocate(rt, gi, player);
           }
         });
@@ -807,11 +859,11 @@ export class Creatures {
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
-      if ((this.pin && this.pin.id === rt.def.id) || this.stage.has(rt.def.id)) near = true;
+      if ((this.pin && this.pin.id === rt.def.id) || (this.companion && this.companion.id === rt.def.id) || this.stage.has(rt.def.id)) near = true;
       if (near && !rt.mesh && rt.def.kind !== 'none') {
         // lazy build, a few species per frame so a dive never stalls on texture painting
         // (the budget counts build time only, and at least one species is built every frame)
-        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id && !this.stage.has(rt.def.id)) near = false;
+        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id && this.companion?.id !== rt.def.id && !this.stage.has(rt.def.id)) near = false;
         else {
           const t0 = performance.now();
           this.buildMesh(rt);
@@ -888,6 +940,10 @@ export class Creatures {
           a.yaw = st.yaw;
           a.q.setFromEuler(_eStage.set(st.pitch, st.yaw + Math.sin(this.time * 0.05 + i) * 0.05, 0, 'YXZ'));
           this.writeInstance(rt, a, i);
+          continue;
+        }
+        if (this.companion && this.companion.id === def.id && i === 0) {
+          this.stepCompanion(rt, a, i, player, playerVel, viewDir, dt0);
           continue;
         }
         if (this.pin && this.pin.id === def.id && i === 0) {
@@ -974,20 +1030,30 @@ export class Creatures {
           const homeD = Math.hypot(player.x - g.home.x, player.z - g.home.z);
           if (mode === 0) {
             const rng = ag.range * (ag.kind === 'territory' ? this.stealth * 0.4 + 0.6 : 1);
-            const trig = ag.kind === 'territory' ? dPlayer < rng && homeD < rng * 1.8 : dPlayer < rng;
+            const trig = ag.kind === 'territory' ? dPlayer < rng && homeD < rng * 1.8
+              : ag.kind === 'light' ? this.night && this.lightOn && player.y > -NIGHT.lightDepth && dPlayer < rng
+              : dPlayer < rng;
             if (trig && a.modeT <= 0) {
               a.mode = ag.kind === 'territory' ? 2 : 1;
-              a.modeT = ag.kind === 'territory' ? 1.2 : 5 + r() * 6;
+              a.modeT = ag.kind === 'territory' ? 1.2 : ag.kind === 'light' ? NIGHT.lightWind : 5 + r() * 6;
               this.events.push({ type: 'warn', def, p: a.p.clone() });
             }
           } else if (mode === 1) {
             // shark: tightening circles around the diver, then a bumping pass
-            const ang = this.time * (0.9 / (1 + def.size * 0.3)) + a.ph * 6;
-            const R = 3 + def.size * 1.2 + Math.max(0, a.modeT) * 0.25;
-            tx = player.x + Math.cos(ang) * R; tz = player.z + Math.sin(ang) * R; ty = player.y - 0.6;
-            if (dPlayer > ag.range * 1.8) { a.mode = 0; a.modeT = 10; }
-            else if (a.modeT <= 0) { a.mode = 2; a.modeT = 0; this.events.push({ type: 'charge', def, p: a.p.clone() }); }
+            if (ag.kind === 'light') {
+              // needlefish: hang in the beam for a moment, then dash straight at the light
+              tx = a.p.x; ty = a.p.y; tz = a.p.z;
+              if (!this.lightOn) { a.mode = 0; a.modeT = 4; }
+              else if (a.modeT <= 0) { a.mode = 2; a.modeT = 0; this.events.push({ type: 'charge', def, p: a.p.clone() }); }
+            } else {
+              const ang = this.time * (0.9 / (1 + def.size * 0.3)) + a.ph * 6;
+              const R = 3 + def.size * 1.2 + Math.max(0, a.modeT) * 0.25;
+              tx = player.x + Math.cos(ang) * R; tz = player.z + Math.sin(ang) * R; ty = player.y - 0.6;
+              if (dPlayer > ag.range * 1.8) { a.mode = 0; a.modeT = 10; }
+              else if (a.modeT <= 0) { a.mode = 2; a.modeT = 0; this.events.push({ type: 'charge', def, p: a.p.clone() }); }
+            }
           } else if (mode === 2) {
+            if (ag.kind === 'light' && !this.lightOn) { a.mode = 3; a.modeT = 5; } // light out: it loses the target
             if (ag.kind === 'territory' && a.modeT > 0) {
               // threat display: turn to face the intruder, fins raised
               tx = a.p.x + (player.x - a.p.x) * 0.05; ty = a.p.y; tz = a.p.z + (player.z - a.p.z) * 0.05;
@@ -1219,7 +1285,18 @@ export class Creatures {
   nightFall(player: THREE.Vector3): void {
     this.night = true;
     for (const rt of this.list) {
-      if (rt.def.when !== 'night') continue;
+      if (rt.def.when !== 'night') {
+        // daytime species go to sleep: some groups vanish (keep one of the common ones)
+        const gate = this.nightGate(rt.def);
+        if (gate < 1) {
+          for (const g of rt.groups) if (!g.absent && Math.random() > gate) g.absent = true;
+          if (rt.def.rarity === 1 && rt.groups.every((g) => g.absent)) rt.groups[0].absent = false;
+        } else if (rt.def.aggro?.kind === 'light') {
+          const mv = this.canRelocate(rt.def);
+          rt.groups.forEach((g, gi) => { if (g.absent) { g.absent = false; if (mv) this.relocate(rt, gi, player, 4); } });
+        }
+        continue;
+      }
       const movable = this.canRelocate(rt.def);
       rt.groups.forEach((g, gi) => {
         g.absent = Math.random() > this.presence(rt.def.rarity);
@@ -1234,8 +1311,10 @@ export class Creatures {
     for (const rt of this.list) {
       const def = rt.def;
       if (!rt.active || def.size < 0.9 || def.kind === 'jelly' || def.kind === 'none') continue;
-      for (const a of rt.agents) {
+      for (let ai = 0; ai < rt.agents.length; ai++) {
+        const a = rt.agents[ai];
         if (rt.groups[a.g].absent || a.taken) continue;
+        if (ai === 0 && this.companion?.id === def.id) continue; // the rescued animal does not shove the diver
         const reach = a.s * 0.7 + rad + 1;
         if (Math.abs(a.p.x - p.x) > reach || Math.abs(a.p.z - p.z) > reach || Math.abs(a.p.y - p.y) > reach) continue;
         fwd.set(0, 0, 1).applyQuaternion(a.q);

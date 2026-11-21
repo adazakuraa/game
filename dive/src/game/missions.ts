@@ -74,6 +74,8 @@ export type MissionCtx = {
   aim: () => { id: string; dist: number } | null;
   /** pose a creature in place (the netted turtle), or release it */
   stage: (id: string, pose: { p: THREE.Vector3; yaw: number; pitch: number } | null) => void;
+  /** the rescued animal frees itself and swims with the diver for the rest of the dive */
+  companion: (id: string, from: THREE.Vector3) => void;
 };
 
 type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; hold?: number; seen?: Set<string>; title: string; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number; area?: Area };
@@ -274,7 +276,7 @@ export class Missions {
         if (a.hold >= MISSION.rescue.cut) {
           a.got = 1;
           this.netMesh.visible = false;
-          c.stage('turtle', null);
+          c.companion('turtle', a.spot);
         }
       } else if ((a.lastHint ?? 0) <= c.time - 7) {
         a.lastHint = c.time;
@@ -291,7 +293,7 @@ export class Missions {
     this.renderHud();
     if (a.got >= a.need) {
       c.reward(a.reward, a.title);
-      c.toast(a.kind === 'rescue' ? `ウミガメが元気に泳いでいった！ 漁協からお礼 ¥${a.reward.toLocaleString('ja-JP')}` : `依頼達成！ ${a.title}　報酬 ¥${a.reward.toLocaleString('ja-JP')}`, '', 3.5);
+      c.toast(a.kind === 'rescue' ? `ウミガメがついてくる！（このダイブの間いっしょに泳ぐ） 漁協からお礼 ¥${a.reward.toLocaleString('ja-JP')}` : `依頼達成！ ${a.title}　報酬 ¥${a.reward.toLocaleString('ja-JP')}`, '', 3.5);
       c.chime(true);
       const k = a.kind;
       this.end(true);

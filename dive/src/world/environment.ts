@@ -87,7 +87,7 @@ export class Environment {
       side: THREE.DoubleSide,
       uniforms: THREE.UniformsUtils.merge([
         THREE.UniformsLib.fog,
-        { uTime: { value: 0 }, uSunDir: { value: UW.uSunDir.value }, uBright: { value: 1 } },
+        { uTime: { value: 0 }, uSunDir: { value: UW.uSunDir.value }, uBright: { value: 1 }, uK: { value: 0.06 } },
       ]),
       vertexShader: /* glsl */ `
         #include <fog_pars_vertex>
@@ -100,7 +100,7 @@ export class Environment {
           #include <fog_vertex>
         }`,
       fragmentShader: /* glsl */ `
-        uniform float uTime; uniform vec3 uSunDir; uniform float uBright;
+        uniform float uTime; uniform vec3 uSunDir; uniform float uBright; uniform float uK;
         varying vec3 vW;
         #include <fog_pars_fragment>
         vec2 wav(vec2 p, float t){
@@ -113,19 +113,26 @@ export class Environment {
         }
         void main(){
           vec3 V = normalize(vW - cameraPosition);
-          vec2 g = wav(vW.xz*0.6, uTime);
+          // the deeper the diver, the further the surface: the water dims it, the swell blurs out and the pattern gets finer
+          float dist = length(vW - cameraPosition);
+          float att = exp(-dist * uK);
+          float far = 1.0 - att;
+          vec2 g = wav(vW.xz*0.6, uTime) * (1.0 - 0.7*far) + wav(vW.xz*1.3 + 3.0, uTime*1.2) * 0.4 * far;
+          g += wav(vW.xz*3.1 + 7.0, uTime*1.4) * 0.45 * exp(-dist*0.05);
           vec3 N = normalize(vec3(-g.x*0.16, -1.0, -g.y*0.16)); // pointing down into the water
           float cosI = dot(-V, N);
           float sinI = sqrt(max(0.0, 1.0 - cosI*cosI));
           // Snell's window: beyond ~48.6 deg total internal reflection
-          float win = smoothstep(0.80, 0.70, sinI);
+          float edge = 0.05 + 0.12*far;
+          float win = smoothstep(0.75 + edge, 0.75 - edge, sinI);
           vec3 refr = refract(V, -N, 1.333);
           vec3 sky = mix(vec3(0.35,0.62,0.82), vec3(0.75,0.9,0.98), pow(max(refr.y,0.0), 3.0)) * (0.75 + 0.25 * g.x);
           float sun = pow(max(dot(normalize(refr), uSunDir), 0.0), 220.0) * 6.0 + pow(max(dot(normalize(refr), uSunDir),0.0), 12.0)*0.6;
           vec3 inside = (sky + sun) * uBright;
           vec3 tir = fogColor * (0.7 + 0.3*g.x);
-          float ring = smoothstep(0.66, 0.76, sinI) * smoothstep(0.84, 0.76, sinI);
-          vec3 col = mix(tir, inside, win) + ring * 0.35 * uBright;
+          float ring = smoothstep(0.66 - edge, 0.76, sinI) * smoothstep(0.84 + edge, 0.76, sinI);
+          vec3 col = mix(tir, inside, win) + ring * 0.35 * uBright * att;
+          col = mix(fogColor, col, att);
           gl_FragColor = vec4(col, 1.0);
           #include <fog_fragment>
         }`,
@@ -353,7 +360,9 @@ export class Environment {
     this.surface.position.set(cp.x, 0, cp.z);
     const sm = this.surface.material as THREE.ShaderMaterial;
     sm.uniforms.uTime.value = time;
-    sm.uniforms.uBright.value = (0.75 + 0.25 * Math.exp(-depth / 10)) * (1 - this.night * 0.82);
+    sm.uniforms.uBright.value = (0.5 + 0.5 * Math.exp(-depth / 10)) * (1 - this.night * 0.82);
+    // water clarity: the window fades toward the water colour with distance (on top of the usual fog)
+    sm.uniforms.uK.value = Math.max(0.02, this.fog.density * 0.55);
     this.surface.visible = depth < 70;
 
     // rays follow camera on a wrapping grid

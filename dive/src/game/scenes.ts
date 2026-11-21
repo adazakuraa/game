@@ -39,6 +39,8 @@ export class Scenes {
   /** sights the diver has been told about ("something is out there…") */
   sensed = new Set<SceneId>();
   private t = 0;
+  /** loop radius of the night manta (grows when the light goes out) */
+  private mantaR = 2.5;
   private spawn: THREE.Points;
   private seeds: THREE.Vector3[] = [];
   private vel: Float32Array;
@@ -134,6 +136,8 @@ export class Scenes {
       poses[0].pitch = -1.15;
       poses[0].still = true;
     }
+    // young mantas that come to the light are smaller than the grown ones of the manta train
+    if (id === 'mantanight') poses.forEach((p) => { p.s = (this.origScale.get(S.star!)![0] ?? 4) * 0.5; });
     if (id === 'humpback' && poses[1]) poses[1].s = (this.origScale.get(S.star)![0] ?? 12) * 0.38;
     this.poses.set(id, poses);
     this.creatures.stage.set(S.star, poses);
@@ -158,7 +162,7 @@ export class Scenes {
   }
 
   /** Move the choreographed animals and particles. */
-  update(dt: number, night: number, player: THREE.Vector3, speed: number): void {
+  update(dt: number, night: number, player: THREE.Vector3, speed: number, fwd?: THREE.Vector3, lightOn = false): void {
     this.t += dt;
     const T = this.t;
     for (const [id, poses] of this.poses) {
@@ -190,6 +194,43 @@ export class Scenes {
             p.p.set(player.x + Math.cos(a) * R, Math.min(-0.8, Math.max(heightAt(player.x, player.z) + 1, yy)), player.z + Math.sin(a) * R);
             p.yaw = -a;
             p.pitch = -Math.cos(T * 0.8 + i) * 0.25;
+            return;
+          }
+          case 'mantanight': { // somersaulting in the diver's light; the light going out sends it away
+            if (i === 0) this.mantaR += ((lightOn ? 2.5 : 10) - this.mantaR) * Math.min(1, dt * 0.6);
+            const away = Math.max(0, this.mantaR - 2.5);
+            if (!this.sensed.has(id)) { p.p.set(c.x, -10, c.z); return; } // still out in the dark
+            let fx = fwd ? fwd.x : 0, fz = fwd ? fwd.z : 1;
+            const fl = Math.hypot(fx, fz) || 1;
+            fx /= fl; fz /= fl;
+            const ring = this.mantaR * (1 + i * 0.25);
+            const ph = T * 0.75 + i * Math.PI + k[0] * 0.5;
+            const cx = player.x + fx * (4 + away * 1.5), cz = player.z + fz * (4 + away * 1.5);
+            const cy = Math.min(-2.5, Math.max(heightAt(cx, cz) + ring + 0.5, player.y + 0.3));
+            const fwdC = Math.cos(ph), upS = Math.sin(ph);
+            p.p.set(cx + fx * fwdC * ring, Math.min(-0.8, cy + upS * ring), cz + fz * fwdC * ring);
+            // tangent of the loop (d/dph): backwards over the top, up at the near side
+            const dF = -upS, dU = fwdC;
+            const back = dF < 0;
+            p.yaw = Math.atan2(fx, fz) + (back ? Math.PI : 0);
+            p.pitch = -Math.atan2(dU, Math.abs(dF));
+            return;
+          }
+          case 'lanternrise': { // a column of lights rising from the deep, then starting over at the bottom
+            const ph = (k[2] + T * 0.03) % 1;
+            const r = Math.sqrt(k[0]) * 4, ang = k[1] * 6.28 + T * 0.25;
+            const lo = Math.max(c.y + 1, -30);
+            p.p.set(c.x + Math.cos(ang) * r, Math.min(-8, lo + ph * (-8 - lo)), c.z + Math.sin(ang) * r);
+            p.yaw = -ang;
+            p.pitch = -0.7;
+            return;
+          }
+          case 'flashlight': { // a loose ball of fish drifting round a rock
+            const u = k[0] * 2 - 1, th = k[1] * 6.28 + T * 0.18 + k[2];
+            const rr = 2.5 * Math.cbrt(k[2]) * Math.sqrt(1 - u * u);
+            p.p.set(c.x + Math.cos(th) * rr, Math.min(-0.8, c.y + 2.6 + u * 1.6 + Math.sin(T * 0.4 + i) * 0.15), c.z + Math.sin(th) * rr);
+            p.yaw = -th;
+            p.pitch = 0;
             return;
           }
           case 'whaleshark':

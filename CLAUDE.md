@@ -13,7 +13,7 @@
 | --- | --- | --- | --- | --- |
 | `climb/` | DEATH ZONE 8000（高所登山） | https://claude.ai/artifact/Y6AmowkXBB8HND5EP9osHX | `ccr-1b79a73c-q3y30y` | main より 32 コミット先（キャンプ・犬・遺品・評価など） |
 | `racing/` | APEX LINE（GT・ラリー・ロードバイク） | https://claude.ai/artifact/UB1cbzTRiNqA9dTLkbRodb | `ccr-4a7da7a1-rd8ajk` | main より先（ラリー・バイク・ガレージ・ドリフト・性能パーツ・金メダル基準の難易度・ジャンプ着地のカメラなど） |
-| `dive/` | BLUE DEPTHS（ダイビング図鑑） | https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk | `ccr-084c01d7-stoku4` | main より先（依頼の範囲の円・依頼パネルを上端へ） |
+| `dive/` | BLUE DEPTHS（ダイビング図鑑） | https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk | `ccr-2bee8574-gjeaau` | main より先（ナイトダイブのリスク・水中ライト・夜専用種と光景・ウミガメ追従・1 ダイブ 1 種 1 回の売上・海面の見え方） |
 | `kanken/` | 漢検ランダム漢字 | （未公開） | `main` | 同じ |
 | このドキュメント | README.md / CLAUDE.md / scripts/ | — | `ccr-084c01d7-stoku4` | main より先（未マージ） |
 

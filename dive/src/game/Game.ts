@@ -29,6 +29,8 @@ type Save = LandSave & {
   /** special sights photographed */
   scenes?: Partial<Record<SceneId, { photo: string; t: number }>>;
   tutorial?: boolean;
+  /** the night-dive hint (needlefish rush at the light) has been shown */
+  nightHint?: boolean;
   /** air tank upgrade level (AIR_TANK) */
   airLv?: number;
   /** requests on the notice board, and the ones taken */
@@ -314,7 +316,19 @@ export class Game {
   }
 
   private has(id: GearId): boolean {
+    // the strong light implies a torch (old saves bought it before the torch existed)
+    if (id === 'torch') return !!this.save.owned?.includes('torch') || !!this.save.owned?.includes('light');
     return !!this.save.owned?.includes(id);
+  }
+
+  /** can the diver switch a light on (ADS suits carry their own) */
+  private hasTorch(): boolean {
+    return this.has('torch');
+  }
+
+  /** dusk has fallen on land and there is no torch: diving is not allowed until morning */
+  private nightBlocked(): boolean {
+    return nightOf(this.save.clock ?? 0) >= 0.5 && !this.hasTorch();
   }
 
   /** a shop item already in hand (a chart counts once its place is known) */
@@ -692,19 +706,25 @@ export class Game {
     const left = Math.max(0, FISHING.duskAt - c);
     const el = $('daytime');
     const now = `<span class="dt-now">${this.save.day ?? 1}日目・<b>${timeLabel(c)}</b></span>`;
+    const night0 = nightOf(c) >= 0.5 && !this.hasTorch();
+    const rest = night0 ? `<small>夜の海はライトがないと潜れない（ショップで水中ライト ¥800）</small><button type="button" class="btn sec" data-rest="1">朝まで休む（${(this.save.day ?? 1) + 1}日目の朝へ）</button>` : '';
     const buff = this.save.buff ? `<small>まかない：${DISH[this.save.buff].name}（${DISH[this.save.buff].short}）が次のダイブに効く</small>` : '';
     if (free) {
       const night = nightOf(c) >= 0.5;
-      el.innerHTML = `${now}<button type="button" class="btn sec" data-time="day" aria-pressed="${!night}">☀ 昼の海</button><button type="button" class="btn sec" data-time="night" aria-pressed="${night}">☾ 夜の海</button>${buff}`;
+      el.innerHTML = `${now}<button type="button" class="btn sec" data-time="day" aria-pressed="${!night}">☀ 昼の海</button><button type="button" class="btn sec" data-time="night" aria-pressed="${night}">☾ 夜の海</button>${buff}${rest}`;
       el.querySelectorAll<HTMLButtonElement>('[data-time]').forEach((b) => b.addEventListener('click', () => {
         this.save.clock = b.dataset.time === 'night' ? FISHING.duskAt + FISHING.duskLen : Math.min(this.save.clock ?? 0, 0);
         this.writeSave();
         this.renderTitle();
       }));
     } else {
-      el.innerHTML = `${now}${buff}`;
+      el.innerHTML = `${now}${buff}${rest}`;
       void left;
     }
+    el.querySelector<HTMLButtonElement>('[data-rest]')?.addEventListener('click', () => {
+      this.kitchen.sleep();
+      this.renderTitle();
+    });
   }
 
   private toast(text: string, kind: '' | 'warn' | 'danger' = '', dur = 2.2): void {
@@ -841,6 +861,10 @@ export class Game {
   }
 
   private startDive(dp: DivePoint, quick = false): void {
+    if (dp.requires !== 'ads' && this.nightBlocked()) {
+      this.toast('夜の海はライトがないと潜れない。ショップで水中ライト（¥800）を買おう', 'warn', 3.5);
+      return;
+    }
     if (!quick) this.quick = null;
     this.audio.unlock();
     const fade = $('fade');
@@ -857,6 +881,7 @@ export class Game {
       this.diveMaxDepth = 0;
       this.diveShots = 0;
       this.pending.clear();
+      this.creatures.companion = null;
       this.vel.set(0, 0, 0);
       // a few metres down after the giant-stride entry, clear of the boat's keel (~1.8 m draft)
       const startY = this.ads ? -175 : -3.2;
@@ -926,13 +951,19 @@ export class Game {
       this.tut.from.copy(this.camera.position);
       $('coach').classList.toggle('hidden', this.tut.step < 0);
       $('hud').classList.remove('hl-air', 'hl-surface');
-      if (this.env.night) { this.env.lightOn = true; $('btn-light').classList.add('on'); }
+      if (this.env.night && this.hasTorch()) { this.env.lightOn = true; $('btn-light').classList.add('on'); }
+      if (this.env.night && !this.ads && !this.save.nightHint) {
+        this.save.nightHint = true;
+        this.writeSave();
+        window.setTimeout(() => this.toast('夜はオキザヨリがライトに突進してくることがある。危ないときはライトを消そう', 'warn', 5), 2500);
+      }
       this.creatures.shield = this.has('shield');
       if (this.minimap) this.minimap.blips = [];
       this.coldWarned = -100;
       this.missions.reset();
       this.bonuses = [];
       $('btn-light').classList.toggle('on', this.env.lightOn);
+      $('btn-light').classList.toggle('dim', !this.ads && !this.hasTorch());
       $('btn-boost').classList.toggle('hidden', !this.has('scooter'));
       $('title').classList.add('hidden');
       $('result').classList.add('hidden');
@@ -973,17 +1004,18 @@ export class Game {
       const e = ev.shift()!;
       const name = e.def.name;
       const shark = e.def.aggro?.kind === 'shark';
+      const light = e.def.aggro?.kind === 'light';
       if (e.type === 'warn') {
         if (this.time - this.lastEncounter < 4) continue;
         this.lastEncounter = this.time;
-        this.toast(shark ? `${name}がこちらの周りを回り始めた…` : `${name}の縄張りに入った！ 威嚇されている`, 'warn', 3);
+        this.toast(light ? '水面近くで何かがライトに反応した…' : shark ? `${name}がこちらの周りを回り始めた…` : `${name}の縄張りに入った！ 威嚇されている`, 'warn', 3);
       } else if (e.type === 'repel') {
         this.toast(`シャークシールドが作動！ ${name}が向きを変えた`, 'warn', 2.5);
         this.shake = Math.max(this.shake, 0.3);
         continue;
       } else if (e.type === 'charge') {
         this.audio.warn();
-        this.toast(shark ? `${name}が突っ込んでくる！` : `${name}が突進してくる！ 離れて！`, 'danger', 2.5);
+        this.toast(light ? `${name}がライトめがけて突っ込んでくる！ ライトを消して！` : shark ? `${name}が突っ込んでくる！` : `${name}が突進してくる！ 離れて！`, 'danger', 2.5);
       } else {
         const bite = e.def.aggro?.bite ?? 5;
         this.air = Math.max(1, this.air - bite);
@@ -991,7 +1023,7 @@ export class Game {
         this.vel.addScaledVector(push, shark ? 4.5 : 3);
         this.shake = 1;
         this.audio.warn();
-        this.toast(shark ? `${name}にぶつかられた！ エア −${bite}bar` : `${name}に噛まれた！ エア −${bite}bar`, 'danger', 3);
+        this.toast(light ? `${name}のくちばしが刺さった！ エア −${bite}bar` : shark ? `${name}にぶつかられた！ エア −${bite}bar` : `${name}に噛まれた！ エア −${bite}bar`, 'danger', 3);
         const f = $('flash');
         f.classList.remove('go');
         f.classList.add('hurt');
@@ -1007,6 +1039,7 @@ export class Game {
     if (this.state !== 'diving' && this.state !== 'paused') return;
     const before = this.foundCount;
     const shots = [...this.pending.entries()];
+    this.creatures.companion = null;
     // discoveries are never lost (being rescued costs money instead: the penalty fits the mistake)
     for (const [id, f] of shots) {
       const old = this.save.found[id];
@@ -1140,7 +1173,8 @@ export class Game {
     this.yaw -= lx;
     this.pitch = clamp(this.pitch - ly, -1.45, 1.45);
     if (inp.consume('light')) {
-      this.env.lightOn = !this.env.lightOn;
+      if (!this.ads && !this.hasTorch()) this.toast('ライトを持っていない。ショップで水中ライトを買おう', 'warn', 2.5);
+      else this.env.lightOn = !this.env.lightOn;
       $('btn-light').classList.toggle('on', this.env.lightOn);
     }
     if (inp.consume('dex')) this.openDex();
@@ -1249,7 +1283,7 @@ export class Game {
       this.freezeT = 0.12;
       this.toast(`「${FIND_NAME[picked]}」を拾った！ 中身はボートに戻ってから開けてみよう（持って泳ぐと少し息が上がる）`, '', 3.5);
     }
-    this.scenes.update(dt, this.env.night, p, this.vel.length());
+    this.scenes.update(dt, this.env.night, p, this.vel.length(), this.camera.getWorldDirection(this.tmpDir), this.env.lightOn);
     const sensed = this.frame % 15 === 0 ? this.scenes.senseNear(p) : null;
     if (sensed && (!SCENES[sensed].night || this.env.night >= 0.5)) { this.audio.chime(false); this.toast(SCENES[sensed].sense, 'warn', 4); }
     if (this.tut.step >= 0) this.updateTutorial(dt);
@@ -1260,7 +1294,7 @@ export class Game {
       this.env.night = n;
       if (this.nightAnnounced === 0 && this.save.clock >= FISHING.duskAt) {
         this.nightAnnounced = 1;
-        this.toast('日が傾いてきた… 海が暗くなっていく', 'warn', 3.5);
+        this.toast(this.hasTorch() ? '日が傾いてきた… 海が暗くなっていく' : 'ライトがない…暗くなる前に浮上しよう', 'warn', 3.5);
       } else if (this.nightAnnounced === 1 && n >= 0.5) {
         this.nightAnnounced = 2;
         this.creatures.nightFall(p);
@@ -1343,6 +1377,7 @@ export class Game {
       nearbyBig: () => this.creatures.randomNear(p, 30, 0.8),
       aim: () => (this.target && this.target.inRange ? { id: this.target.rt.def.id, dist: this.target.dist } : null),
       stage: (id, pose) => { if (pose) this.creatures.stage.set(id, [pose]); else this.creatures.stage.delete(id); },
+      companion: (id, from) => { this.creatures.stage.delete(id); this.creatures.companion = { id, p: from.clone(), v: new THREE.Vector3(), yaw: this.yaw }; },
       sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); },
       reward: (v, label) => { this.bonuses.push({ label: label === '網に絡まったウミガメ' ? 'ウミガメを助けた（漁協からお礼）' : `依頼達成：${label}`, value: v }); this.shake = Math.max(this.shake, 0.4); this.freezeT = 0.15; this.updateDexChip(); },
     };
@@ -1570,10 +1605,13 @@ export class Game {
     const best = this.save.found[def.id]?.score ?? -1;
     const value = known && ev.score <= best ? Math.round((ev.value * PHOTO.repeatShare) / 10) * 10 : ev.value;
     const prev = this.pending.get(def.id);
+    // one sale per species per dive (PHOTO.oncePerDive): the first shot's value is final; a later, better shot only
+    // upgrades the photo kept in the dex. Diving again resets it (pending is cleared at the start of a dive).
     const shot: Shot = { photo, depth, score: ev.score, grade: ev.grade.g, value, isNew: !known };
-    const kept = !prev || shot.value > prev.value;
-    if (kept) this.pending.set(def.id, shot);
-    this.showDiscover(def.id, photo, !known && !prev, ev, kept ? value : 0, prev && !kept ? prev : undefined, known && ev.score > best && best >= 0);
+    let record = known && ev.score > best && best >= 0;
+    if (!prev) this.pending.set(def.id, shot);
+    else if (ev.score > prev.score) { this.pending.set(def.id, { ...shot, value: prev.value, isNew: prev.isNew }); record = true; }
+    this.showDiscover(def.id, photo, !known && !prev, ev, prev ? 0 : value, prev, record);
     if (!known && !prev) this.audio.chime(def.rarity >= 3);
     else if (ev.grade.g === 'S') this.audio.chime(true);
     this.updateDexChip();
@@ -1618,7 +1656,7 @@ export class Game {
       gEl.className = 'disc-grade g' + ev.grade.g;
       gEl.innerHTML = `<b>${ev.grade.g}</b><span>${ev.grade.word}</span>`;
       gEl.classList.remove('hidden');
-      $('disc-pay').textContent = paid > 0 ? `+${yen(paid)}${ev.bonus.length ? '　' + ev.bonus.join(' ') : ''}` : better ? `今回の${better.grade}判定の方が高値` : '';
+      $('disc-pay').textContent = paid > 0 ? `+${yen(paid)}${ev.bonus.length ? '　' + ev.bonus.join(' ') : ''}` : better ? 'このダイブでは売上済み（潜り直すとまた売れる）' : '';
     } else gEl.classList.add('hidden');
     $('disc-name').textContent = s.name;
     $('disc-sci').textContent = s.sci;
@@ -1742,6 +1780,7 @@ export class Game {
     const cp = this.camera.position;
     this.terrain.update(cp.x, cp.z, this.terrain.radius, this.state === 'diving' ? 1 : 2);
     if (!this.paused || this.state === 'title') {
+      this.creatures.lightOn = this.env.lightOn;
       this.creatures.update(dt, cp, this.vel, this.camera.getWorldDirection(this.tmpDir));
     }
     this.flora.update(cp, this.time);
