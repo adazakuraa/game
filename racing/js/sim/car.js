@@ -45,21 +45,21 @@ function torque(rpm) {
 const proj = {};
 const projF = {}, projR = {};
 
-// ドリフトターボ: 曲がりながらブレーキを軽く踏むとドリフト開始。滑らせている時間でチャージし、
-// ハンドルを戻して立ち上がるとターボ（段階が高いほど長く加速）。コース外・壁・スピンでチャージは消える
+// ドリフトターボ: ハンドルを切りながらブレーキを押すとドリフト。押している間チャージし（深く切るほど早い）、
+// 離すとターボ（段階が高いほど長く加速）。ドリフト中のブレーキは減速しない。コース外・壁・スピンでチャージは消える
 // ドリフト中に目指すヨーレート: 通常の旋回より少しきつめ（ハンドルに比例）
 function rTarget(rRef, rT, dir) {
   return Math.abs(rRef) > 1e-3 ? rRef * 1.18 : -dir * Math.abs(rT) * 0.2;
 }
 
 export const DRIFT = {
-  minSpeed: 14, // m/s これ未満では始まらない
-  startSteer: 0.5, // これ以上ハンドルを切った状態でブレーキをタップすると開始
+  minSpeed: 9, // m/s これ未満では始まらない（約 32km/h）
+  startSteer: 0.5, // これ以上ハンドルを切った状態でブレーキを押すと開始
   rearGrip: 0.8, // ドリフト中の後輪グリップ倍率（テールが出る）
   betaMin: 0.05, // これ以上滑っている間だけチャージ
-  levels: [0.4, 0.9, 1.5], // チャージ時間（秒）: 青・オレンジ・紫
-  boostTime: [0.6, 1.0, 1.45],
-  boostAccel: 7.0, // m/s^2（タイヤのグリップと関係なく押し出す）
+  levels: [0.35, 0.8, 1.35], // チャージ時間（秒）: 青・オレンジ・紫
+  boostTime: [0.7, 1.1, 1.6],
+  boostAccel: 9.0, // m/s^2（タイヤのグリップと関係なく押し出す）
 };
 
 export class Car {
@@ -181,32 +181,26 @@ export class Car {
     let Fyf = -muF * Nf * pac(af);
     let Fyr = -muR * Nr * pac(ar);
 
-    // ドリフトの開始・継続・終了
+    // ドリフトの開始・継続・終了（マリオカート式: ブレーキを押しながら曲がるとドリフト。押している間チャージし、離すとターボ）
     {
       const beta0 = Math.atan2(vl, Math.max(Math.abs(u), 1));
       const brk0 = Math.max(0, Math.min(1, input.brake));
-      // 合図はブレーキの短いタップ（踏んで 0.35 秒以内に離す）。長く踏む普通のブレーキではドリフトしない
-      let tapped = false;
-      if (brk0 > 0.25) this.brakeHeldT = (this.brakeHeldT || 0) + dt;
-      else { if (this.brakeHeldT > 0.02 && this.brakeHeldT < 0.35) tapped = true; this.brakeHeldT = 0; }
       if (!this.drift) {
-        if (!this.noDrift && tapped && u > DRIFT.minSpeed && Math.abs(steerIn) > DRIFT.startSteer && !(this.crashT > 0)) {
+        if (!this.noDrift && brk0 > 0.25 && u > DRIFT.minSpeed && Math.abs(steerIn) > DRIFT.startSteer && !(this.crashT > 0)) {
           this.drift = Math.sign(steerIn);
-          this.driftT = 0; this.driftLvl = 0; this.driftOffT = 0;
+          this.driftT = 0; this.driftLvl = 0;
           this.boostT = 0;
         }
       } else {
-        // 曲がる向きにハンドルを残している間（逆ハンドルで当てていてもよい）は続く
-        const holding = Math.sign(steerIn) === this.drift && Math.abs(steerIn) > 0.12;
-        const sliding = Math.abs(beta0) > DRIFT.betaMin;
-        if (sliding) this.driftT += dt;
+        // 押している間チャージ。曲がる向きに深くハンドルを切るほど早く溜まる
+        const inward = Math.sign(steerIn) === this.drift ? Math.abs(steerIn) : 0;
+        this.driftT += dt * (0.7 + 0.6 * inward);
         while (this.driftLvl < 3 && this.driftT >= DRIFT.levels[this.driftLvl]) this.driftLvl++;
-        this.driftOffT = holding || sliding ? 0 : this.driftOffT + dt;
         const fail = this.offTrack >= 3 || Math.abs(beta0) > 0.95 || this.crashT > 0 || (this.scrape && Math.abs(u) < 20);
         if (fail) { this.drift = 0; this.driftLvl = 0; this.driftT = 0; }
-        else if (this.driftOffT > 0.12 || u < 9) {
-          // 立ち上がり: チャージした段階でターボ
-          if (this.driftLvl > 0) {
+        else if (brk0 < 0.15 || u < 6) {
+          // ブレーキを離した: チャージした段階でターボ
+          if (this.driftLvl > 0 && u >= 6) {
             this.boostLvl = this.driftLvl;
             this.boostT = DRIFT.boostTime[this.driftLvl - 1];
             this.boostFired = this.driftLvl;
@@ -214,7 +208,7 @@ export class Car {
           this.drift = 0; this.driftLvl = 0; this.driftT = 0;
         }
       }
-      if (this.boostT > 0) { this.boostT -= dt; if (brk0 > 0.5) this.boostT = 0; }
+      if (this.boostT > 0) { this.boostT -= dt; if (brk0 > 0.5 && !this.drift) this.boostT = 0; }
     }
 
     // パワートレイン
@@ -222,6 +216,7 @@ export class Car {
     this.crashed = false;
     if (this.crashT > 0) { this.crashT -= dt; throttle = 0; }
     let brake = Math.max(0, Math.min(1, input.brake));
+    if (this.drift) brake = 0; // ドリフト中のブレーキボタンはドリフト用（減速しない）
     const ratio = c.gears[this.gear - 1] * c.final;
     let rpm = (Math.abs(u) / c.wheelR) * ratio * (60 / (2 * Math.PI));
     if (rpm < c.idle) rpm = c.idle;
@@ -307,7 +302,7 @@ export class Car {
     const cd = Math.cos(delta), sd = Math.sin(delta);
     let du = (Fxr + Fxf * cd - Fyf * sd - Fdrag - Froll + Fg) / c.mass + vl * r;
     // ドリフト中もアクセルを踏んでいれば大きくは失速しない（タイヤが横に滑る抵抗をやわらげる）
-    if (this.drift && throttle > 0.3 && this.assist) du = Math.max(du, -2.2);
+    if (this.drift && this.assist) du = Math.max(du, throttle > 0.3 ? -1.6 : -3.2);
     // ターボ（アクセルを踏んでいる間だけ押し出す）
     if (this.boostT > 0 && throttle > 0.3) du += DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl);
     let dvl = (Fyr + Fyf * cd + Fxf * sd) / c.mass - u * r;

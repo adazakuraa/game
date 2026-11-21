@@ -462,6 +462,7 @@ export class Race extends RaceBase {
     let inp = input;
     if (p.finished || this.opts.autopilot) {
       if (!this.bot) this.bot = new BotDriver(p.car, this.track, 0.9);
+      p.car.noDrift = true; // 自動運転はドリフトしない
       inp = this.bot.update();
       // セクションコースのゴール後はブレーキで止まる（道はゴールの先 150m まで）
       if (this.stage && p.finished) inp = { ...inp, throttle: 0, brake: 1 };
