@@ -1,4 +1,12 @@
 // 入力: タッチ（スライド / ボタン / 傾き）・キーボード・ゲームパッド
+// スライド操作: 指を何 px ずらすと全開か
+export const SLIDE_RANGE = 115;
+export function slideCurve(dx, range) {
+  const dead = 5;
+  const a = Math.max(0, Math.abs(dx) - dead) / (range - dead);
+  return Math.sign(dx) * Math.min(1, a) ** 1.55;
+}
+
 export class Input {
   constructor(root) {
     this.root = root;
@@ -40,7 +48,7 @@ export class Input {
     zone.addEventListener('pointerdown', (e) => {
       if (this.mode !== 'slide') return;
       e.preventDefault();
-      zone.setPointerCapture(e.pointerId);
+      try { zone.setPointerCapture(e.pointerId); } catch { /* 取得できなくても操作は続ける */ }
       this.touchSteer = { id: e.pointerId, x0: e.clientX, x: e.clientX, y0: e.clientY };
       this.root.querySelector('#steerHint')?.classList.add('hide');
       base.style.display = 'block';
@@ -65,7 +73,7 @@ export class Input {
 
     const hold = (id, on, off) => {
       const el = this.root.querySelector(id);
-      const down = (e) => { e.preventDefault(); el.setPointerCapture?.(e.pointerId); el.classList.add('on'); on(); };
+      const down = (e) => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch { /* 無視 */ } el.classList.add('on'); on(); };
       const up = (e) => { e.preventDefault(); el.classList.remove('on'); off(); };
       el.addEventListener('pointerdown', down);
       el.addEventListener('pointerup', up);
@@ -92,7 +100,7 @@ export class Input {
   updateKnob() {
     const t = this.touchSteer;
     if (!t) return;
-    const R = 70;
+    const R = SLIDE_RANGE;
     const dx = Math.max(-R, Math.min(R, t.x - t.x0));
     this.knob.style.transform = `translate(${dx}px, 0)`;
   }
@@ -133,7 +141,8 @@ export class Input {
 
     if (this.mode === 'slide' && this.touchSteer) {
       const dx = this.touchSteer.x - this.touchSteer.x0;
-      steer = Math.max(-1, Math.min(1, dx / (70 / this.sens)));
+      // 小さなずらしは小さく効く（不感帯 + 曲線）。端までで全開
+      steer = slideCurve(dx, SLIDE_RANGE / this.sens);
     } else if (this.mode === 'buttons') {
       const bt = (this.btnR ? 1 : 0) - (this.btnL ? 1 : 0);
       if (bt !== 0) this.btnSteer += Math.sign(bt - this.btnSteer) * Math.min(Math.abs(bt - this.btnSteer), dt * 3.5);

@@ -10,6 +10,21 @@ export class BotDriver {
   }
   update() {
     const c = this.car, tr = this.track;
+    // 壁に引っかかって止まったら少しバックする
+    this.stuckT = (this.stuckT || 0);
+    if (this.backT > 0) {
+      this.backT -= 1 / 120;
+      this.input.steer = this.backSteer;
+      this.input.throttle = 0;
+      this.input.brake = 1;
+      return this.input;
+    }
+    if (Math.abs(c.u) < 1.5 && this.input.throttle > 0.5 && !(c.crashT > 0)) this.stuckT += 1 / 120; else this.stuckT = 0;
+    if (this.stuckT > 1.2) {
+      this.stuckT = 0;
+      this.backT = 1.2;
+      this.backSteer = c.d > 0 ? 1 : -1;
+    }
     const u = Math.max(c.u, 3);
     const look = 7 + u * 0.42;
     const s = c.s + look;

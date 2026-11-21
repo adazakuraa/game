@@ -45,6 +45,16 @@ function torque(rpm) {
 const proj = {};
 const projF = {}, projR = {};
 
+// ドリフトターボ: ブレーキを押しながら曲がっている間（車の挙動は普段どおり）チャージし、
+// どちらかをやめたらターボ（段階が高いほど長く加速）。コース外・壁でチャージは消える
+export const DRIFT = {
+  minSpeed: 5, // m/s これ未満ではチャージしない（約 18km/h）
+  startSteer: 0.35, // これ以上ハンドルを切っていれば「曲がっている」
+  levels: [0.35, 0.8, 1.35], // チャージ時間（秒）: 青・オレンジ・紫
+  boostTime: [1.5, 2.5, 3.4], // ターボの長さ（秒）: 青・オレンジ・紫
+  boostAccel: 11.0, // m/s^2（タイヤのグリップと関係なく押し出す）
+};
+
 export class Car {
   constructor(track, spec = CAR_SPEC) {
     this.track = track;
@@ -84,6 +94,10 @@ export class Car {
     this.braking = 0;
     this.throttle = 0;
     this.reverseTimer = 0;
+    this.crashT = 0;
+    this.drift = 0; this.driftT = 0; this.driftLvl = 0; this.driftOffT = 0;
+    this.air = false; this.vy = 0; this.vyG = 0; this.fell = false; this.landed = 0; this.airT = 0;
+    this.boostT = 0; this.boostLvl = 0; this.boostFired = 0;
     this.track.project(this.x, this.z, -1, proj);
     this.hint = proj.i;
     this.s = proj.s;
@@ -98,6 +112,7 @@ export class Car {
 
   // input: { steer: -1(左)..1(右), throttle: 0..1, brake: 0..1 }
   step(dt, input) {
+    if (this.air) { this.stepAir(dt, input); return; }
     const c = this.spec;
     const tr = this.track;
     const L = c.a + c.b;
@@ -118,15 +133,16 @@ export class Car {
     // 車体の左右方向を中心線の左法線へ射影
     const latDot = lx * proj.lx + lz * proj.lz;
     const hw = c.trackW / 2;
-    const sFL = tr.surfaceAt(projF.d + hw * latDot, projF.curb);
-    const sFR = tr.surfaceAt(projF.d - hw * latDot, projF.curb);
-    const sRL = tr.surfaceAt(projR.d + hw * latDot, projR.curb);
-    const sRR = tr.surfaceAt(projR.d - hw * latDot, projR.curb);
+    const sFL = tr.surfaceAt(projF.d + hw * latDot, projF.curb, projF.i);
+    const sFR = tr.surfaceAt(projF.d - hw * latDot, projF.curb, projF.i);
+    const sRL = tr.surfaceAt(projR.d + hw * latDot, projR.curb, projR.i);
+    const sRR = tr.surfaceAt(projR.d - hw * latDot, projR.curb, projR.i);
     this.wheelSurf[0] = sFL.type; this.wheelSurf[1] = sFR.type;
     this.wheelSurf[2] = sRL.type; this.wheelSurf[3] = sRR.type;
-    const baseMu = c.mu * tr.grip;
+    const baseMu = c.mu * tr.gripArr[proj.i];
+    this.roadSurf = tr.surfArr[proj.i]; // 路面の種類（砂煙・雪煙の演出用）
     const muF = (baseMu * (sFL.grip + sFR.grip)) / 2;
-    const muR = (baseMu * (sRL.grip + sRR.grip)) / 2;
+    let muR = (baseMu * (sRL.grip + sRR.grip)) / 2;
     const surfDrag = (sFL.drag + sFR.drag + sRL.drag + sRR.drag) / 4;
     this.offTrack = (sFL.type >= 2) + (sFR.type >= 2) + (sRL.type >= 2) + (sRR.type >= 2);
     this.onCurb = (sFL.type === 1) + (sFR.type === 1) + (sRL.type === 1) + (sRR.type === 1);
@@ -157,8 +173,37 @@ export class Car {
     let Fyf = -muF * Nf * pac(af);
     let Fyr = -muR * Nr * pac(ar);
 
+    // ドリフト（＝ブレーキを押しながら曲がっている状態）。車の挙動は普段と同じで、続けている間チャージし、やめたらターボ
+    {
+      const brk0 = Math.max(0, Math.min(1, input.brake));
+      const turning = Math.abs(steerIn) > DRIFT.startSteer;
+      const on = !this.noDrift && brk0 > 0.25 && turning && !(this.crashT > 0) && (this.drift || Math.abs(u) > DRIFT.minSpeed);
+      if (on) {
+        if (!this.drift) { this.drift = Math.sign(steerIn); this.driftT = 0; this.driftLvl = 0; }
+        this.driftOffT = 0;
+        if (Math.abs(u) > DRIFT.minSpeed) this.driftT += dt; // 遅くなりすぎたらチャージだけ止まる
+        while (this.driftLvl < 3 && this.driftT >= DRIFT.levels[this.driftLvl]) this.driftLvl++;
+      } else if (this.drift) {
+        // ほんの一瞬の離れは見逃す
+        this.driftOffT += dt;
+        if (this.driftOffT > 0.12) {
+          if (this.driftLvl > 0 && this.offTrack < 3 && !(this.crashT > 0)) {
+            this.boostLvl = this.driftLvl;
+            this.boostT = DRIFT.boostTime[this.driftLvl - 1];
+            this.boostFired = this.driftLvl;
+          }
+          this.drift = 0; this.driftLvl = 0; this.driftT = 0;
+        }
+      }
+      // コース外・壁ではチャージが消える
+      if (this.drift && (this.offTrack >= 3 || (this.scrape && Math.abs(u) < 20))) { this.drift = 0; this.driftLvl = 0; this.driftT = 0; }
+      if (this.boostT > 0) this.boostT -= dt;
+    }
+
     // パワートレイン
     let throttle = Math.max(0, Math.min(1, input.throttle));
+    this.crashed = false;
+    if (this.crashT > 0) { this.crashT -= dt; throttle = 0; }
     let brake = Math.max(0, Math.min(1, input.brake));
     const ratio = c.gears[this.gear - 1] * c.final;
     let rpm = (Math.abs(u) / c.wheelR) * ratio * (60 / (2 * Math.PI));
@@ -235,7 +280,8 @@ export class Car {
     }
 
     // 抵抗
-    const Fdrag = 0.5 * 1.2 * c.CdA * u * Math.abs(u);
+    // スリップストリーム: 前の車の真後ろでは空気抵抗が減る（draft 0..1 はレース側が設定）
+    const Fdrag = 0.5 * 1.2 * c.CdA * (1 - 0.4 * (this.draft || 0)) * u * Math.abs(u);
     const Froll = (0.015 * W + surfDrag * Math.abs(u)) * (Math.abs(u) > 0.2 ? sgn : u / 0.2);
     // 勾配
     const slopeF = proj.slope * Math.cos(this.psi - proj.hd);
@@ -243,6 +289,8 @@ export class Car {
 
     const cd = Math.cos(delta), sd = Math.sin(delta);
     let du = (Fxr + Fxf * cd - Fyf * sd - Fdrag - Froll + Fg) / c.mass + vl * r;
+    // ターボ（アクセルを踏んでいる間だけ押し出す）
+    if (this.boostT > 0 && throttle > 0.3) du += DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl) * Math.max(0.4, 1 - Math.abs(u) / 110); // 高速ほど控えめ
     let dvl = (Fyr + Fyf * cd + Fxf * sd) / c.mass - u * r;
     let dr = (c.a * (Fyf * cd + Fxf * sd) - c.b * Fyr) / c.Iz;
 
@@ -281,42 +329,10 @@ export class Car {
     this.r = r;
 
     // 壁
-    tr.project(this.x, this.z, this.hint, proj);
-    this.hint = proj.i;
-    this.impact = 0;
-    const margin = c.halfWid + 0.25;
-    const limL = proj.wallL - margin, limR = -(proj.wallR - margin);
-    if (proj.d > limL || proj.d < limR) {
-      const side = proj.d > limL ? 1 : -1;
-      const over = side > 0 ? proj.d - limL : limR - proj.d;
-      // 押し戻し
-      this.x -= proj.lx * over * side;
-      this.z -= proj.lz * over * side;
-      // 法線方向の速度を反射
-      const vn = (this.vx * proj.lx + this.vz * proj.lz) * side;
-      if (vn > 0) {
-        const e = 0.25;
-        this.vx -= (1 + e) * vn * proj.lx * side;
-        this.vz -= (1 + e) * vn * proj.lz * side;
-        // 摩擦による減速
-        const loss = Math.max(0.6, 1 - vn * 0.045);
-        this.vx *= loss;
-        this.vz *= loss;
-        // 車体を壁沿いへ向ける
-        const along = this.vx * Math.sin(proj.hd) + this.vz * Math.cos(proj.hd);
-        const wantPsi = along >= 0 ? proj.hd : proj.hd + Math.PI;
-        let dpsi = wantPsi - this.psi;
-        while (dpsi > Math.PI) dpsi -= 2 * Math.PI;
-        while (dpsi < -Math.PI) dpsi += 2 * Math.PI;
-        this.psi += dpsi * Math.min(0.5, vn * 0.03);
-        this.r *= 0.4;
-        this.impact = vn;
-      }
-      tr.project(this.x, this.z, this.hint, proj);
-    }
+    this.collideWalls(tr);
     this.s = proj.s;
     this.d = proj.d;
-    this.y = proj.y;
+    this.followGround(dt, tr);
 
     // 出力値
     const sp3 = Math.sin(this.psi), cp3 = Math.cos(this.psi);
@@ -337,4 +353,115 @@ export class Car {
     this.pitch += (this.slopePitch + this.ax * 0.0035 - this.pitch) * Math.min(1, dt * 8);
     this.roll += (latAcc * 0.0045 - this.roll) * Math.min(1, dt * 8);
   }
+
+  // 壁との当たり（押し戻し・失速・クラッシュ）
+  collideWalls(tr) {
+    const c = this.spec;
+    tr.project(this.x, this.z, this.hint, proj);
+    this.hint = proj.i;
+    this.impact = 0;
+    const margin = c.halfWid + 0.25;
+    const limL = proj.wallL - margin, limR = -(proj.wallR - margin);
+    if (proj.d > limL || proj.d < limR) {
+      const side = proj.d > limL ? 1 : -1;
+      const over = side > 0 ? proj.d - limL : limR - proj.d;
+      // 押し戻し
+      this.x -= proj.lx * over * side;
+      this.z -= proj.lz * over * side;
+      // 法線方向の速度を反射
+      const vn = (this.vx * proj.lx + this.vz * proj.lz) * side;
+      if (vn > 0) {
+        const e = 0.25;
+        this.vx -= (1 + e) * vn * proj.lx * side;
+        this.vz -= (1 + e) * vn * proj.lz * side;
+        // 摩擦による減速
+        // 壁に当たると大きく失速する（壁に沿って全開で走るのが速くならないように）
+        const loss = Math.max(0.45, 0.9 - vn * 0.07);
+        this.vx *= loss;
+        this.vz *= loss;
+        // 車体を壁沿いへ向ける
+        const along = this.vx * Math.sin(proj.hd) + this.vz * Math.cos(proj.hd);
+        const wantPsi = along >= 0 ? proj.hd : proj.hd + Math.PI;
+        let dpsi = wantPsi - this.psi;
+        while (dpsi > Math.PI) dpsi -= 2 * Math.PI;
+        while (dpsi < -Math.PI) dpsi += 2 * Math.PI;
+        this.psi += dpsi * Math.min(0.5, vn * 0.03);
+        this.r *= 0.4;
+        this.impact = vn;
+        // 正面に近い角度で強く当たるとクラッシュ（しばらく走れない）
+        if (vn > 11 && this.crashT <= 0) {
+          this.crashT = 1.6;
+          this.vx *= 0.25;
+          this.vz *= 0.25;
+          this.r += (Math.random() - 0.5) * 3;
+          this.crashed = true;
+        }
+      }
+      this.scrape = true;
+      tr.project(this.x, this.z, this.hint, proj);
+    } else this.scrape = false;
+  }
+
+  // 地面に沿う。地面が重力より速く下がる所（ジャンプ台の先端・急な頂上）では宙に浮く
+  followGround(dt, tr) {
+    const gy = tr.groundY(proj.i, proj.y);
+    const vyG = (gy - this.y) / Math.max(dt, 1e-4);
+    if (this.speed > 8 && vyG < this.vyG - G * dt * 3 && this.y - gy > 0.05) {
+      // 離陸: 直前の上向きの速さを保って飛ぶ
+      this.air = true;
+      this.vy = this.vyG;
+      this.airT = 0;
+      this.y += this.vy * dt;
+      return;
+    }
+    this.y = gy;
+    this.vyG = Math.max(-20, Math.min(20, vyG));
+  }
+
+  // 空中: タイヤの力はなく、重力と空気抵抗だけ。ハンドルで向きを少しだけ変えられる
+  stepAir(dt, input) {
+    const c = this.spec;
+    const tr = this.track;
+    this.airT += dt;
+    this.vy -= G * dt;
+    this.y += this.vy * dt;
+    const sp = Math.hypot(this.vx, this.vz);
+    const k = 1 - ((0.5 * 1.2 * c.CdA) / c.mass) * sp * dt;
+    this.vx *= k; this.vz *= k;
+    this.x += this.vx * dt;
+    this.z += this.vz * dt;
+    const steerIn = Math.max(-1, Math.min(1, input.steer));
+    this.r += (-steerIn * 0.5 - this.r) * Math.min(1, dt * 3);
+    this.psi += this.r * dt;
+    if (this.boostT > 0) this.boostT -= dt;
+    this.drift = 0; this.driftLvl = 0; this.driftT = 0;
+    this.collideWalls(tr);
+    this.s = proj.s;
+    this.d = proj.d;
+    const gy = tr.groundY(proj.i, proj.y);
+    if (this.y <= gy) {
+      // 着地
+      const hard = -this.vy;
+      this.air = false;
+      this.y = gy;
+      this.vyG = 0;
+      this.landed = hard;
+      if (hard > 9) { this.vx *= 0.93; this.vz *= 0.93; }
+      if (tr.inHole(proj.s)) this.fell = true; // 谷に落ちた
+      this.vy = 0;
+    }
+    const sp3 = Math.sin(this.psi), cp3 = Math.cos(this.psi);
+    this.u = this.vx * sp3 + this.vz * cp3;
+    this.vl = this.vx * cp3 - this.vz * sp3;
+    this.speed = Math.hypot(this.vx, this.vz);
+    this.throttle = Math.max(0, Math.min(1, input.throttle));
+    this.braking = 0;
+    this.offTrack = 0; this.onCurb = 0;
+    this.slipF = 0; this.slipR = 0; this.wheelspin = 0; this.lock = 0;
+    this.wheelRot += (this.u / c.wheelR) * dt;
+    // 空中では鼻先が少しずつ下がる
+    this.pitch += (Math.atan2(this.vy, Math.max(8, this.speed)) * 0.6 - this.pitch) * Math.min(1, dt * 3);
+    this.roll *= 1 - Math.min(1, dt * 2);
+  }
+
 }

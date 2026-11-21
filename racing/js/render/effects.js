@@ -7,10 +7,12 @@ export class Effects {
     this.scene = scene;
     this.track = track;
     this.rain = opts.rain;
+    this.snow = !!opts.snow;
     this.quality = opts.quality;
+    this._tc = new THREE.Color();
     this.buildSkids();
     this.buildParticles();
-    if (this.rain) this.buildRain();
+    if (this.rain || this.snow) this.buildRain();
   }
 
   // ---- スキッドマーク（リングバッファ） ----
@@ -134,6 +136,16 @@ export class Effects {
     const lx = Math.cos(st.psi), lz = -Math.sin(st.psi);
     const wheels = [[0.82, 1.3], [-0.82, 1.3], [0.82, -1.36], [-0.82, -1.36]];
     const slip = st.slipAmount || 0;
+    // スモークの色（ガレージのカスタム。null なら標準の白）
+    let sr, sg, sb;
+    if (st.smoke != null) {
+      if (st.smoke === 'rainbow') this._tc.setHSL((performance.now() / 1500) % 1, 0.9, 0.62);
+      else this._tc.set(st.smoke);
+      // Color は線形値なので、そのまま出力される粒子用に sRGB へ戻す
+      sr = this._tc.r ** (1 / 2.2); sg = this._tc.g ** (1 / 2.2); sb = this._tc.b ** (1 / 2.2);
+    } else {
+      sr = sg = sb = this.rain ? 0.75 : 0.82;
+    }
     for (let w = 0; w < 4; w++) {
       const [ox, oz] = wheels[w];
       const x = st.x + lx * ox + fx * oz, z = st.z + lz * ox + fz * oz;
@@ -145,15 +157,20 @@ export class Effects {
         if (st.lock && !rear) a = Math.max(a, st.lock * 0.8);
         if (st.wheelspin && rear) a = Math.max(a, st.wheelspin * 0.8);
       }
-      this.addSkid(key + w, x, st.y, z, lx, lz, Math.min(1, a * 1.4));
-      if (a > 0.15 && sp > 3 && Math.random() < dt * 40 * a) {
-        const c = this.rain ? 0.75 : 0.82;
-        this.emit(x, st.y + 0.25, z, -st.vx * 0.15 + (Math.random() - 0.5), 0.6 + Math.random(), -st.vz * 0.15 + (Math.random() - 0.5), 0.9, 2.8, 1.6 + Math.random(), c, c, c, this.rain ? 0.25 : 0.4);
+      const rs = st.roadSurf || 0; // 0 舗装 1 砂利 2 土 3 雪 4 氷 5 砂
+      this.addSkid(key + w, x, st.y, z, lx, lz, rs === 0 ? Math.min(1, a * 1.4) : 0);
+      if (rs !== 0 && rs !== 4 && surf <= 1 && sp > 5 && (rear || sp > 20) && Math.random() < dt * (rear ? 46 : 20) * Math.min(1.4, sp / 28)) {
+        const col = [[0.66, 0.6, 0.52], [0.52, 0.4, 0.3], [0.97, 0.98, 1.0], null, [0.82, 0.68, 0.46]][rs === 5 ? 4 : rs - 1];
+        if (col) this.emit(x, st.y + 0.2, z, -st.vx * 0.12 + (Math.random() - 0.5) * 1.6, 0.7 + Math.random() * 1.4, -st.vz * 0.12 + (Math.random() - 0.5) * 1.6, 1.1, 4.2, 1.7 + Math.random() * 1.2, col[0], col[1], col[2], rs === 3 ? 0.5 : 0.42);
       }
-      if (surf >= 2 && sp > 4 && Math.random() < dt * 30) {
+      if (a > 0.15 && sp > 3 && Math.random() < dt * 40 * a) {
+        this.emit(x, st.y + 0.25, z, -st.vx * 0.15 + (Math.random() - 0.5), 0.6 + Math.random(), -st.vz * 0.15 + (Math.random() - 0.5), 0.9, 2.8, 1.6 + Math.random(), sr, sg, sb, this.rain ? 0.25 : 0.4);
+      }
+      // 芝・砂に出たときの土ぼこり（視界を遮らない程度に控えめ）
+      if (surf >= 2 && rear && sp > 6 && Math.random() < dt * 9) {
         const sand = surf === 3;
         const r = sand ? 0.75 : 0.45, g = sand ? 0.6 : 0.38, b = sand ? 0.45 : 0.25;
-        this.emit(x, st.y + 0.2, z, -st.vx * 0.2 + (Math.random() - 0.5) * 2, 1 + Math.random() * 1.5, -st.vz * 0.2 + (Math.random() - 0.5) * 2, 1.2, 3.5, 1.5, r, g, b, 0.5);
+        this.emit(x, st.y + 0.15, z, -st.vx * 0.1 + (Math.random() - 0.5), 0.4 + Math.random() * 0.6, -st.vz * 0.1 + (Math.random() - 0.5), 0.5, 1.4, 0.9, r, g, b, 0.28);
       }
       if (this.rain && rear && sp > 12 && Math.random() < dt * 25 * (sp / 50)) {
         this.emit(x - fx * 0.5, st.y + 0.3, z - fz * 0.5, -fx * sp * 0.15 + (Math.random() - 0.5) * 2, 0.6 + Math.random(), -fz * sp * 0.15 + (Math.random() - 0.5) * 2, 1.4, 4, 0.9, 0.82, 0.85, 0.9, 0.22);
@@ -161,7 +178,47 @@ export class Effects {
     }
   }
 
+  // ドリフトの火花（チャージの段階で色が変わる）とターボの炎。プレイヤーも CPU も同じ
+  driftFx(st, dt) {
+    const fx = Math.sin(st.psi), fz = Math.cos(st.psi);
+    const lx = Math.cos(st.psi), lz = -Math.sin(st.psi);
+    const COL = [[1.0, 0.9, 0.6], [0.35, 0.72, 1.0], [1.0, 0.55, 0.12], [0.85, 0.4, 1.0]];
+    if (st.drift) {
+      const c = COL[Math.min(3, st.driftLvl || 0)];
+      const rate = (st.driftLvl ? 70 : 25) * dt;
+      for (const side of [1, -1]) {
+        const x = st.x + lx * side * 0.82 - fx * 1.36, z = st.z + lz * side * 0.82 - fz * 1.36;
+        let n = Math.floor(rate) + (Math.random() < rate % 1 ? 1 : 0);
+        while (n-- > 0) {
+          this.emit(x, (st.y || 0) + 0.12, z, (st.vx || 0) * 0.55 + (Math.random() - 0.5) * 5 - fx * 2, 1 + Math.random() * 2.5, (st.vz || 0) * 0.55 + (Math.random() - 0.5) * 5 - fz * 2, st.driftLvl ? 0.34 : 0.18, -0.3, 0.25 + Math.random() * 0.25, c[0], c[1], c[2], 1);
+        }
+      }
+    }
+    if (st.boostT > 0) {
+      // ターボ中: マフラーから短い炎（控えめ）
+      for (const side of [1, -1]) {
+        if (Math.random() > 0.6) continue;
+        const x = st.x - fx * 2.45 + lx * side * 0.3, z = st.z - fz * 2.45 + lz * side * 0.3;
+        const sp = 4 + Math.random() * 4;
+        this.emit(x, (st.y || 0) + 0.25, z, (st.vx || 0) - fx * sp, 0.2 + Math.random() * 0.3, (st.vz || 0) - fz * sp, 0.22 + Math.random() * 0.08, 1.4, 0.08 + Math.random() * 0.06, 1.0, 0.72, 0.42, 0.7);
+      }
+    }
+  }
+
   // ---- 雨 ----
+  // マフラーの炎（後ろ向きに短く噴く）
+  flame(st) {
+    const fx = Math.sin(st.psi), fz = Math.cos(st.psi);
+    const lx = Math.cos(st.psi), lz = -Math.sin(st.psi);
+    for (const side of [1, -1]) {
+      const x = st.x - fx * 2.45 + lx * side * 0.3, z = st.z - fz * 2.45 + lz * side * 0.3;
+      for (let k = 0; k < 4; k++) {
+        const sp = 3 + Math.random() * 4;
+        this.emit(x, (st.y || 0) + 0.24, z, (st.vx || 0) - fx * sp, 0.3 + Math.random() * 0.4, (st.vz || 0) - fz * sp, 0.18 + Math.random() * 0.1, 1.6, 0.12 + Math.random() * 0.08, 1.0, 0.55 + Math.random() * 0.25, 0.15, 0.95);
+      }
+    }
+  }
+
   buildRain() {
     const N = this.quality >= 2 ? 5000 : 2500;
     const g = new THREE.BufferGeometry();
@@ -175,7 +232,7 @@ export class Effects {
     g.setAttribute('position', new THREE.BufferAttribute(p, 3));
     this.rainPos = p;
     this.rainN = N;
-    const mat = new THREE.LineBasicMaterial({ color: 0xaab4c0, transparent: true, opacity: 0.35, depthWrite: false });
+    const mat = new THREE.LineBasicMaterial({ color: this.snow ? 0xffffff : 0xaab4c0, transparent: true, opacity: this.snow ? 0.8 : 0.35, depthWrite: false });
     this.rainLines = new THREE.LineSegments(g, mat);
     this.rainLines.frustumCulled = false;
     this.scene.add(this.rainLines);
@@ -210,9 +267,10 @@ export class Effects {
       this.skidDirty = false;
     }
     // 雨: カメラの周りの箱で循環
-    if (this.rain) {
+    if (this.rain || this.snow) {
       this.rainT += dt;
-      const fall = 22;
+      const fall = this.snow ? 2.6 : 22;
+      const seg = this.snow ? 0.16 : 0.7;
       const sx = (camVel ? camVel.x : 0) * 0.03, sz = (camVel ? camVel.z : 0) * 0.03;
       for (let i = 0; i < this.rainN; i++) {
         const bx = this.rainBase[i * 3], bz = this.rainBase[i * 3 + 2];
@@ -222,8 +280,9 @@ export class Effects {
         const z = cam.z + ((((bz - cam.z) % 70) + 105) % 70) - 35;
         const yy = cam.y - 10 + y;
         const o = i * 6;
-        this.rainPos[o] = x; this.rainPos[o + 1] = yy; this.rainPos[o + 2] = z;
-        this.rainPos[o + 3] = x - sx; this.rainPos[o + 4] = yy - 0.7; this.rainPos[o + 5] = z - sz;
+        const sway = this.snow ? Math.sin(this.rainT * 0.9 + i) * 0.6 : 0;
+        this.rainPos[o] = x + sway; this.rainPos[o + 1] = yy; this.rainPos[o + 2] = z;
+        this.rainPos[o + 3] = x + sway - sx * (this.snow ? 0.15 : 1); this.rainPos[o + 4] = yy - seg; this.rainPos[o + 5] = z - sz * (this.snow ? 0.15 : 1);
       }
       this.rainLines.geometry.attributes.position.needsUpdate = true;
     }
