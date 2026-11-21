@@ -7,7 +7,7 @@ import { Environment } from '../world/environment';
 import { Flora } from '../world/flora';
 import { Creatures, type PhotoTarget } from '../life/creatures';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
-import { DIVE_POINTS, heightAt, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
+import { caveRoofAt, DIVE_POINTS, heightAt, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
@@ -66,6 +66,8 @@ export class Game {
   private freezeT = 0;
   private lastEncounter = -100;
   private coldWarned = -100;
+  /** night dive chosen on the boat */
+  private nightMode = false;
   private missions!: Missions;
   /** request rewards earned this dive */
   private bonuses: { label: string; value: number }[] = [];
@@ -121,6 +123,12 @@ export class Game {
 
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
+    $('night-toggle').addEventListener('click', () => {
+      this.nightMode = !this.nightMode;
+      $('night-toggle').setAttribute('aria-pressed', String(this.nightMode));
+      $('night-label').textContent = `ナイトダイブ：${this.nightMode ? 'ON' : 'OFF'}`;
+      this.audio.unlock();
+    });
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.installHooks();
@@ -251,7 +259,7 @@ export class Game {
   private renderTitle(): void {
     const n = this.foundCount;
     $('t-dex').textContent = `${n}/${SPECIES.length}`;
-    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6' };
+    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70' };
     const pts = $('points');
     pts.innerHTML = '';
     for (const dp of DIVE_POINTS) {
@@ -262,7 +270,7 @@ export class Game {
       b.className = 'pt';
       b.type = 'button';
       b.disabled = locked;
-      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : '12m'}</span>
+      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : '12m'}</span>
         <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `写真の稼ぎで「大気圧潜水服」を買うと行ける` : dp.sub}</div></span>
         <span class="pr"><b>${got}</b>/${zoneSpecies.length}<span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
       b.addEventListener('click', () => this.startDive(dp));
@@ -463,6 +471,9 @@ export class Game {
       this.env.lightOn = this.ads;
       this.env.lightPower = this.ads || this.has('light') ? 1.6 : 1;
       this.creatures.stealth = this.has('rebreather') ? 0.5 : 1;
+      this.env.night = this.nightMode && !this.ads ? 1 : 0;
+      this.creatures.night = this.env.night > 0;
+      if (this.env.night) { this.env.lightOn = true; $('btn-light').classList.add('on'); }
       this.creatures.shield = this.has('shield');
       if (this.minimap) this.minimap.blips = [];
       this.coldWarned = -100;
@@ -687,6 +698,14 @@ export class Game {
       p.y = -0.35;
       this.vel.y = Math.min(0, this.vel.y);
     }
+    // cave roof: stay under it inside the passage, on top of it above (the rock slab is ~2.3 m deep)
+    const roof = caveRoofAt(p.x, p.z);
+    if (roof !== null && p.y > roof - 0.55 && p.y < -1.8) {
+      if (p.y - roof < -1.8 - p.y) { p.y = roof - 0.55; this.vel.y = Math.min(0, this.vel.y); }
+      else { p.y = -1.8; this.vel.y = Math.max(0, this.vel.y); }
+    }
+    this.env.shade = roof !== null && p.y < roof ? 1 : 0;
+    this.env.plankton = Math.min(1, this.vel.length() / 1.5);
     // camera orientation with subtle sway
     const sway = this.reducedMotion ? 0 : 1;
     const roll = Math.sin(this.time * 0.7) * 0.012 * sway + clamp(-inp.moveX * 0.06, -0.06, 0.06) + Math.sin(this.time * 1.9) * this.narc * 0.08;
@@ -744,7 +763,7 @@ export class Game {
     const cropX = Math.min(0.62, (0.8 * 4) / (3 * aspect));
     const cropY = Math.min(0.8, (cropX * aspect * 3) / 4);
     cam.updateMatrixWorld();
-    this.target = this.creatures.findTarget(cam, { clear, dark: d > 140, lightOn: this.env.lightOn, cropX, cropY, beam: this.has('light') ? 1.6 : 1, macro: this.has('macro'), wide: this.has('wide') });
+    this.target = this.creatures.findTarget(cam, { clear, dark: d > 140 || this.env.night > 0 || this.env.shade > 0, lightOn: this.env.lightOn, cropX, cropY, beam: this.has('light') ? 1.6 : 1, macro: this.has('macro'), wide: this.has('wide') });
     if (inp.consume('shutter')) {
       this.captureReq = this.target;
       this.audio.shutter();
@@ -786,7 +805,7 @@ export class Game {
     }
     const known = !!this.save.found[def.id];
     const depth = -t.agent.p.y;
-    const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2);
+    const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2, this.env.night > 0);
     this.missions.onPhoto(def.id, ev.grade.g);
     // a known species pays a share unless this beats the best photo on record
     const best = this.save.found[def.id]?.score ?? -1;
@@ -872,7 +891,7 @@ export class Game {
       let sub = why[t.reason];
       if (t.inRange) {
         // live grade: the player sees closer / side-on / centred pays more before pressing the shutter
-        const ev = evaluateShot(t, this.lastClear, -t.agent.p.y, this.currentF > 0.2);
+        const ev = evaluateShot(t, this.lastClear, -t.agent.p.y, this.currentF > 0.2, this.env.night > 0);
         const hint = t.side < 0.6 ? '横から狙うと↑' : t.frac < 0.2 ? '寄ると↑' : t.centred < 0.6 ? '中央で↑' : '';
         sub = `<span class="g${ev.grade.g}">評価 ${ev.grade.g}</span>${t.danger ? ' <span class="gS">危険手当！</span>' : ''}${hint ? '　' + hint : ''}`;
       }
@@ -918,7 +937,7 @@ export class Game {
     this.flora.update(cp, this.time);
     this.env.update(dt, this.camera, this.renderer, this.time);
     // image-based fill only adds sheen near the surface; it must not flatten the sun/shade contrast
-    this.scene.environmentIntensity = 0.22 * Math.exp(Math.min(0, this.camera.position.y) / 25) + 0.01;
+    this.scene.environmentIntensity = (0.22 * Math.exp(Math.min(0, this.camera.position.y) / 25) + 0.01) * (1 - this.env.darkness * 0.95);
     if (this.state === 'diving' && !this.paused) this.updateHud(dt);
 
     // ambience
@@ -971,12 +990,15 @@ export class Game {
       wreck: { x: WRECK.x - 12, y: -32, z: WRECK.z - 22, yaw: Math.PI * 0.85, pitch: -0.3 },
       offshore: { x: 0, y: -12, z: 520, yaw: Math.PI, pitch: 0.05 },
       cold: { x: -300, y: -7, z: 170, yaw: Math.PI * 0.9, pitch: -0.2 },
+      ruins: { x: -330, y: -12, z: 445, yaw: Math.PI, pitch: -0.15 },
+      bluehole: { x: -330, y: -9, z: 652, yaw: Math.PI, pitch: -0.45 },
+      cave: { x: -326, y: -20, z: 856, yaw: Math.PI * 0.82, pitch: -0.05 },
       surface: { x: 0, y: -4, z: 480, yaw: Math.PI, pitch: 0.75 },
       deep: { x: VENT.x - 14, y: heightAt(VENT.x - 14, VENT.z - 22) + 6, z: VENT.z - 22, yaw: Math.PI * 0.8, pitch: -0.15, light: true },
     };
     (window as unknown as Record<string, unknown>).__THREE_GAME_TEST_HOOKS__ = {
       game: this,
-      startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost') => { this.missions.force = k; },
+      startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure') => { this.missions.force = k; },
       currents: () => this.currents,
       currentF: () => this.currentF,
       showcase: (id: string, dist = 2, side = 1) => {

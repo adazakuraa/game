@@ -3,7 +3,7 @@ import { clamp, fbm2, lerp, ridged2, simplex2, smoothstep } from '../utils/noise
 // World axes: y up (surface y=0), z increases offshore, x along the shore.
 export const WORLD = { minX: -430, maxX: 210, minZ: -70, maxZ: 1080 };
 
-export type ZoneId = 'lagoon' | 'reef' | 'rocky' | 'dropoff' | 'offshore' | 'deep' | 'cold';
+export type ZoneId = 'lagoon' | 'reef' | 'rocky' | 'dropoff' | 'offshore' | 'deep' | 'cold' | 'ruins' | 'bluehole' | 'cave';
 
 export const ZONE_NAMES: Record<ZoneId, string> = {
   lagoon: '浅瀬ラグーン',
@@ -13,6 +13,9 @@ export const ZONE_NAMES: Record<ZoneId, string> = {
   offshore: '沖の大海原',
   deep: '深海',
   cold: '流氷の入り江',
+  ruins: '海底遺跡',
+  bluehole: 'ブルーホール',
+  cave: '水中洞窟',
 };
 
 export const VENT = { x: 28, z: 965 };
@@ -35,6 +38,96 @@ export function reefEdgeZ(x: number): number {
  */
 export function coldWeight(x: number, z: number): number {
   return (1 - smoothstep(-238, -212, x)) * (1 - smoothstep(330, 390, z));
+}
+
+// ----------------------------------------------------------------------------- western sites
+// Three special dive sites west of the drop-off (x < -220, z > 400): underwater ruins + ship graveyard,
+// a blue hole, and a cenote-style cave. They replace the open-ocean profile there.
+export const RUINS = { x: -330, z: 505 };
+export const BLUEHOLE = { x: -330, z: 690, r: 27, depth: 55 };
+export const CENOTE = { x: -330, z: 850, r: 9, depth: 22 };
+/** Cave passage: from the cenote pit through a winding tunnel to a chamber. [x, z, half-width] */
+export const CAVE_PATH: [number, number, number][] = [
+  [-330, 850, 4], [-318, 866, 3.6], [-304, 884, 3.4], [-296, 904, 3.6], [-300, 926, 3.4], [-314, 944, 3.6],
+  [-332, 956, 4.2], [-350, 962, 7.5], [-362, 970, 8],
+];
+export const WRECKS_WEST: { x: number; z: number; rot: number; tilt: number }[] = [
+  { x: -390, z: 560, rot: 1.9, tilt: 0.3 },
+  { x: -275, z: 585, rot: -0.7, tilt: -0.18 },
+  { x: -365, z: 455, rot: 0.4, tilt: 0.12 },
+];
+
+export function westWeight(x: number, z: number): number {
+  return (1 - smoothstep(-238, -212, x)) * smoothstep(388, 412, z);
+}
+
+/** distance from (x,z) to the cave path, and the interpolated half-width there */
+export function caveDist(x: number, z: number): { d: number; w: number; t: number } {
+  let best = 1e9, bw = 3, bt = 0;
+  for (let i = 0; i < CAVE_PATH.length - 1; i++) {
+    const [ax, az, aw] = CAVE_PATH[i], [bx, bz, bw2] = CAVE_PATH[i + 1];
+    const dx = bx - ax, dz = bz - az;
+    const L2 = dx * dx + dz * dz;
+    const u = clamp(((x - ax) * dx + (z - az) * dz) / L2, 0, 1);
+    const px = ax + dx * u, pz = az + dz * u;
+    const d = Math.hypot(x - px, z - pz);
+    if (d < best) { best = d; bw = lerp(aw, bw2, u); bt = (i + u) / (CAVE_PATH.length - 1); }
+  }
+  return { d: best, w: bw, t: bt };
+}
+
+/** Underside of the cave roof at (x,z), or null where there is no roof (open water / cenote shaft). */
+export function caveRoofAt(x: number, z: number): number | null {
+  if (x > -240 || x < -425 || z < 820 || z > 1000) return null;
+  if (Math.hypot(x - CENOTE.x, z - CENOTE.z) < CENOTE.r + 1.5) return null;
+  const c = caveDist(x, z);
+  if (c.d > c.w + 3.2) return null;
+  const floor = -(CENOTE.depth + c.t * 6);
+  const tall = c.w > 6 ? 9 : 5.5;
+  return floor + tall + 0.7 * simplex2(x * 0.35, z * 0.35) - 0.8 * Math.max(0, simplex2(x * 1.1 + 4, z * 1.1)) ** 2 * 2;
+}
+
+function westHeight(x: number, z: number): number {
+  // --- ruins + ship graveyard (z 410..605)
+  const ruinsW = 1 - smoothstep(595, 620, z);
+  const blueW = smoothstep(595, 620, z) * (1 - smoothstep(770, 795, z));
+  const caveW = smoothstep(770, 795, z);
+  let h = 0;
+  if (ruinsW > 0) {
+    let hr = -22 + 1.2 * fbm2(x * 0.04, z * 0.04, 3);
+    // stepped monument (Yonaguni-like terraces with sharp risers)
+    const dx = Math.abs(x - RUINS.x), dz = Math.abs(z - RUINS.z);
+    const r = Math.max(dx / 1.3, dz);
+    const e = clamp(17 - r * 0.42, 0, 17);
+    const stepH = 2.2;
+    const stepped = Math.floor(e / stepH) * stepH + smoothstep(0.86, 1, (e / stepH) % 1) * stepH;
+    hr += stepped + 0.15 * simplex2(x * 0.8, z * 0.8);
+    // a straight "road" trench and plaza to the north of the monument
+    if (Math.abs(x - RUINS.x) < 4 && z > RUINS.z + 28 && z < RUINS.z + 70) hr -= 1.2;
+    h += ruinsW * hr;
+  }
+  if (blueW > 0) {
+    // shallow white-sand plateau with a sheer circular hole
+    let hb = -7 + 0.8 * fbm2(x * 0.05, z * 0.05, 3);
+    const rr = Math.hypot(x - BLUEHOLE.x, z - BLUEHOLE.z) + 1.5 * simplex2(Math.atan2(z - BLUEHOLE.z, x - BLUEHOLE.x) * 3, 1);
+    const wall = smoothstep(BLUEHOLE.r + 2, BLUEHOLE.r - 2, rr);
+    const bowl = (1 - clamp(rr / BLUEHOLE.r, 0, 1)) ** 2 * 4;
+    hb = lerp(hb, -BLUEHOLE.depth - bowl + 1.5 * fbm2(x * 0.1, z * 0.1, 2), wall);
+    // rim ledge where the stalactites hang
+    hb -= smoothstep(BLUEHOLE.r + 6, BLUEHOLE.r + 2, rr) * (1 - wall) * 3;
+    h += blueW * hb;
+  }
+  if (caveW > 0) {
+    // rock plateau just under the surface; cenote pit and the cave trench (roofed separately)
+    let hc = -2.6 + 0.6 * ridged2(x * 0.06, z * 0.06, 3);
+    const rc = Math.hypot(x - CENOTE.x, z - CENOTE.z);
+    hc = lerp(hc, -CENOTE.depth - 1.5 * fbm2(x * 0.2, z * 0.2, 2), smoothstep(CENOTE.r + 3, CENOTE.r - 1, rc));
+    const c = caveDist(x, z);
+    const floor = -(CENOTE.depth + c.t * 6) + 0.6 * fbm2(x * 0.3, z * 0.3, 2);
+    hc = Math.min(hc, lerp(floor, hc, smoothstep(c.w - 0.5, c.w + 2.5, c.d)));
+    h += caveW * hc;
+  }
+  return h;
 }
 
 /** Bottom height (negative = below surface). */
@@ -106,6 +199,8 @@ export function heightAt(x: number, z: number): number {
   // wreck scour pit
   const wd = Math.hypot(x - WRECK.x, z - WRECK.z);
   if (wd < 30) h -= (1 - wd / 30) ** 2 * 1.5;
+  const ww = westWeight(x, z);
+  if (ww > 0) h = lerp(h, westHeight(x, z), ww);
   const cw = coldWeight(x, z);
   if (cw > 0) {
     // cold cove: boulder field sloping from a cobble shore (west) and the bay mouth (north) to ~26 m
@@ -129,6 +224,7 @@ export function bommieAt(x: number, z: number): number {
 
 export function zoneAt(x: number, z: number): ZoneId {
   if (coldWeight(x, z) > 0.5) return 'cold';
+  if (westWeight(x, z) > 0.5) return z < 607 ? 'ruins' : z < 782 ? 'bluehole' : 'cave';
   const edge = reefEdgeZ(x);
   if (z > 720) return 'deep';
   if (z > 480) return 'offshore';
@@ -217,5 +313,8 @@ export const DIVE_POINTS: DivePoint[] = [
   { id: 'rocky', name: '岩礁', sub: '水深 8–25m・岩の隙間に潜む', x: 112, z: 200 },
   { id: 'dropoff', name: 'ドロップオフ／沖', sub: '水深 15m〜・大物と出会う', x: 0, z: 470 },
   { id: 'cold', name: '流氷の入り江', sub: '水温2℃・ドライスーツが無いとエアがすぐ尽きる', x: -300, z: 130 },
+  { id: 'ruins', name: '海底遺跡', sub: '水深 6–24m・石の階段と沈船の墓場', x: -330, z: 440 },
+  { id: 'bluehole', name: 'ブルーホール', sub: '水深 7→55m・浅瀬に開いた底なしの青い穴', x: -330, z: 640 },
+  { id: 'cave', name: '水中洞窟', sub: '水深 22–28m・セノーテから暗い洞窟へ（ライト必須）', x: -330, z: 850 },
   { id: 'deep', name: '深海', sub: '水深 170–430m・大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },
 ];

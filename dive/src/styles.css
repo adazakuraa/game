@@ -291,3 +291,8 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 .res-bonus { width: 100%; display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; padding: 7px 10px; border-radius: 10px; background: rgba(255,181,71,0.12); color: var(--warn); }
 .res-bonus b { font-family: var(--num); color: var(--ok); }
 @media (width <= 520px) { #mission { top: calc(214px + var(--safe-t)); max-width: calc(100vw - 32px); } }
+
+.night-toggle { justify-content: flex-start; gap: 10px; text-align: left; flex-wrap: wrap; }
+.night-toggle .moon { font-size: 20px; color: var(--warn); }
+.night-toggle small { flex-basis: 100%; font-size: 11px; color: var(--ink-dim); font-weight: 500; margin-left: 30px; margin-top: -4px; }
+.night-toggle[aria-pressed="true"] { border-color: var(--warn); background: #1a1630e6; }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ARCH, bommieAt, heightAt, reefEdgeZ, rockyWeight, VENT, WRECK, zoneAt, DIVE_POINTS } from './layout';
+import { ARCH, bommieAt, BLUEHOLE, CAVE_PATH, caveDist, caveRoofAt, CENOTE, heightAt, reefEdgeZ, rockyWeight, RUINS, VENT, WRECK, WRECKS_WEST, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
 import { addSurfaceItem } from './surface';
 import { addCollider, addSphere, resolveCapsule } from './colliders';
@@ -517,13 +517,15 @@ export type Homes = {
   bommieSpots: THREE.Vector3[];
   /** boulder tops in the cold cove */
   coldSpots: THREE.Vector3[];
+  /** points along the cave passage floor */
+  caveSpots: THREE.Vector3[];
 };
 
 export class Flora {
   readonly group = new THREE.Group();
   private sets: ScatterSet[] = [];
   private mats: THREE.Material[] = [];
-  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [] };
+  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [] };
   boat: THREE.Group;
   carpetCount = 0;
   private landmarks: THREE.Object3D[] = [];
@@ -920,24 +922,145 @@ export class Flora {
     this.landmarks.push(glow);
 
     // ---- landmarks: wreck, arch, boat, mooring lines
-    const wreck = wreckGroup(rustMat, darkMat);
-    wreck.position.set(WRECK.x, heightAt(WRECK.x, WRECK.z) + 2.2, WRECK.z);
-    wreck.rotation.set(0.04, 0.6, 0.22);
-    wreck.updateMatrixWorld(true);
-    {
+    const placeWreck = (x: number, z: number, rot: number, tilt: number) => {
+      const wreck = wreckGroup(rustMat, darkMat);
+      wreck.position.set(x, heightAt(x, z) + 2.2, z);
+      wreck.rotation.set(0.04, rot, tilt);
+      wreck.updateMatrixWorld(true);
       const v = new THREE.Vector3();
-      for (let z = -15; z <= 15; z += 2.5) {
-        const bow = z > 9 ? 1 - ((z - 9) / 8) ** 1.6 : 1;
-        v.set(0, -1.3, z).applyMatrix4(wreck.matrixWorld);
+      for (let zz = -15; zz <= 15; zz += 2.5) {
+        const bow = zz > 9 ? 1 - ((zz - 9) / 8) ** 1.6 : 1;
+        v.set(0, -1.3, zz).applyMatrix4(wreck.matrixWorld);
         addSphere(v.x, v.y, v.z, Math.max(1.2, 3.4 * bow));
       }
       const house = new THREE.Vector3(0.3, 2.3, -9.5).applyMatrix4(wreck.matrixWorld);
       addSphere(house.x, house.y, house.z, 3.0);
       const mast = wreck.children.find((c) => (c as THREE.Mesh).geometry?.type === 'CylinderGeometry' && c.scale.x === 1 && Math.abs(c.rotation.z - 1.25) < 0.01);
       if (mast) for (let k = -7; k <= 7; k += 1) { v.set(0, k, 0).applyMatrix4(mast.matrixWorld); addSphere(v.x, v.y, v.z, 0.5); }
+      this.group.add(wreck);
+      this.landmarks.push(wreck);
+    };
+    placeWreck(WRECK.x, WRECK.z, 0.6, 0.22);
+    // ship graveyard next to the ruins
+    for (const w of WRECKS_WEST) placeWreck(w.x, w.z, w.rot, w.tilt);
+
+    // ---- underwater ruins: pillars, a gate, fallen blocks on the stepped monument
+    {
+      const pillarG = new THREE.CylinderGeometry(0.55, 0.62, 1, 10, 3);
+      pillarG.translate(0, 0.5, 0);
+      const pillars: ScatterItem[] = [];
+      for (let k = 0; k < 26; k++) {
+        const a = (k / 26) * Math.PI * 2, rr = 26 + (k % 3) * 9;
+        const x = RUINS.x + Math.cos(a) * rr * 1.3, z = RUINS.z + Math.sin(a) * rr;
+        const hgt = r() < 0.4 ? 1.5 + r() * 2 : 4 + r() * 3; // some broken
+        pillars.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, heightAt(x, z) - 0.3, z), new THREE.Quaternion().setFromEuler(new THREE.Euler((r() - 0.5) * 0.12, r() * 6, (r() - 0.5) * 0.12)), new THREE.Vector3(1, hgt, 1)), c: color(0.1, 0.18, 0.5 + r() * 0.12) });
+      }
+      // the gate on the north road
+      for (const sx of [-4.5, 4.5]) {
+        const x = RUINS.x + sx, z = RUINS.z + 52;
+        pillars.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, heightAt(x, z) - 0.3, z), new THREE.Quaternion(), new THREE.Vector3(1.4, 7.5, 1.4)), c: color(0.1, 0.15, 0.55) });
+      }
+      solid(pillarG, rockMat, pillars, 110, 60);
+      const blockG = new THREE.BoxGeometry(1, 1, 1, 2, 2, 2);
+      const blocks: ScatterItem[] = [];
+      const gx = RUINS.x, gz = RUINS.z + 52;
+      blocks.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(gx, heightAt(gx, gz) + 7.6, gz), new THREE.Quaternion(), new THREE.Vector3(12, 1.4, 2)), c: color(0.1, 0.15, 0.55) });
+      for (const [x, z] of sample(70, [RUINS.x - 60, RUINS.x + 60, RUINS.z - 55, RUINS.z + 85], (x, z) => zoneAt(x, z) === 'ruins', 6)) {
+        const sz = 0.8 + r() * 1.8;
+        blocks.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, heightAt(x, z) + sz * 0.3, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(r() * 0.5, r() * 6, r() * 0.5)), new THREE.Vector3(sz * (1 + r()), sz * 0.7, sz)), c: color(0.1, 0.16, 0.45 + r() * 0.15) });
+      }
+      solid(blockG, rockMat, blocks, 110, 60);
     }
-    this.group.add(wreck);
-    this.landmarks.push(wreck);
+
+    // ---- blue hole: stalactites hanging in a ring on the wall at 28-44 m
+    {
+      const stalG = new THREE.ConeGeometry(0.5, 1, 7, 2);
+      stalG.rotateX(Math.PI);
+      stalG.translate(0, -0.5, 0);
+      const stal: ScatterItem[] = [];
+      for (let k = 0; k < 90; k++) {
+        const a = r() * Math.PI * 2, y = -28 - r() * 16;
+        const rr = BLUEHOLE.r - 1.2 + r() * 1.5;
+        const x = BLUEHOLE.x + Math.cos(a) * rr, z = BLUEHOLE.z + Math.sin(a) * rr;
+        const len = 1.5 + r() * 4.5;
+        stal.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(0.35 + len * 0.08, len, 0.35 + len * 0.08)), c: color(0.1, 0.12, 0.42 + r() * 0.1) });
+      }
+      add(stalG, rockMat, stal, 90, 60);
+    }
+
+    // ---- cave: rock roof slab over the trench, stalactites, and a guide line
+    {
+      const pos: number[] = [];
+      const idx: number[] = [];
+      const pts: { x: number; z: number; nx: number; nz: number; w: number }[] = [];
+      for (let i = 0; i < CAVE_PATH.length - 1; i++) {
+        const [ax, az, aw] = CAVE_PATH[i], [bx, bz, bw] = CAVE_PATH[i + 1];
+        const L = Math.hypot(bx - ax, bz - az), n = Math.ceil(L / 0.8);
+        for (let k = 0; k < n; k++) {
+          const u = k / n;
+          pts.push({ x: ax + (bx - ax) * u, z: az + (bz - az) * u, nx: -(bz - az) / L, nz: (bx - ax) / L, w: aw + (bw - aw) * u });
+        }
+      }
+      const J = 14;
+      const sheet = (top: boolean) => {
+        const base = pos.length / 3;
+        let rows = 0;
+        for (const p of pts) {
+          if (Math.hypot(p.x - CENOTE.x, p.z - CENOTE.z) < CENOTE.r + 1.2) continue;
+          for (let j = 0; j <= J; j++) {
+            const sl = -1 + (2 * j) / J;
+            const x = p.x + p.nx * sl * (p.w + 3.4), z = p.z + p.nz * sl * (p.w + 3.4);
+            const rf = caveRoofAt(x, z) ?? caveRoofAt(p.x, p.z) ?? -16;
+            pos.push(x, top ? -2.3 : rf, z);
+          }
+          rows++;
+        }
+        for (let i = 0; i < rows - 1; i++)
+          for (let j = 0; j < J; j++) {
+            const a = base + i * (J + 1) + j, b = a + J + 1;
+            if (top) idx.push(a, a + 1, b, a + 1, b + 1, b);
+            else idx.push(a, b, a + 1, a + 1, b, b + 1);
+          }
+      };
+      sheet(false);
+      sheet(true);
+      const roofG = new THREE.BufferGeometry();
+      roofG.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      roofG.setIndex(idx);
+      roofG.computeVertexNormals();
+      // make sure the underside faces down (winding depends on path direction)
+      const nrm = roofG.attributes.normal as THREE.BufferAttribute;
+      if (nrm.getY(0) > 0) {
+        for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
+        roofG.setIndex(idx);
+        roofG.computeVertexNormals();
+      }
+      const roof = new THREE.Mesh(roofG, rockMat);
+      roof.castShadow = true;
+      roof.receiveShadow = true;
+      this.group.add(roof);
+      // stalactites under the roof (not solid: thin, the diver brushes past)
+      const stalG = new THREE.ConeGeometry(0.18, 1, 6);
+      stalG.rotateX(Math.PI);
+      stalG.translate(0, -0.5, 0);
+      const st: ScatterItem[] = [];
+      for (const p of pts) {
+        if (r() > 0.55) continue;
+        const sl = (r() - 0.5) * 1.6;
+        const x = p.x + p.nx * sl * p.w, z = p.z + p.nz * sl * p.w;
+        const rf = caveRoofAt(x, z);
+        if (rf === null) continue;
+        const len = 0.4 + r() * r() * 2.2;
+        st.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, rf + 0.15, z), new THREE.Quaternion(), new THREE.Vector3(1 + len * 0.4, len, 1 + len * 0.4)), c: color(0.1, 0.1, 0.55) });
+      }
+      add(stalG, rockMat, st, 60, 40);
+      pts.forEach((p, i) => { if (i % 3 === 0 && caveRoofAt(p.x, p.z) !== null) this.homes.caveSpots.push(new THREE.Vector3(p.x, heightAt(p.x, p.z) + 1.4, p.z)); });
+      // yellow guide line along the passage floor
+      const linePts = pts.filter((_, i) => i % 3 === 0).map((p) => new THREE.Vector3(p.x + p.nx * 1.2, heightAt(p.x + p.nx * 1.2, p.z + p.nz * 1.2) + 0.45, p.z + p.nz * 1.2));
+      const line = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(linePts), linePts.length * 4, 0.025, 5), new THREE.MeshStandardMaterial({ color: 0xffd23a, emissive: 0x403000, roughness: 0.6 }));
+      this.group.add(line);
+      void caveDist;
+    }
     const arch = new THREE.Mesh(archGeometry(), rockMat);
     arch.position.set(ARCH.x, heightAt(ARCH.x, ARCH.z) - 3, ARCH.z);
     // the arch is a half torus: spheres along it keep the passage underneath open

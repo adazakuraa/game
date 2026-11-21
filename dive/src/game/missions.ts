@@ -23,11 +23,12 @@ export const MISSION = {
   trash: { spawn: 8, need: 6, time: 80, reward: 1200 },
   photo: { time: 90, rewardMult: 4, minGrade: ['S', 'A', 'B'] },
   lost: { time: 100, reward: 2500, radius: 22 },
+  treasure: { time: 120, reward: 4500, radius: 30 },
   /** 【拾える距離】m */
   pickR: 1.15,
 };
 
-type Kind = 'urchin' | 'trash' | 'photo' | 'lost';
+type Kind = 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure';
 
 export type MissionCtx = {
   dt: number;
@@ -58,6 +59,7 @@ export class Missions {
   private urchinMesh: THREE.InstancedMesh;
   private trashMesh: THREE.InstancedMesh;
   private camMesh: THREE.Mesh;
+  private chestMesh: THREE.Group;
   private _m = new THREE.Matrix4();
   private _q = new THREE.Quaternion();
   private el = {
@@ -80,7 +82,16 @@ export class Missions {
     for (let i = 0; i < MISSION.trash.spawn; i++) this.trashMesh.setColorAt(i, new THREE.Color().setHSL([0.55, 0.1, 0.0, 0.33][i % 4], 0.6, 0.6));
     const cg = new THREE.BoxGeometry(0.22, 0.14, 0.11);
     this.camMesh = new THREE.Mesh(cg, new THREE.MeshStandardMaterial({ color: 0xf2c400, roughness: 0.4, emissive: 0x2a2000 }));
-    for (const m of [this.urchinMesh, this.trashMesh, this.camMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
+    // treasure chest: dark wooden box with gold bands
+    this.chestMesh = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.8, emissive: 0x120804 });
+    const gold = new THREE.MeshStandardMaterial({ color: 0xe8b830, roughness: 0.3, metalness: 0.8, emissive: 0x3a2800 });
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.45), wood);
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.225, 0.225, 0.7, 10, 1, false, 0, Math.PI), wood);
+    lid.rotation.z = Math.PI / 2; lid.position.y = 0.2;
+    this.chestMesh.add(box, lid);
+    for (const x of [-0.25, 0.25]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.66, 0.47), gold); b.position.set(x, 0.12, 0); this.chestMesh.add(b); }
+    for (const m of [this.urchinMesh, this.trashMesh, this.camMesh, this.chestMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
   }
 
   reset(): void {
@@ -94,7 +105,7 @@ export class Missions {
   marks(): { x: number; z: number; rare: boolean }[] {
     const a = this.active;
     if (!a) return [];
-    if (a.kind === 'lost' && a.spot) return [{ x: a.spot.x + 6, z: a.spot.z - 4, rare: true }]; // rough area only
+    if ((a.kind === 'lost' || a.kind === 'treasure') && a.spot) return [{ x: a.spot.x + 6, z: a.spot.z - 4, rare: true }]; // rough area only
     if (a.kind === 'urchin' || a.kind === 'trash') return this.items.filter((_, i) => !this.taken[i]).map((p) => ({ x: p.x, z: p.z, rare: false }));
     return [];
   }
@@ -127,11 +138,12 @@ export class Missions {
       }
       if (a.kind === 'trash') this.writeTrash(c.time);
     }
-    if (a.kind === 'lost' && a.spot) {
+    if ((a.kind === 'lost' || a.kind === 'treasure') && a.spot) {
       const d = a.spot.distanceTo(c.player);
       if ((a.lastHint ?? 0) <= c.time - 6) {
         a.lastHint = c.time;
-        c.toast(d < 6 ? 'カメラはすぐ近く！ 黄色い箱を探そう' : d < 14 ? '近づいている…' : 'まだ遠い。マップの金色の印のあたり', 'warn', 2);
+        const what = a.kind === 'lost' ? 'カメラはすぐ近く！ 黄色い箱を探そう' : '宝箱はすぐ近く！ 石の陰もよく見て';
+        c.toast(d < 6 ? what : d < 14 ? '近づいている…' : 'まだ遠い。マップの金色の印のあたり', 'warn', 2);
       }
       if (d < MISSION.pickR + 0.3) a.got = 1;
     }
@@ -160,6 +172,7 @@ export class Missions {
     if (c.zone === 'rocky' || c.zone === 'cold') opts.push('urchin', 'urchin');
     if (c.zone === 'lagoon' || c.zone === 'reef') opts.push('trash', 'trash');
     if (c.zone === 'reef' || c.zone === 'dropoff') opts.push('lost');
+    if (c.zone === 'ruins') opts.push('treasure', 'treasure', 'treasure');
     const kind = forced ?? opts[Math.floor(Math.random() * opts.length)];
     const ahead = c.player.clone().addScaledVector(c.forward.clone().setY(0).normalize(), 8);
     this.items = [];
@@ -197,6 +210,16 @@ export class Missions {
       this.trashMesh.visible = true;
       this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '海のごみ拾い' };
       c.toast(`【依頼】海のごみが流れてきた！ ${T.time}秒で${T.need}個拾おう（近づくと拾える）`, 'warn', 4.5);
+    } else if (kind === 'treasure') {
+      const T = MISSION.treasure;
+      const a = Math.random() * Math.PI * 2, d = 12 + Math.random() * T.radius;
+      const x = c.player.x + Math.cos(a) * d, z = c.player.z + Math.sin(a) * d;
+      const spot = new THREE.Vector3(x, surfaceAt(x, z) + 0.2, z);
+      this.chestMesh.position.copy(spot);
+      this.chestMesh.rotation.set(0.15, a, 0.1);
+      this.chestMesh.visible = true;
+      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '遺跡の宝探し', spot };
+      c.toast(`【依頼】古い地図によると、この遺跡のどこかに宝箱が沈んでいる！ ${T.time}秒以内に探し出そう`, 'warn', 4.5);
     } else {
       const L = MISSION.lost;
       const a = Math.random() * Math.PI * 2, d = 10 + Math.random() * L.radius;
@@ -237,6 +260,7 @@ export class Missions {
     this.urchinMesh.visible = false;
     this.trashMesh.visible = false;
     this.camMesh.visible = false;
+    this.chestMesh.visible = false;
     if (!silent || this.el.root) this.el.root.classList.add('hidden');
   }
 }

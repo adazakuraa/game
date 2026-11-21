@@ -13,6 +13,9 @@ const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
   offshore: [0.006, 0.09, 0.3, 64],
   deep: [0.004, 0.06, 0.2, 60],
   cold: [0.02, 0.15, 0.17, 26],
+  ruins: [0.012, 0.15, 0.36, 52],
+  bluehole: [0.006, 0.1, 0.38, 60],
+  cave: [0.01, 0.16, 0.2, 34],
 };
 
 /** Water volume visuals: fog, lighting by depth, surface with Snell's window, god rays, marine snow, bubbles. */
@@ -36,6 +39,14 @@ export class Environment {
   private smoothedZone = new THREE.Vector4(0.04, 0.27, 0.4, 46);
   lightOn = false;
   lightPower = 1;
+  /** night dive (0/1) and cave-roof shade target (0/1); both darken sun, sky fill and water */
+  night = 0;
+  shade = 0;
+  /** bioluminescent plankton sparkle (0..1), driven by how fast the diver moves at night */
+  plankton = 0;
+  private shadeS = 0;
+  /** combined night / cave darkness 0..1 (read by the game for image-based light) */
+  darkness = 0;
   narcosis = 0;
   exposure = 1;
 
@@ -192,10 +203,11 @@ export class Environment {
         uAmb: { value: 0.3 },
         uLight: { value: 0 },
         uScale: { value: 500 },
+        uGlow: { value: 0 },
       },
       vertexShader: /* glsl */ `
-        uniform float uTime; uniform vec3 uCam; uniform vec3 uCamDir; uniform float uAmb; uniform float uLight; uniform float uScale;
-        attribute float aSize; varying float vA;
+        uniform float uTime; uniform vec3 uCam; uniform vec3 uCamDir; uniform float uAmb; uniform float uLight; uniform float uScale; uniform float uGlow;
+        attribute float aSize; varying float vA; varying float vG;
         void main(){
           vec3 p = position + vec3(sin(uTime*0.1+position.y)*0.6, -uTime*0.05, cos(uTime*0.13+position.x)*0.6);
           p = mod(p - uCam + 20.0, 40.0) - 20.0 + uCam;
@@ -204,12 +216,14 @@ export class Environment {
           vec3 toP = normalize(p - uCam);
           float cone = smoothstep(0.82, 0.97, dot(toP, uCamDir)) * (1.0 - smoothstep(4.0, 16.0, d));
           vA = (uAmb * (1.0 - smoothstep(8.0, 20.0, d)) + cone * uLight) * smoothstep(0.3, 1.2, d);
+          // night plankton: a third of the motes flash blue-green near the moving diver
+          vG = uGlow * step(0.66, fract(aSize * 13.7 + floor(uTime * 1.3 + aSize * 7.0) * 0.37)) * (1.0 - smoothstep(1.0, 6.0, d));
           gl_PointSize = aSize * uScale / max(d, 0.5) * 0.06;
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: /* glsl */ `
-        varying float vA;
-        void main(){ vec2 c = gl_PointCoord - 0.5; float a = smoothstep(0.5, 0.0, length(c)); gl_FragColor = vec4(vec3(0.9,0.95,1.0)*a*vA, 1.0); }`,
+        varying float vA; varying float vG;
+        void main(){ vec2 c = gl_PointCoord - 0.5; float a = smoothstep(0.5, 0.0, length(c)); gl_FragColor = vec4((vec3(0.9,0.95,1.0)*vA + vec3(0.25,0.95,1.0)*vG*2.5)*a, 1.0); }`,
     });
     this.snow = new THREE.Points(sg, this.snowMat);
     this.snow.frustumCulled = false;
@@ -283,6 +297,10 @@ export class Environment {
       this.smoothedZone.y * attG * att,
       this.smoothedZone.z * att * (0.35 + 0.65 * Math.exp(-depth / 160)),
     );
+    this.shadeS = lerp(this.shadeS, this.shade, 1 - Math.exp(-dt * 2.5));
+    const D = Math.max(this.night * 0.97, this.shadeS * 0.95);
+    this.darkness = D;
+    this.waterCol.multiplyScalar(1 - D * 0.88);
     // keep a faint floor so the deep is not pure black
     this.waterCol.r = Math.max(this.waterCol.r, 0.0006);
     this.waterCol.g = Math.max(this.waterCol.g, 0.0025);
@@ -295,10 +313,10 @@ export class Environment {
 
     // daylight
     const day = Math.exp(-depth / 24);
-    this.sun.intensity = 3.0 * day;
+    this.sun.intensity = 3.0 * day * (1 - D);
     // sun shadows: crisp in the shallows, softer and weaker with depth, off in the deep
     const sh = this.sun.shadow;
-    sh.intensity = clamp(Math.exp(-depth / 22) * 1.05, 0, 0.92);
+    sh.intensity = clamp(Math.exp(-depth / 22) * 1.05, 0, 0.92) * (1 - D);
     sh.radius = 2 + depth * 0.25;
     const camS = sh.camera as THREE.OrthographicCamera;
     const texel = (camS.right - camS.left) / sh.mapSize.x;
@@ -316,10 +334,10 @@ export class Environment {
     this.sun.color.copy(this.tmpCol);
     UW.uSunCol.value.copy(this.tmpCol);
     // ambient fill is low in the shallows so sunlit vs. shaded reads clearly; it takes over with depth
-    this.hemi.intensity = (0.38 + 0.25 * clamp(depth / 25, 0, 1)) * Math.exp(-depth / 40) + 0.015;
+    this.hemi.intensity = ((0.38 + 0.25 * clamp(depth / 25, 0, 1)) * Math.exp(-depth / 40)) * (1 - D * 0.96) + 0.015 * (1 - D * 0.6);
     this.hemi.color.setRGB(0.42 + 0.3 * attR, 0.78, 0.95);
     this.hemi.groundColor.setRGB(0.16 * attR + 0.03, 0.14 * att + 0.03, 0.1 * att + 0.04);
-    UW.uCaustic.value = clamp(Math.exp(-depth / 18) * 1.1, 0, 1.0);
+    UW.uCaustic.value = clamp(Math.exp(-depth / 18) * 1.1, 0, 1.0) * (1 - D);
 
     // diver light
     const target = this.lightOn ? (depth > 120 ? 1.0 : 0.75) * this.lightPower : 0;
@@ -334,11 +352,11 @@ export class Environment {
     this.surface.position.set(cp.x, 0, cp.z);
     const sm = this.surface.material as THREE.ShaderMaterial;
     sm.uniforms.uTime.value = time;
-    sm.uniforms.uBright.value = 0.75 + 0.25 * Math.exp(-depth / 10);
+    sm.uniforms.uBright.value = (0.75 + 0.25 * Math.exp(-depth / 10)) * (1 - this.night * 0.82);
     this.surface.visible = depth < 70;
 
     // rays follow camera on a wrapping grid
-    const rayStrength = clamp(Math.exp(-depth / 20) * 1.2, 0, 1);
+    const rayStrength = clamp(Math.exp(-depth / 20) * 1.2, 0, 1) * (1 - this.night);
     this.rayMat.uniforms.uStrength.value = rayStrength;
     this.rayMat.uniforms.uCamPos.value.copy(cp);
     this.rayMat.uniforms.uColor.value.setRGB(0.45 + 0.4 * attR, 0.85, 0.95);
@@ -355,7 +373,8 @@ export class Environment {
     const su = this.snowMat.uniforms;
     su.uCam.value.copy(cp);
     cam.getWorldDirection(su.uCamDir.value);
-    su.uAmb.value = 0.1 + 0.32 * Math.exp(-depth / 30) + (depth > 150 ? 0.05 : 0);
+    su.uAmb.value = (0.1 + 0.32 * Math.exp(-depth / 30) + (depth > 150 ? 0.05 : 0)) * (1 - D * 0.85);
+    su.uGlow.value = lerp(su.uGlow.value, this.night * this.plankton, 1 - Math.exp(-dt * 4));
     su.uLight.value = (this.diverLight.intensity / 30) * 0.9;
     su.uScale.value = renderer.domElement.height / 2;
 

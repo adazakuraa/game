@@ -6,7 +6,7 @@ import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
-import { heightAt, VENT } from '../world/layout';
+import { caveRoofAt, heightAt, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
 import { resolveCapsule, resolveSphere } from '../world/colliders';
@@ -258,6 +258,8 @@ export class Creatures {
   /** gear effects set by the game: rebreather (no bubbles) shrinks flight distance; shark shield turns charges away */
   stealth = 1;
   shield = false;
+  /** night dive: nocturnal species come out */
+  night = false;
   /** test-only: pin agent 0 of a species */
   pin: { id: string; p: THREE.Vector3; yaw: number } | null = null;
   readonly group = new THREE.Group();
@@ -292,6 +294,7 @@ export class Creatures {
     else if (reg === 'grassSpots') p = fromList(homes.grassSpots);
     else if (reg === 'bommieSpots') p = fromList(homes.bommieSpots);
     else if (reg === 'coldSpots') p = fromList(homes.coldSpots);
+    else if (reg === 'caveSpots') p = fromList(homes.caveSpots);
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;
@@ -686,7 +689,7 @@ export class Creatures {
   reshuffle(player: THREE.Vector3, seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0): void {
     this.rnd = mulberry32(seed);
     for (const rt of this.list) {
-      const p = this.presence(rt.def.rarity);
+      const p = rt.def.when === 'night' && !this.night ? 0 : this.presence(rt.def.rarity);
       const movable = this.canRelocate(rt.def);
       rt.groups.forEach((g, gi) => {
         g.absent = this.rnd() > p;
@@ -992,6 +995,10 @@ export class Creatures {
         const minY = gy + Math.max(0.06, def.behavior === 'bottom' ? this.altitude(def) : def.hab === 'sandForage' ? a.s * 0.15 : a.s * 0.3);
         if (a.p.y < minY) { a.p.y = minY; a.v.y = Math.max(a.v.y, 0); }
         if (a.p.y > -0.4) { a.p.y = -0.4; a.v.y = Math.min(a.v.y, 0); }
+        if (a.p.x < -240 && a.p.z > 820) {
+          const rf = caveRoofAt(a.p.x, a.p.z);
+          if (rf !== null && a.p.y > rf - 0.3 && a.p.y < -2) { a.p.y = rf - 0.3; a.v.y = Math.min(a.v.y, 0); }
+        }
         if (def.behavior === 'bottom') {
           if (this.benthic(def)) {
             // crawlers stay on the surface they are crossing (sand, rock or coral)

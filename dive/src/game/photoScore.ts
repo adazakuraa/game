@@ -23,6 +23,8 @@ export const PHOTO = {
   dangerMult: 2,
   /** 【ダウンカレント手当】shot taken while caught in a down-current */
   currentMult: 1.5,
+  /** 【夜間手当】night dive */
+  nightMult: 1.3,
   /** 【深度手当】+1 per this many metres */
   depthPerBonus: 60,
   /** 【撮り直し】re-shooting a known species pays this share, unless the grade improves */
@@ -45,7 +47,7 @@ export function gradeOf(score: number): Grade {
 }
 
 /** Score 0..100 and money for one in-range shot. */
-export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCurrent: boolean): ShotEval {
+export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCurrent: boolean, night = false): ShotEval {
   const W = PHOTO.weight;
   const size = Math.min(1, Math.max(0, (t.frac - 0.06) / (PHOTO.sizeFull - 0.06)));
   const clarity = Math.min(1, Math.max(0, 1 - t.dist / (t.clear ?? clear))) ** 0.7;
@@ -55,6 +57,7 @@ export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCur
   let mult = grade.mult;
   if (t.danger) { mult *= PHOTO.dangerMult; bonus.push('危険手当 ×' + PHOTO.dangerMult); }
   if (inCurrent) { mult *= PHOTO.currentMult; bonus.push('激流手当 ×' + PHOTO.currentMult); }
+  if (night) { mult *= PHOTO.nightMult; bonus.push('夜間手当 ×' + PHOTO.nightMult); }
   const deep = 1 + depth / PHOTO.depthPerBonus;
   if (depth >= 20) bonus.push(`深度手当 ×${deep.toFixed(1)}`);
   const value = Math.round((PHOTO.base[t.rt.def.rarity] * mult * deep) / 10) * 10;
