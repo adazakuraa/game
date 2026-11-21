@@ -1343,11 +1343,23 @@ export class Game {
           warnSub = side > 0 ? 'ルートの右側に落ちてくる — 左へ寄れ' : 'ルートの左側に落ちてくる — 右へ寄れ';
           this.rockSide = side;
         }
+        // Which way it falls: always DOWN the slope. Rock comes down the gully the route climbs;
+        // ice comes straight across the route from the uphill side.
+        const rd0 = w.route.directionAt(sLane);
+        const fallDir = new THREE.Vector3();
+        if (isRock) fallDir.set(-rd0.x, 0, -rd0.z).normalize();
+        else {
+          const n = w.field.normal(this.seracLane.x, this.seracLane.z, new THREE.Vector3());
+          const down = new THREE.Vector3(n.x, 0, n.z);
+          fallDir.set(-rd0.z, 0, rd0.x);
+          const k = down.lengthSq() > 1e-6 ? fallDir.dot(down.normalize()) : 0;
+          if (Math.abs(k) > 0.12) { if (k < 0) fallDir.multiplyScalar(-1); }
+          else if (fallDir.dot(this.tmpV.copy(this.seracLane).sub(hz.origin).setY(0)) < 0) fallDir.multiplyScalar(-1);
+        }
         if (!isRock) {
           // Say where it is coming from and which way along the route is clear.
-          const rd = w.route.directionAt(sLane);
-          const toSrc = this.tmpV.copy(hz.origin).sub(this.seracLane).setY(0);
-          const fromRight = toSrc.x * -rd.z + toSrc.z * rd.x > 0;
+          const rd = rd0;
+          const fromRight = -fallDir.x * -rd.z + -fallDir.z * rd.x > 0;
           const ahead = sLane - p.routeS;
           const goingUp = !p.descending;
           const run = Math.abs(ahead) < 1.5 ? '真上だ — 止まるな、走り抜けろ'
@@ -1362,16 +1374,8 @@ export class Game {
         this.flash = 0.2;
         this.hud.banner(TEXT[hz.kind].warn[0], warnSub, 'danger', 4000);
         this.chunkKind = hz.kind;
-        const toLane = this.tmpV.copy(this.seracLane).sub(hz.origin).setY(0).normalize();
+        const toLane = this.tmpV.copy(fallDir);
         const laneDir = w.route.directionAt(sLane);
-        if (hz.kind !== 'rock') {
-          // Ice comes straight across the route at the lane (from the serac's side), so the
-          // danger is the lane the warning refers to, not a long diagonal sweep.
-          const rd = w.route.directionAt(sLane);
-          const nrm = new THREE.Vector3(-rd.z, 0, rd.x);
-          if (nrm.dot(toLane) < 0) nrm.multiplyScalar(-1);
-          toLane.copy(nrm);
-        }
         const rock = hz.kind === 'rock';
         // Falling ice/rock reaches the lane ~5 s after the warning: enough to step clear if you react.
         const dist = hz.kind === 'icefall' ? 32 : 28;
@@ -1446,9 +1450,12 @@ export class Game {
       const c = this.chunks[i];
       c.life -= dt;
       c.vel.y -= 9.8 * dt;
+      const gPrev = w.field.height(c.pos.x, c.pos.z);
       c.pos.addScaledVector(c.vel, dt);
       const g = w.field.height(c.pos.x, c.pos.z) + c.mesh.scale.x * 0.6;
       if (c.pos.y < g) {
+        // Rolling into rising ground: it stops, it does not climb.
+        if (g - c.mesh.scale.x * 0.6 > gPrev + 0.02) { c.vel.x *= 0.35; c.vel.z *= 0.35; }
         // Bounce vertically only: falling ice and rock keep their line, so the lane in the
         // warning is the lane they actually come down.
         c.pos.y = g;
@@ -1551,7 +1558,8 @@ export class Game {
       }
     }
     if (w.def.goal === 'camp') {
-      if (p.routeS >= w.route.length - 3 && p.routeDist < 8 && this.state === 'play') {
+      // Reaching the first tents counts: no need to walk to the back of camp.
+      if (p.routeS >= w.route.length - 20 && p.routeDist < 14 && this.state === 'play') {
         this.state = 'camp';
         this.input.enabled = false;
         if (document.pointerLockElement) document.exitPointerLock();
