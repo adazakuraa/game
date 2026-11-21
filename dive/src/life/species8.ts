@@ -43,7 +43,7 @@ export const WILD_SPECIES: SpeciesDef[] = [
     body: CETACEAN({ H: 0.22, W: 0.22, nose: 0.55, dorsal: [{ a: 0.44, b: 0.56, h: 0.22, sweep: 0.15 }], pect: { t: 0.72, len: 0.16, wid: 0.09, down: 0.6, out: 0.6 } }),
     look: { c: ['#101012', '#141416', '#f2f2ee'], mid: 0.6, fin: '#0e0e10', tail: '#101012', ocel: [[0.36, 0.22, 9, '#f2f2ee']], saddle: [[0.05, 0.12, 'rgba(150,150,150,0.55)']] },
     desc: '海の生態系の頂点に立つ大型のイルカの仲間。家族の群れで暮らし、群れごとに独自の「方言」で鳴き交わす。', hint: '沖の大海原。群れで回遊している。', habLabel: '家族の群れで沖を回遊する' }),
-  swimmer({ id: 'makkou', name: 'マッコウクジラ', sci: 'Physeter macrocephalus', zone: 'deep', d: [150, 430], size: 15, r: 3, region: DEEP, n: 1, g: 1, speed: 1.0, swim: [0.4, 0.05, 1.5],
+  swimmer({ id: 'makkou', name: 'マッコウクジラ', sci: 'Physeter macrocephalus', zone: 'deep', d: [150, 430], size: 15, r: 3, region: DEEP, n: 3, g: 1, speed: 1.0, swim: [0.4, 0.05, 1.5],
     body: CETACEAN({ H: 0.2, W: 0.19, peak: 0.78, nose: 1.0, ped: 0.05, dorsal: [{ a: 0.3, b: 0.36, h: 0.03 }], pect: { t: 0.66, len: 0.07, wid: 0.04, down: 0.6, out: 0.6 }, eyes: 0.03, eyeT: 0.68 }),
     look: { c: ['#3a3634', '#46423e', '#5a5652'], fin: '#3a3634', noise: 0.1, blotch: [40, ['rgba(90,86,80,0.4)', 'rgba(30,28,26,0.3)']] },
     desc: '巨大な四角い頭をもつ歯クジラ。1000m以上の深海まで潜り、ダイオウイカを捕らえて食べる。', hint: '深海。ダイオウイカを追って潜ってくる。', habLabel: '深海まで潜ってイカを狩る' }),

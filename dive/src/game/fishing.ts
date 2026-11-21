@@ -14,7 +14,8 @@ export const FISHING = {
   /** 【道具】reach (m), reload time (s), largest fish it can hold (kg) */
   tools: {
     hand: { name: '手銛', range: 2.2, reload: 1.1, maxKg: 8 },
-    gun: { name: '水中銃', range: 6, reload: 2.4, maxKg: 200 },
+    gun: { name: '水中銃', range: 6, reload: 2.4, maxKg: 60 },
+    big: { name: '大物用水中銃', range: 7, reload: 3, maxKg: 400 },
   },
   /** 【クーラーの容量】kg: net bag / cooler / big cooler */
   bag: [5, 15, 40],
@@ -55,32 +56,62 @@ export type Catch = { id: string; kg: number };
 const AO = /アジ|サバ|イワシ|カツオ|マグロ|ブリ|カンパチ|ヒラマサ|サワラ|シイラ|トビウオ|サヨリ|ダツ|カマス|タカサゴ|グルクン|ムロ|ハマチ|サンマ|ニシン|キハダ|ハナムロ|ウルメ|ニシン|コノシロ|ボラ/;
 const SHIRO = /タイ|ハタ|フエ|メバル|カサゴ|ソイ|アイナメ|ホッケ|タラ|カレイ|ヒラメ|スズキ|イサキ|ムツ|キンメ|アマダイ|クエ|ブダイ|ベラ|コチ|ハゼ|メジナ|イシダイ|イシガキ|ヒメジ|オジサン|バス|ギンポ|ゲンゲ|カジカ|アブラコ/;
 const POISON = /ドクウツボ|フグ|ハリセンボン|キタマクラ|ソウシハギ|ハコフグ|オニダルマオコゼ/;
-const PROTECTED = /ナポレオン|メガネモチノウオ|タツノオトシゴ|ヒポカンパス|シーラカンス|ジャイアントシーバス|ガリバルディ|ジンベエ|マンボウ|ヨウジウオ/;
+const PROTECTED = /アオウミガメ|タイマイ|ナポレオン|メガネモチノウオ|タツノオトシゴ|ヒポカンパス|シーラカンス|ジャイアントシーバス|ガリバルディ|ジンベエ|マンボウ|ヨウジウオ/;
 const NOT_FISH = /ザメ|^サメ|サメ$|シャチ|クジラ|イルカ|アシカ|アザラシ|オットセイ|ラッコ|トド|ペンギン|ウミヘビ|エイ$|マンタ|ウミガメ|タイマイ/;
 
-export type Edible = { ok: true; cat: Cat } | { ok: false; reason: string };
+/**
+ * What happens if this species is speared. Some things can be taken but cost you later (the diner's
+ * rules, learnt from Haru when the first order comes in):
+ *  - protected species and sea turtles: confiscated on the boat, a fine and the diner's reputation falls
+ *  - poisonous fish: whoever eats them gets food poisoning (hospital bill, guests lose trust)
+ *  - sharks: too strong for anything but the big-game gun
+ */
+export type Edible =
+  | { ok: true; cat: Cat; poison?: boolean; protected?: boolean; shark?: boolean }
+  | { ok: false; reason: string };
 
-/** Can this species be speared and cooked, and as what? */
+const SHARKISH = (def: SpeciesDef) => def.fish?.tail === 'hetero' || /ザメ|^サメ|サメ$|ブカ$/.test(def.name);
+const PROTECTED_SHARK = /ジンベエ|ホホジロ|ウバザメ|メガマウス|ミツクリ|ラブカ/;
+
+/** Can this species be speared, and as what? */
 export function edibleInfo(def: SpeciesDef): Edible {
   if (def.zone === 'deep') return { ok: false, reason: '深海の生き物は研究用。撮るだけにしよう' };
-  if (/ヒョウモンダコ/.test(def.name)) return { ok: false, reason: '猛毒のタコ。絶対に触らない' };
+  if (def.rarity >= 4) return { ok: false, reason: '伝説の生き物は撮るだけにしよう' };
+  const n = def.name;
+  if (def.kind === 'turtle') return { ok: true, cat: 'shiro', protected: true };
+  if (/ヒョウモンダコ/.test(n)) return { ok: true, cat: 'ika', poison: true };
   if (def.kind === 'squid' || def.kind === 'octopus') return { ok: true, cat: 'ika' };
   if (def.kind === 'ray' && def.ray?.flounder) return { ok: true, cat: 'shiro' };
   if (def.kind !== 'fish') return { ok: false, reason: '銛で獲るものではない' };
-  const n = def.name;
-  if (def.rarity >= 4) return { ok: false, reason: '伝説の生き物は撮るだけにしよう' };
-  if (def.fish?.tail === 'flukes' || NOT_FISH.test(n) || def.fish?.tail === 'hetero') return { ok: false, reason: '獲ってはいけない生き物' };
-  if (PROTECTED.test(n)) return { ok: false, reason: '保護されている魚。撮るだけにしよう' };
-  if (POISON.test(n)) return { ok: false, reason: '毒がある。食べられない' };
-  if (def.behavior === 'anemone' || def.hab === 'cleaner') return { ok: false, reason: '海の仲間の暮らしを守ろう（獲らない）' };
-  if (AO.test(n)) return { ok: true, cat: 'ao' };
-  if (SHIRO.test(n)) return { ok: true, cat: 'shiro' };
-  if ((def.mat?.metal ?? 0) >= 0.3 && def.behavior !== 'static') return { ok: true, cat: 'ao' };
-  return { ok: true, cat: def.size >= 0.3 || def.zone === 'cold' ? 'shiro' : 'iso' };
+  if (def.fish?.tail === 'flukes' || /シャチ|クジラ|イルカ|アシカ|アザラシ|オットセイ|ラッコ|トド|ペンギン/.test(n)) return { ok: false, reason: '海の哺乳類や鳥は撃てない' };
+  if (/ウミヘビ/.test(n)) return { ok: false, reason: '猛毒のウミヘビ。近寄らない' };
+  if (SHARKISH(def)) return PROTECTED_SHARK.test(n) ? { ok: true, cat: 'shiro', shark: true, protected: true } : { ok: true, cat: 'shiro', shark: true };
+  const cat: Cat = AO.test(n) ? 'ao' : SHIRO.test(n) ? 'shiro' : (def.mat?.metal ?? 0) >= 0.3 && def.behavior !== 'static' ? 'ao' : def.size >= 0.3 || def.zone === 'cold' ? 'shiro' : 'iso';
+  if (PROTECTED.test(n) || def.behavior === 'anemone' || def.hab === 'cleaner') return { ok: true, cat, protected: true };
+  if (POISON.test(n)) return { ok: true, cat, poison: true };
+  return { ok: true, cat };
 }
+
+/** A fish that is fine to catch, cook and sell. */
+export const isGoodCatch = (def: SpeciesDef) => { const e = edibleInfo(def); return e.ok && !e.poison && !e.protected && !e.shark; };
+
+/** 【ペナルティ】 */
+export const PENALTY = {
+  /** protected species brought back: fine (yen) and reputation lost, per animal */
+  protectedFine: 5000, protectedRep: 3,
+  /** a guest served a poisonous fish: compensation = order reward × this, reputation lost */
+  poisonServeMult: 2, poisonServeRep: 4,
+  /** eating one yourself: hospital bill */
+  hospital: 4000,
+  /** 【獲物の重さとエア】air use rises with the catch carried: +this per kg (capped) */
+  carryAirPerKg: 0.04, carryAirMax: 1.0,
+  /** hauling a fish in after the hit costs air: base + per kg (bar) */
+  haulBar: 2, haulBarPerKg: 1.2,
+};
 
 /** Weight (kg) of one individual of body length `len` (m): deeper, thicker bodies weigh more. */
 export function weightOf(def: SpeciesDef, len: number): number {
+  if (def.kind === 'turtle') return 120 * len ** 3;
   if (def.kind === 'squid' || def.kind === 'octopus') return Math.max(0.05, 9 * len ** 3 * (def.kind === 'octopus' ? 1.6 : 1));
   const H = def.fish?.H ?? 0.3, W = def.fish?.W ?? 0.14;
   const k = 0.011 * (H / 0.3) * Math.sqrt(W / 0.14);
@@ -98,7 +129,7 @@ export function dishFor(def: SpeciesDef, kg: number): DishId {
 
 export function marketPrice(def: SpeciesDef, kg: number): number {
   const e = edibleInfo(def);
-  const per = e.ok ? FISHING.market[e.cat] : 0;
+  const per = e.ok && !e.poison && !e.protected ? FISHING.market[e.cat] : 0;
   return Math.round((per * kg * (1 + (def.rarity - 1) * 0.5)) / 10) * 10;
 }
 
@@ -123,12 +154,19 @@ export type Order = { id: string; guest: string; text: string; dish: DishId; cat
 const GUESTS = ['漁師のゲンさん', '民宿のミナミさん', '小学生のソラくん', '役場のタカハシ課長', '観光客の二人連れ', '郵便屋のユキさん', '診療所の先生', '釣り好きのおじいさん'];
 
 /** The chapters of the diner's story, shown once when the reputation level is reached. */
-export const STORY: { title: string; text: string }[] = [
-  { title: 'しおさい亭', text: '港町の小さな食堂「しおさい亭」。女将のハルさんが腰を痛めてしまい、ダイバーのあなたが店を手伝うことになった。「魚は海で獲ってきておくれ。手銛なら物置にあるよ。注文票の料理を作れば、お客さんは喜ぶからね」' },
-  { title: '噂が広がる', text: '「しおさい亭が再開したらしい」と町に噂が広がり、お客さんが増えてきた。ダイブショップにクーラーボックスが入荷した。' },
+export const STORY: { title: string; text: string; rules?: string[]; map?: string }[] = [
+  { title: 'しおさい亭', text: '手銛を買ったあなたに、港の食堂「しおさい亭」の女将ハルさんが声をかけてきた。「腰を痛めて漁に出られなくてね。銛が使えるなら、魚を獲ってきてくれないかい。注文票の料理を作れば、お客さんは喜ぶし、お代も払うよ。ただし、海の決まりは守っておくれ」',
+    rules: [
+      'ウミガメ・ナポレオンフィッシュ・タツノオトシゴなど保護されている生き物や、クマノミ・ホンソメワケベラは獲らない。持ち帰ると漁協に没収され、罰金を払って店の評判も落ちる',
+      'フグやハコフグ、ソウシハギ、ドクウツボ、ヒョウモンダコには毒がある。食べると食中毒で病院行き、お客さんに出したら大変なことになる。図鑑で調べた魚なら、クーラーで「毒あり」と分かる',
+      '10cmにも満たない小さな魚は逃がしてあげる',
+      '獲った魚を引き寄せたり抱えて泳いだりすると息が上がる。たくさん持つほどエアが早く減る',
+      'サメは手強い。素人の銛じゃ歯が立たないよ',
+    ] },
+  { title: '噂が広がる', text: '「しおさい亭が再開したらしい」と町に噂が広がり、お客さんが増えてきた。ダイブショップにクーラーボックスが入荷した。常連の漁師ゲンさんが、お礼にと手描きの海図をくれた。「西の浅瀬に、底の見えねえ青い穴がある」', map: 'bluehole' },
   { title: '組合長の来店', text: '漁協の組合長が店に来た。「あんたの腕なら、漁業権を取って水中銃を使ってもいい」— 夜の漁にも慣れてきた。ボートで昼の海・夜の海を選べるようになった。' },
   { title: '町の宴会', text: '町の集まりの料理を頼まれるようになった。大きな魚を運べる大型クーラーが入荷した。' },
-  { title: '評論家の舌', text: '料理評論家がお忍びで来店。「この島でしか食べられない魚を」と、珍しい魚の注文が届くようになった。' },
+  { title: '評論家の舌', text: '料理評論家がお忍びで来店。「この島でしか食べられない魚を」と、珍しい魚の注文が届くようになった。ダイブショップに、サメにも負けない大物用の水中銃が入荷した。' },
   { title: '雑誌に載った！', text: 'しおさい亭が旅の雑誌に載った！ 腰の治ったハルさんが笑う。「これからも一緒に店をやろう。海のことは、あんたに任せたよ」' },
 ];
 

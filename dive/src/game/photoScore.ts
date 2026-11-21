@@ -77,10 +77,11 @@ export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCur
  * Gear: comes into stock when the dex reaches 【入荷に必要な図鑑の割合】need (%), then is bought with photo money.
  * Each item changes how you dive rather than just making numbers bigger.
  */
-export type ShopItem = { id: string; need: number; price: number; name: string; desc: string; icon: string; rep?: number; req?: string };
+export type ShopItem = { id: string; need: number; price: number; name: string; desc: string; icon: string; rep?: number; req?: string; map?: string };
 export const SHOP: readonly ShopItem[] = [
   { id: 'fins', need: 3, price: 1500, name: 'ロングフィン', desc: '泳ぐ速さ +30%', icon: '<path d="M7 3h4l1 8 4 8-3 2-5-7z"/>' },
   { id: 'light', need: 5, price: 2500, name: '強力ライト', desc: '暗い所でも遠くまで照らして撮れる', icon: '<path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/>' },
+  { id: 'spear', need: 4, price: 2500, name: '手銛', desc: '魚を獲れる（しおさい亭から頼まれごとが来る）', icon: '<path d="M3 21L18 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M15 3.5l5.5-1-1 5.5z"/>' },
   { id: 'drysuit', need: 7, price: 4000, name: 'ドライスーツ', desc: '冷たい海でもエアが普通にもつ', icon: '<path d="M8 3h8l2 6-2 1v11h-3v-7h-2v7H8V10L6 9z"/>' },
   { id: 'tank', need: 9, price: 5000, name: '大型タンク', desc: 'エア容量 1.5倍', icon: '<rect x="8" y="5" width="8" height="16" rx="3"/><rect x="10.5" y="2" width="3" height="3"/>' },
   { id: 'macro', need: 12, price: 6000, name: 'マクロレンズ', desc: '小さな生き物（20cm未満）を大きく写せる', icon: '<circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.6"/>' },
@@ -94,6 +95,11 @@ export const SHOP: readonly ShopItem[] = [
   { id: 'cooler', need: 0, rep: 2, price: 3000, name: 'クーラーボックス', desc: '獲物を15kgまで持ち帰れる', icon: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M8 8V5h8v3" fill="none" stroke="currentColor" stroke-width="2"/>' },
   { id: 'license', need: 0, rep: 3, price: 8000, name: '漁業権（遊漁承認）', desc: '水中銃を使ってよい許可', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5" stroke="#0b2a3a" stroke-width="1.6"/>' },
   { id: 'speargun', need: 0, rep: 3, req: 'license', price: 12000, name: '水中銃', desc: '射程6m・大物も獲れる（要 漁業権）', icon: '<path d="M2 12h14l2-2h4v4h-4l-2-2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 12v5h3v-5z"/>' },
+  { id: 'powerhead', need: 0, rep: 5, req: 'speargun', price: 25000, name: '大物用水中銃', desc: 'サメも仕留められる強力な銃', icon: '<path d="M1 12h15l3-3h4v6h-4l-3-3" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M5 12v6h4v-6z"/>' },
+  // charts of places that are hard to find by swimming around
+  { id: 'map_bluehole', map: 'bluehole', need: 14, price: 9000, name: '海図：ブルーホール', desc: 'ブルーホールの場所が分かり、直接行ける', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="11" r="3"/>' },
+  { id: 'map_cave', map: 'cave', need: 22, price: 9000, name: '海図：水中洞窟', desc: 'セノーテの入口の場所が分かり、直接行ける', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 15a4 4 0 0 1 8 0z"/>' },
+  { id: 'map_deep', map: 'deep', need: 34, price: 8000, name: '海図：深海', desc: '深海の熱水噴出孔への降下地点（要 大気圧潜水服）', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v8M9 12l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8"/>' },
   { id: 'bigcooler', need: 0, rep: 4, price: 12000, name: '大型クーラー', desc: '獲物を40kgまで持ち帰れる', icon: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M7 7V4h10v3M2 12h20" fill="none" stroke="currentColor" stroke-width="2"/>' },
 ];
 export type GearId = string;

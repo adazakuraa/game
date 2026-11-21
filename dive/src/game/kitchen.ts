@@ -1,5 +1,5 @@
 import { SPECIES, SPECIES_BY_ID, type SpeciesDef } from '../life/species';
-import { CAT_NAME, DISH, FISHING, STORY, dishFor, edibleInfo, fits, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
+import { CAT_NAME, DISH, FISHING, PENALTY, STORY, dishFor, edibleInfo, fits, isGoodCatch, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
 import { yen } from './photoScore';
 
 /** The land half of the game lives in the save next to the dex. */
@@ -28,6 +28,8 @@ type Host = {
   /** title screen needs a refresh (money, badges) */
   changed: () => void;
   known: (id: string) => boolean;
+  /** a chart handed over in the story */
+  grantMap: (id: string) => void;
 };
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -41,7 +43,7 @@ export class Kitchen {
 
   /** Species that can turn up in an order: edible and found in waters a scuba diver can reach. */
   private pool(level: number): SpeciesDef[] {
-    return SPECIES.filter((d) => edibleInfo(d).ok && d.zone !== 'deep' && d.depth[0] < 40 && (level >= FISHING.nightFreeLevel || d.when !== 'night'));
+    return SPECIES.filter((d) => isGoodCatch(d) && d.zone !== 'deep' && d.depth[0] < 40 && (level >= FISHING.nightFreeLevel || d.when !== 'night'));
   }
 
   get level(): number {
@@ -95,8 +97,8 @@ export class Kitchen {
     story.classList.toggle('hidden', !unread);
     if (unread) {
       const ch = STORY[(s.story ?? 0)];
-      story.innerHTML = `<h4>第${(s.story ?? 0) + 1}話　${ch.title}</h4>${ch.text}<br><button type="button" class="btn sec" id="k-read">${(s.story ?? 0) + 1 < lv ? '次の話へ' : 'わかった'}</button>`;
-      $('k-read').addEventListener('click', () => { s.story = (s.story ?? 0) + 1; this.host.write(); this.render(); });
+      story.innerHTML = `<h4>第${(s.story ?? 0) + 1}話　${ch.title}</h4>${ch.text}${ch.rules ? `<ul class="k-rules">${ch.rules.map((r) => `<li>${r}</li>`).join('')}</ul>` : ''}${ch.map ? '<div class="k-map">海図を手に入れた！ ボートから直接行けるようになった</div>' : ''}<br><button type="button" class="btn sec" id="k-read">${(s.story ?? 0) + 1 < lv ? '次の話へ' : 'わかった'}</button>`;
+      $('k-read').addEventListener('click', () => { if (ch.map) this.host.grantMap(ch.map); s.story = (s.story ?? 0) + 1; this.host.write(); this.render(); });
     }
 
     const cooler = s.cooler ?? [];
@@ -116,8 +118,9 @@ export class Kitchen {
           const def = SPECIES_BY_ID.get(c.id)!;
           const e = edibleInfo(def);
           const dish = DISH[dishFor(def, c.kg)];
-          return `<div class="k-item"><div><div class="what">${def.name}　${fmtKg(c.kg)}</div><div class="who">${e.ok ? CAT_NAME[e.cat] : ''} → ${dish.name}（食べると：${dish.short}）</div></div>
-            <div class="acts"><button type="button" class="btn sec" data-eat="${i}">まかないで食べる</button><button type="button" class="btn sec" data-sell="${i}">市場へ ${yen(marketPrice(def, c.kg))}</button></div></div>`;
+          const knownPoison = e.ok && e.poison && this.host.known(def.id);
+          return `<div class="k-item ${knownPoison ? 'poison' : ''}"><div><div class="what">${this.host.known(def.id) ? def.name : '名前の分からない魚'}　${fmtKg(c.kg)}${knownPoison ? '　<span class="k-warn">毒あり</span>' : ''}</div><div class="who">${e.ok ? CAT_NAME[e.cat] : ''} → ${dish.name}（食べると：${dish.short}）</div></div>
+            <div class="acts"><button type="button" class="btn sec" data-eat="${i}">まかないで食べる</button><button type="button" class="btn sec" data-sell="${i}">市場へ${knownPoison ? '（処分）' : ' ' + yen(marketPrice(def, c.kg))}</button></div></div>`;
         }).join('')
       : '<div class="k-empty">クーラーは空っぽ。ボートから潜って、銛ボタンで魚を獲ってこよう。</div>';
     $('k-buff').innerHTML = buffNow
@@ -131,15 +134,16 @@ export class Kitchen {
   }
 
   /** Big praise for a finished dish (hit-stop-like pop, chime, count). */
-  private pop(dish: string, sub: string, big: boolean): void {
+  private pop(dish: string, sub: string, big: boolean, bad = false): void {
     const el = $('cook-pop');
+    el.classList.toggle('bad', bad);
     $('cp-dish').textContent = dish;
     $('cp-sub').textContent = sub;
     el.classList.remove('hidden');
     el.style.animation = 'none';
     void el.offsetWidth;
     el.style.animation = '';
-    this.host.chime(big);
+    if (!bad) this.host.chime(big);
   }
 
   serve(orderId: string): void {
@@ -155,6 +159,18 @@ export class Kitchen {
     const c = s.cooler!.splice(idx, 1)[0];
     const def = SPECIES_BY_ID.get(c.id)!;
     const before = this.level;
+    const e = edibleInfo(def);
+    if (e.ok && e.poison) {
+      // the guest gets food poisoning: pay the hospital and compensation, the diner's name suffers
+      const pay = o.reward * PENALTY.poisonServeMult;
+      s.money = Math.max(0, (s.money ?? 0) - pay);
+      s.rep = Math.max(0, (s.rep ?? 0) - PENALTY.poisonServeRep);
+      s.orders = s.orders!.filter((x) => x !== o);
+      this.pop('食中毒が出てしまった…', `${def.name}には毒があった。${o.guest}は病院へ。慰謝料 -${yen(pay)}　評判-${PENALTY.poisonServeRep}`, false, true);
+      this.host.write();
+      this.render();
+      return;
+    }
     s.money = (s.money ?? 0) + o.reward;
     s.rep = (s.rep ?? 0) + o.rep;
     s.orders = s.orders!.filter((x) => x !== o);
@@ -171,6 +187,15 @@ export class Kitchen {
     const def = SPECIES_BY_ID.get(c.id)!;
     const d = dishFor(def, c.kg);
     s.cooler!.splice(i, 1);
+    const e = edibleInfo(def);
+    if (e.ok && e.poison) {
+      s.money = Math.max(0, (s.money ?? 0) - PENALTY.hospital);
+      s.buff = null;
+      this.pop('食中毒で病院へ…', `${def.name}には毒があった。治療費 -${yen(PENALTY.hospital)}`, false, true);
+      this.host.write();
+      this.render();
+      return;
+    }
     s.buff = d;
     this.pop(`${def.name}の${DISH[d].name}`, `いただきます！ 次のダイブ：${DISH[d].short}`, false);
     if (d === 'nabe') { s.rep = (s.rep ?? 0) + 1; }
@@ -182,10 +207,12 @@ export class Kitchen {
     const s = this.host.save;
     const c = s.cooler?.[i];
     if (!c) return;
-    const v = marketPrice(SPECIES_BY_ID.get(c.id)!, c.kg);
+    const def = SPECIES_BY_ID.get(c.id)!;
+    const v = marketPrice(def, c.kg);
     s.cooler!.splice(i, 1);
     s.money = (s.money ?? 0) + v;
-    this.host.toast(`市場に卸した　+${yen(v)}`);
+    const e = edibleInfo(def);
+    this.host.toast(e.ok && e.poison ? `市場「${def.name}は毒魚だ。引き取れないよ」— 処分した` : `市場に卸した　+${yen(v)}`, e.ok && e.poison ? 'warn' : '');
     this.host.write();
     this.render();
   }

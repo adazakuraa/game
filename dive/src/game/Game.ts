@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import { Missions } from './missions';
 import { Kitchen, type LandSave } from './kitchen';
-import { BIG_KG, DISH, FISHING, edibleInfo, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
+import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } from './story';
+import { SCENE_AT, Scenes } from './scenes';
+import { FIND_NAME, FINDS, Finds, openFind, type FindKind } from './finds';
+import { buildHandSpear, buildSpeargun } from './gearModels';
+import { BIG_KG, DISH, FISHING, PENALTY, edibleInfo, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
 import { evaluateShot, LEGACY_NEED, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
@@ -16,7 +20,15 @@ import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
 import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
 
-type Save = LandSave & { found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
+type Save = LandSave & {
+  /** dive points known (reached while diving, or from a chart) */
+  discovered?: string[];
+  /** current main-story chapter, and the last one whose briefing was read */
+  storyMain?: number; storyRead?: number;
+  /** special sights photographed */
+  scenes?: Partial<Record<SceneId, { photo: string; t: number }>>;
+  tutorial?: boolean;
+ found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
 
@@ -79,6 +91,17 @@ export class Game {
   /** dish eaten before this dive */
   private buff: DishId | null = null;
   private kitchen!: Kitchen;
+  private scenes!: Scenes;
+  private finds = new Finds();
+  private diveFinds: FindKind[] = [];
+  private pendingScenes = new Map<SceneId, { photo: string; pay: number }>();
+  private storyMarks: { x: number; z: number; rare: boolean }[] = [];
+  /** first-person gear in hand */
+  private vmHand!: THREE.Group;
+  private vmGun!: THREE.Group;
+  private vmGunShaft!: THREE.Mesh;
+  /** first-dive tutorial: current step (-1 = off) */
+  private tut = { step: -1, t: 0, moved: 0, looked: 0, praise: 0, from: new THREE.Vector3() };
   private nightAnnounced = 0;
   private missions!: Missions;
   /** request rewards earned this dive */
@@ -129,10 +152,26 @@ export class Game {
     this.scene.add(this.creatures.group);
     this.missions = new Missions();
     this.scene.add(this.missions.group);
-    this.spearFx = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 6).rotateX(Math.PI / 2).translate(0, 0, -0.5), new THREE.MeshStandardMaterial({ color: 0xc8ccd0, metalness: 0.8, roughness: 0.3 }));
+    this.spearFx = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 1, 6).rotateX(Math.PI / 2).translate(0, 0, -0.5), new THREE.MeshStandardMaterial({ color: 0xc8ccd0, metalness: 0.9, roughness: 0.28 }));
     this.spearFx.visible = false;
     this.spearFx.frustumCulled = false;
     this.scene.add(this.spearFx);
+    this.scene.add(this.finds.group);
+    this.scenes = new Scenes(this.creatures, this.flora.homes.coralTops);
+    this.scene.add(this.scenes.group);
+    // gear held in front of the mask (children of the camera)
+    this.vmHand = buildHandSpear();
+    const gun = buildSpeargun();
+    this.vmGun = gun.gun;
+    this.vmGunShaft = gun.shaft;
+    for (const m of [this.vmHand, this.vmGun]) {
+      m.position.set(0.14, -0.15, -0.28);
+      m.rotation.set(0.05, 0.08, 0);
+      m.visible = false;
+      m.traverse((o) => { o.frustumCulled = false; });
+      this.camera.add(m);
+    }
+    $('coach-skip').addEventListener('click', () => this.endTutorial());
     this.kitchen = new Kitchen({
       save: this.save,
       write: () => this.writeSave(),
@@ -140,6 +179,7 @@ export class Game {
       chime: (big) => this.audio.chime(big),
       changed: () => this.renderTitle(),
       known: (id) => !!this.save.found[id],
+      grantMap: (id) => this.grantMap(id),
     });
     this.kitchen.ensureOrders();
     this.audio.onExhale = () => {
@@ -149,6 +189,8 @@ export class Game {
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
     $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
+    $('open-shop').addEventListener('click', () => { this.audio.unlock(); $('shop').classList.remove('hidden'); this.renderShop(); });
+    $('shop-close').addEventListener('click', () => { $('shop').classList.add('hidden'); this.renderTitle(); });
     $('res-kitchen').addEventListener('click', () => { this.toTitle(); this.kitchen.open(); });
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -185,12 +227,19 @@ export class Game {
           sv.owned = SHOP.filter((g) => n >= (LEGACY_NEED[g.id] ?? 1e9)).map((g) => g.id);
           sv.money = 0;
         }
+        if (!sv.discovered) {
+          // earlier saves: every place where something was already photographed counts as found
+          const zones = new Set(Object.keys(sv.found).map((id) => SPECIES_BY_ID.get(id)?.zone));
+          sv.discovered = DIVE_POINTS.filter((dp) => dp.id === 'lagoon' || zones.has(dp.id as never) || (dp.id === 'dropoff' && zones.has('offshore'))).map((dp) => dp.id);
+          sv.tutorial = sv.dives > 0;
+          if (sv.owned?.length || Object.keys(sv.found).length) (sv.owned ??= []).push('spear');
+        }
         return sv;
       }
     } catch {
       /* storage unavailable */
     }
-    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0 };
+    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], storyMain: 0, storyRead: -1 };
   }
 
   private writeSave(): void {
@@ -209,6 +258,86 @@ export class Game {
     return !!this.save.owned?.includes(id);
   }
 
+  /** a shop item already in hand (a chart counts once its place is known) */
+  private owns(g: (typeof SHOP)[number]): boolean {
+    return this.has(g.id) || (!!g.map && this.discovered.has(g.map));
+  }
+
+  private get discovered(): Set<string> {
+    return new Set(this.save.discovered ?? ['lagoon']);
+  }
+
+  /** A dive point becomes known: from now on the boat can go straight there. */
+  private discover(id: string, how: 'swim' | 'chart'): boolean {
+    if (this.discovered.has(id)) return false;
+    (this.save.discovered ??= ['lagoon']).push(id);
+    this.writeSave();
+    if (this.minimap) this.minimap.known = this.discovered;
+    const dp = DIVE_POINTS.find((d) => d.id === id);
+    if (how === 'swim' && dp) {
+      this.audio.chime(true);
+      this.toast(`新しいダイブポイントを発見！「${dp.name}」— 次からボートで直接行ける`, '', 4);
+    }
+    return true;
+  }
+
+  private grantMap(id: string): void {
+    this.discover(id, 'chart');
+  }
+
+  // ------------------------------------------------------------------ story (photographer)
+  private storyState(): StoryState {
+    const f = Object.entries(this.save.found);
+    return {
+      dives: this.save.dives,
+      found: f.length,
+      sCount: f.filter(([, v]) => (v.score ?? 0) >= PHOTO.grades[0].min).length,
+      nightFound: f.filter(([id]) => SPECIES_BY_ID.get(id)?.when === 'night').length,
+      scenes: this.save.scenes ?? {},
+      rare3S: f.filter(([id, v]) => SPECIES_BY_ID.get(id)?.rarity === 3 && (v.score ?? 0) >= PHOTO.grades[0].min).length,
+    };
+  }
+
+  private get chapter() {
+    return CHAPTERS[this.save.storyMain ?? 0];
+  }
+
+  private storyCleared: string[] = [];
+
+  /** Finish every chapter whose goal is met: pay, hand over charts, and move on. */
+  private advanceStory(): void {
+    const st = this.storyState();
+    while ((this.save.storyMain ?? 0) < CHAPTERS.length && CHAPTERS[this.save.storyMain ?? 0].done(st)) {
+      const ch = CHAPTERS[this.save.storyMain ?? 0];
+      this.save.money = (this.save.money ?? 0) + ch.reward;
+      if (ch.map) this.grantMap(ch.map);
+      const mapName = ch.map ? DIVE_POINTS.find((d) => d.id === ch.map)?.name : '';
+      this.storyCleared.push(`第${(this.save.storyMain ?? 0) + 1}章「${ch.title}」クリア！ 写真家の評価：<b>${ch.title2}</b>${ch.reward ? `　報酬 ${yen(ch.reward)}` : ''}${mapName ? `　海図「${mapName}」をもらった` : ''}`);
+      this.save.storyMain = (this.save.storyMain ?? 0) + 1;
+      this.writeSave();
+      this.audio.chime(true);
+    }
+  }
+
+  private renderStory(): void {
+    const el = $('story-card');
+    const i = this.save.storyMain ?? 0;
+    const ch = CHAPTERS[i];
+    const cleared = this.storyCleared.length ? `<div class="sc-clear">${this.storyCleared.join('<br>')}</div>` : '';
+    const scenes = Object.entries(this.save.scenes ?? {}) as [SceneId, { photo: string }][];
+    const album = scenes.length ? `<div class="sc-photos">${scenes.map(([id, v]) => `<img src="${v.photo}" alt="${SCENES[id].name}" title="${SCENES[id].name}">`).join('')}</div>` : '';
+    if (!ch) {
+      el.innerHTML = `<div class="sc-kicker">写真家の評価：表紙の写真家</div>${cleared}<div class="sc-intro">${ENDING}</div>${album}`;
+      return;
+    }
+    const st = this.storyState();
+    const unread = (this.save.storyRead ?? -1) < i;
+    el.innerHTML = `<div class="sc-kicker">第${i + 1}章　${i > 0 ? `写真家の評価：${CHAPTERS[i - 1].title2}` : '駆け出しの海中写真家'}</div>${cleared}<div class="sc-title">${ch.title}</div>` +
+      (unread ? `<div class="sc-intro">${ch.intro}</div><button type="button" class="btn sec" id="sc-ok">了解</button>` : '') +
+      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}</div>${ch.scene && this.save.scenes?.[ch.scene] ? '' : ''}${album}`;
+    if (unread) document.getElementById('sc-ok')!.addEventListener('click', () => { this.save.storyRead = i; this.storyCleared = []; this.writeSave(); this.renderStory(); });
+  }
+
   /** Dex completion in percent. */
   private get dexPct(): number {
     return (this.foundCount / SPECIES.length) * 100;
@@ -223,18 +352,19 @@ export class Game {
   /** Next gear the player can aim for, and how far away it is (the reward hanging in front of them). */
   private nextGoal(): { name: string; need: number; species: number } | null {
     const money = this.save.money ?? 0;
-    const g = SHOP.find((x) => !this.has(x.id) && !x.rep);
+    const g = SHOP.find((x) => !this.owns(x) && !x.rep && !x.map);
     return g ? { name: g.name, need: Math.max(0, g.price - money), species: this.stockGap(g) } : null;
   }
 
   private buy(id: GearId): void {
     const g = SHOP.find((x) => x.id === id)!;
-    if (this.has(id) || (this.save.money ?? 0) < g.price || this.stockGap(g) > 0 || (g.req && !this.has(g.req))) return;
+    if (this.owns(g) || (this.save.money ?? 0) < g.price || this.stockGap(g) > 0 || (g.req && !this.has(g.req))) return;
     this.save.money = (this.save.money ?? 0) - g.price;
     (this.save.owned ??= []).push(id);
+    if (g.map) this.grantMap(g.map);
     this.writeSave();
     this.audio.chime(true);
-    this.toast(`「${g.name}」を購入！ ${g.desc}`, '', 3);
+    this.toast(id === 'spear' ? '「手銛」を購入！ 港の食堂「しおさい亭」の女将さんが話があるらしい（ボートの「しおさい亭」へ）' : g.map ? `「${g.name}」を購入！ ボートから直接行けるようになった` : `「${g.name}」を購入！ ${g.desc}`, '', 4);
     this.renderTitle();
   }
 
@@ -282,10 +412,15 @@ export class Game {
   private renderTitle(): void {
     const n = this.foundCount;
     $('t-dex').textContent = `${n}/${SPECIES.length}`;
+    this.advanceStory();
+    this.renderStory();
     const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70', kelp: '#8ab060' };
     const pts = $('points');
     pts.innerHTML = '';
+    const known = this.discovered;
+    let hiddenN = 0;
     for (const dp of DIVE_POINTS) {
+      if (!known.has(dp.id)) { hiddenN++; continue; }
       const zoneSpecies = SPECIES.filter((s) => (dp.id === 'dropoff' ? s.zone === 'dropoff' || s.zone === 'offshore' : s.zone === dp.id));
       const got = zoneSpecies.filter((s) => this.save.found[s.id]).length;
       const locked = dp.requires === 'ads' && !this.has('ads');
@@ -299,36 +434,54 @@ export class Game {
       b.addEventListener('click', () => this.startDive(dp));
       pts.appendChild(b);
     }
+    if (hiddenN) {
+      const d = document.createElement('div');
+      d.className = 'pt unknown';
+      d.innerHTML = `<span class="ico" style="background:#2a3a44;color:#8aa">？</span><span><div class="nm">未発見のポイント ×${hiddenN}</div><div class="sb">潜って泳いだ先で見つけるか、海図を手に入れると、ボートから直接行けるようになる</div></span><span></span>`;
+      pts.appendChild(d);
+    }
     this.renderDaytime();
-    const ready = this.kitchen.readyCount();
-    const lv = repLevel(this.save.rep ?? 0);
-    $('k-badge').textContent = `評判Lv${lv}・注文${this.save.orders?.length ?? 0}件${ready ? `（${ready}件 作れる！）` : ''}${(this.save.story ?? 0) < lv ? '・新しい話' : ''}`;
-    const gear = $('gear');
+    const spear = this.has('spear');
+    $('open-kitchen').classList.toggle('hidden', !spear);
+    if (spear) {
+      const ready = this.kitchen.readyCount();
+      const lv = repLevel(this.save.rep ?? 0);
+      $('k-badge').textContent = `${(this.save.story ?? 0) < lv ? '新しい話！ ' : ''}${ready ? `${ready}件 作れる` : `注文${this.save.orders?.length ?? 0}件`}`;
+    }
     const money = this.save.money ?? 0;
+    const buyable = SHOP.filter((g) => !this.owns(g) && this.stockGap(g) === 0 && money >= g.price && (!g.req || this.has(g.req))).length;
+    $('shop-badge').textContent = buyable ? `${buyable}個 買える！` : '';
     const goal = this.nextGoal();
     const goalText = (gl: NonNullable<ReturnType<Game['nextGoal']>>) =>
       gl.species > 0
         ? `「${gl.name}」入荷まで図鑑あと <b>${gl.species}種</b>${gl.need > 0 ? `・<b>${yen(gl.need)}</b>` : ''}`
         : gl.need > 0
           ? `「${gl.name}」まであと <b>${yen(gl.need)}</b>`
-          : `<span class="ok">「${gl.name}」が買える！ 下のショップへ</span>`;
+          : `<span class="ok">「${gl.name}」が買える！ ショップへ</span>`;
     $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.dexPct.toFixed(1)}%</b><br>` + (goal ? goalText(goal) : '装備コンプリート');
-    gear.innerHTML =
-      `<div class="shop-head"><span>ダイブショップ　所持金 <b>${yen(money)}</b></span><span class="goal">図鑑 ${this.dexPct.toFixed(1)}%</span></div>` +
-      SHOP.map((u) => {
-        const on = this.has(u.id);
-        const gap = this.stockGap(u);
-        const stocked = gap === 0;
-        const needReq = !!u.req && !this.has(u.req);
-        const can = !on && stocked && money >= u.price && !needReq;
-        const req = on ? '入手済み' : !stocked ? (u.rep ? `食堂の評判Lv${u.rep}で入荷` : `図鑑${u.need}%で入荷<br>（あと${gap}種）`) : needReq ? `先に${SHOP.find((x) => x.id === u.req)!.name}` : can ? `購入 ${yen(u.price)}` : yen(u.price);
-        return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24">${u.icon}</svg></div>${stocked || on || u.rep ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${stocked || on || u.rep ? u.desc : '図鑑を埋めると入荷する'}</span></button>`;
-      }).join('');
+    if (!$('shop').classList.contains('hidden')) this.renderShop();
+  }
+
+  /** Gear, fishing tackle and charts: bought on their own screen. */
+  private renderShop(): void {
+    const gear = $('gear');
+    const money = this.save.money ?? 0;
+    $('shop-status').innerHTML = `<span>所持金 <b>${yen(money)}</b></span><span>図鑑 <b>${this.dexPct.toFixed(1)}%</b></span>${this.has('spear') ? `<span>しおさい亭の評判 Lv<b>${repLevel(this.save.rep ?? 0)}</b></span>` : ''}`;
+    gear.innerHTML = SHOP.filter((u) => !u.rep || this.has('spear')).map((u) => {
+      const on = this.owns(u);
+      const gap = this.stockGap(u);
+      const stocked = gap === 0;
+      const needReq = !!u.req && !this.has(u.req);
+      const can = !on && stocked && money >= u.price && !needReq;
+      const req = on ? (u.map ? '場所は分かっている' : '入手済み') : !stocked ? (u.rep ? `食堂の評判Lv${u.rep}で入荷` : `図鑑${u.need}%で入荷<br>（あと${gap}種）`) : needReq ? `先に${SHOP.find((x) => x.id === u.req)!.name}` : can ? `購入 ${yen(u.price)}` : yen(u.price);
+      const show = stocked || on || !!u.rep;
+      return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24">${u.icon}</svg></div>${show ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${show ? u.desc : '図鑑を埋めると入荷する'}</span></button>`;
+    }).join('');
     gear.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((b) =>
       b.addEventListener('click', () => {
         const id = b.dataset.buy as GearId;
-        if (this.has(id)) return;
         const g = SHOP.find((x) => x.id === id)!;
+        if (this.owns(g)) return;
         if (this.stockGap(g) > 0) { this.toast(g.rep ? `しおさい亭の評判がLv${g.rep}になると入荷する` : `図鑑をあと${this.stockGap(g)}種埋めると入荷する`); return; }
         if (g.req && !this.has(g.req)) { this.toast(`先に「${SHOP.find((x) => x.id === g.req)!.name}」が必要`); return; }
         if ((this.save.money ?? 0) < g.price) { this.toast('写真で稼いで買おう。いい写真ほど高く売れる'); return; }
@@ -470,6 +623,7 @@ export class Game {
 
   private ensureMinimap(): Minimap {
     if (!this.minimap) this.minimap = new Minimap($<HTMLCanvasElement>('minimap'), $<HTMLCanvasElement>('bigmap'));
+    this.minimap.known = this.discovered;
     return this.minimap;
   }
 
@@ -531,8 +685,26 @@ export class Game {
       this.tool = 'camera';
       this.reload = 0;
       this.diveCatch = [];
+      this.diveFinds = [];
+      this.pendingScenes.clear();
       this.spearFx.visible = false;
       $('hud').classList.remove('spear');
+      $('btn-tool').classList.toggle('hidden', !this.has('spear') || this.ads);
+      this.vmHand.visible = this.vmGun.visible = false;
+      // special sights: staged for the chapter that asks for them, later left to chance
+      const ch = this.chapter;
+      const sceneIds = (Object.keys(SCENES) as SceneId[]).filter((id) => !this.ads && ((ch?.scene === id && !this.save.scenes?.[id]) || (!!this.save.scenes?.[id] && Math.random() < SCENES[id].chance)));
+      this.scenes.start(sceneIds);
+      this.storyMarks = ch?.scene && sceneIds.includes(ch.scene) ? [{ x: SCENE_AT[ch.scene].x, z: SCENE_AT[ch.scene].z, rare: true }] : [];
+      // now and then something lies on the floor
+      if (this.ads || !this.save.tutorial) this.finds.clear();
+      else this.finds.spawn(new THREE.Vector3(dp.x, 0, dp.z), (x, z) => !(zoneAt(x, z) === 'cave') && caveRoofAt(x, z) === null);
+      // the first dive is the tutorial
+      this.tut.step = this.save.tutorial || this.ads ? -1 : 0;
+      this.tut.t = 0; this.tut.moved = 0; this.tut.looked = 0; this.tut.praise = 0;
+      this.tut.from.copy(this.camera.position);
+      $('coach').classList.toggle('hidden', this.tut.step < 0);
+      $('hud').classList.remove('hl-air', 'hl-surface');
       if (this.env.night) { this.env.lightOn = true; $('btn-light').classList.add('on'); }
       this.creatures.shield = this.has('shield');
       if (this.minimap) this.minimap.blips = [];
@@ -551,7 +723,7 @@ export class Game {
       this.paused = false;
       this.clock.getDelta();
       fade.classList.remove('on');
-      if (!this.helpShown) {
+      if (!this.helpShown && this.tut.step < 0) {
         this.helpShown = true;
         $('help').classList.remove('hidden');
         window.setTimeout(() => $('help').classList.add('hidden'), 7000);
@@ -627,8 +799,32 @@ export class Game {
     this.save.dives += 1;
     this.save.maxDepth = Math.max(this.save.maxDepth, this.diveMaxDepth);
     // the catch goes into the cooler at the diner; a blackout loses it to the sea
-    const caught = reason === 'surface' ? this.diveCatch : [];
+    let caught = reason === 'surface' ? this.diveCatch : [];
+    // protected animals are found on the boat by the fisheries patrol: confiscated, fined, and the diner's name suffers
+    const seized = caught.filter((c) => { const e = edibleInfo(SPECIES_BY_ID.get(c.id)!); return e.ok && e.protected; });
+    let fine = 0;
+    if (seized.length) {
+      caught = caught.filter((c) => !seized.includes(c));
+      fine = seized.length * PENALTY.protectedFine;
+      this.save.money = Math.max(0, (this.save.money ?? 0) - fine);
+      this.save.rep = Math.max(0, (this.save.rep ?? 0) - seized.length * PENALTY.protectedRep);
+    }
     (this.save.cooler ??= []).push(...caught);
+    // boxes picked up are opened on the boat
+    const opened = reason === 'surface' ? this.diveFinds.map((k) => {
+      const unknown = DIVE_POINTS.filter((d) => !this.discovered.has(d.id) && d.id !== 'lagoon').map((d) => ({ id: d.id, name: d.name }));
+      const loot = openFind(k, unknown);
+      this.save.money = (this.save.money ?? 0) + loot.yen;
+      if (loot.map) this.grantMap(loot.map);
+      return { k, loot };
+    }) : [];
+    // special sights are kept even after a blackout, like the dex
+    for (const [id, v] of this.pendingScenes) (this.save.scenes ??= {})[id] = { photo: v.photo, t: Date.now() };
+    if (this.tut.step >= 0) this.endTutorial();
+    this.save.tutorial = true;
+    this.scenes.stop();
+    this.finds.clear();
+    this.storyMarks = [];
     this.writeSave();
     this.setTool('camera');
     const after = this.foundCount;
@@ -658,13 +854,17 @@ export class Game {
     list.innerHTML = shots.length
       ? shots.map(([id, f]) => `<div class="res-card"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
-    if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">依頼達成：${b.label}<b>${yen(b.value)}</b></div>`).join(''));
+    if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">${b.label}<b>${yen(b.value)}</b></div>`).join(''));
     if (this.diveCatch.length) {
       list.insertAdjacentHTML('beforeend', reason === 'surface'
-        ? this.diveCatch.map((c) => `<div class="res-catch">獲物：${SPECIES_BY_ID.get(c.id)!.name}<b>${fmtKg(c.kg)}</b></div>`).join('')
+        ? caught.map((c) => `<div class="res-catch">獲物：${SPECIES_BY_ID.get(c.id)!.name}<b>${fmtKg(c.kg)}</b></div>`).join('')
         : `<div class="res-empty">気絶したときに獲物（${this.diveCatch.length}匹）は海に流されてしまった。</div>`);
     }
+    if (seized.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">漁協の見回りに見つかった！ 保護されている${seized.map((c) => SPECIES_BY_ID.get(c.id)!.name).join('・')}は没収、罰金 ${yen(fine)}。しおさい亭の評判も下がってしまった…</div>`);
+    for (const { k, loot } of opened) list.insertAdjacentHTML('beforeend', `<div class="res-find">拾った「${FIND_NAME[k]}」を開けてみると…<span class="open">${loot.text}${loot.yen ? `　<b>+${yen(loot.yen)}</b>` : ''}</span></div>`);
+    if (reason === 'blackout' && this.diveFinds.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">拾った物は気絶したときに落としてしまった。</div>`);
     this.diveCatch = [];
+    this.diveFinds = [];
     const ready = this.kitchen.readyCount();
     $('res-kitchen').classList.toggle('hidden', !caught.length);
     $('res-kitchen').textContent = ready ? `しおさい亭で料理する（${ready}件の注文が作れる！）` : 'しおさい亭で料理する';
@@ -704,6 +904,7 @@ export class Game {
     const inp = this.input;
     inp.poll();
     const [lx, ly] = inp.takeLook();
+    if (this.tut.step >= 0) this.tut.looked += Math.abs(lx) + Math.abs(ly);
     this.yaw -= lx;
     this.pitch = clamp(this.pitch - ly, -1.45, 1.45);
     if (inp.consume('light')) {
@@ -720,7 +921,7 @@ export class Game {
     const fwd = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const boosting = inp.boost && this.has('scooter');
-    let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.buff === 'shioyaki' ? 1.15 : 1);
+    let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.buff === 'shioyaki' ? 1.15 : 1) * (1 - Math.min(0.3, this.carryKg / 120));
     if (boosting) speed = 6;
     const want = new THREE.Vector3().addScaledVector(fwd, inp.moveY * speed).addScaledVector(right, inp.moveX * speed * 0.7);
     if (inp.up) want.y += speed * 0.75;
@@ -805,8 +1006,19 @@ export class Game {
       this.audio.warn();
       this.toast(this.buff === 'nitsuke' ? '水温2℃！ まかないの煮付けのおかげで少しはましだが、エアの減りが1.5倍に' : '水温2℃！ 寒さで震えてエアの減りが3倍に（ドライスーツがあれば平気）', 'danger', 3.5);
     }
-    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : 1);
+    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : 1)
+      * (1 + Math.min(PENALTY.carryAirMax, this.carryKg * PENALTY.carryAirPerKg)) * (this.tut.step >= 0 ? 0.5 : 1);
     this.air = Math.max(0, this.air - rate * dt);
+    if (this.frame % 20 === 0) this.exploreCheck(p);
+    const picked = this.finds.update(this.time, p);
+    if (picked) {
+      this.diveFinds.push(picked);
+      this.audio.chime(true);
+      this.freezeT = 0.12;
+      this.toast(`「${FIND_NAME[picked]}」を拾った！ 中身はボートに戻ってから開けてみよう（持って泳ぐと少し息が上がる）`, '', 3.5);
+    }
+    this.scenes.update(dt, this.env.night);
+    if (this.tut.step >= 0) this.updateTutorial(dt);
     // the day goes on while diving: dusk, then night
     if (!this.ads) {
       this.save.clock = (this.save.clock ?? 0) + dt;
@@ -834,14 +1046,15 @@ export class Game {
       this.lastWarn = this.time;
     }
 
-    // occasional requests (mini-games)
-    this.missions.update({
+    // occasional requests (mini-games), not during the tutorial
+    if (this.tut.step < 0) this.missions.update({
       dt, time: this.time, diveTime: this.diveTime, player: p, forward: this.tmpDir.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).clone(),
       zone: zoneAt(p.x, p.z),
       nearbySpecies: () => this.creatures.randomNear(p, 25),
       toast: (t, k, d) => this.toast(t, k ?? '', d),
       chime: (big) => this.audio.chime(big),
-      reward: (v, label) => { this.bonuses.push({ label, value: v }); this.shake = Math.max(this.shake, 0.4); this.freezeT = 0.15; this.updateDexChip(); },
+      sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); },
+      reward: (v, label) => { this.bonuses.push({ label: `依頼達成：${label}`, value: v }); this.shake = Math.max(this.shake, 0.4); this.freezeT = 0.15; this.updateDexChip(); },
     });
 
     // photo target & shutter
@@ -869,9 +1082,69 @@ export class Game {
     }
   }
 
+  /** weight carried: the catch and anything picked up */
+  private get carryKg(): number {
+    return this.bagKg + this.diveFinds.length * FINDS.kg;
+  }
+
+  /** Reaching a place while diving makes it a dive point the boat can go to. */
+  private exploreCheck(p: THREE.Vector3): void {
+    if (this.ads) return;
+    const z = zoneAt(p.x, p.z);
+    const id = z === 'offshore' ? 'dropoff' : z;
+    if (DIVE_POINTS.some((d) => d.id === id) && id !== 'deep') this.discover(id, 'swim');
+  }
+
+  // ------------------------------------------------------------------ tutorial
+  private updateTutorial(dt: number): void {
+    const T = this.tut;
+    const step = TUTORIAL[T.step];
+    if (!step) return;
+    const p = this.camera.position;
+    T.moved = Math.max(T.moved, Math.hypot(p.x - T.from.x, p.z - T.from.z));
+    if (T.praise > 0) {
+      T.praise -= dt;
+      if (T.praise <= 0) {
+        T.step++;
+        T.t = 0;
+        if (T.step >= TUTORIAL.length) { this.endTutorial(); return; }
+        this.showCoach();
+      }
+      return;
+    }
+    T.t += dt;
+    const ctx = { moved: T.moved, looked: T.looked, depth: -p.y, airShown: T.t, shots: [...this.pending.values()].length, species: this.pending.size, surfaceNear: this.canSurface(), t: T.t, alt: p.y - heightAt(p.x, p.z) };
+    this.showCoach();
+    if (step.done(ctx)) {
+      T.praise = 1.4;
+      $('coach').classList.add('praise');
+      $('coach-text').textContent = step.praise;
+      this.audio.chime(false);
+    }
+  }
+
+  private showCoach(): void {
+    const T = this.tut;
+    const step = TUTORIAL[T.step];
+    if (!step || T.praise > 0) return;
+    $('coach').classList.remove('praise', 'hidden');
+    $('coach-step').textContent = `チュートリアル ${T.step + 1}/${TUTORIAL.length}`;
+    if ($('coach-text').textContent !== step.text) $('coach-text').textContent = step.text;
+    $('hud').classList.toggle('hl-air', T.step === 3);
+    $('hud').classList.toggle('hl-surface', T.step === TUTORIAL.length - 1);
+  }
+
+  private endTutorial(): void {
+    this.tut.step = -1;
+    this.save.tutorial = true;
+    this.writeSave();
+    $('coach').classList.add('hidden');
+    $('hud').classList.remove('hl-air', 'hl-surface');
+  }
+
   // ------------------------------------------------------------------ spearfishing
   private get spearTool() {
-    return this.has('speargun') ? FISHING.tools.gun : FISHING.tools.hand;
+    return this.has('powerhead') ? FISHING.tools.big : this.has('speargun') ? FISHING.tools.gun : FISHING.tools.hand;
   }
   private get bagCap(): number {
     return FISHING.bag[this.has('bigcooler') ? 2 : this.has('cooler') ? 1 : 0];
@@ -885,8 +1158,13 @@ export class Game {
     $('hud').classList.toggle('spear', t === 'spear');
     $('tool-label').textContent = t === 'spear' ? 'カメラ' : '銛';
     $('btn-shutter').setAttribute('aria-label', t === 'spear' ? '銛を突く' : 'シャッター');
-    if (t === 'spear' && !this.save.dives && !this.diveCatch.length) this.toast(`${this.spearTool.name}に持ち替えた。魚に${this.spearTool.range}mまで近づいて突こう`, '', 3);
+    if (t === 'spear' && !this.diveCatch.length && !this.save.cooler?.length) this.toast(`${this.spearTool.name}に持ち替えた。魚に${this.spearTool.range}mまで近づいて突こう`, '', 3);
     this.spearFx.visible = false;
+    const gun = this.has('speargun') || this.has('powerhead');
+    this.vmHand.visible = t === 'spear' && !gun;
+    this.vmGun.visible = t === 'spear' && gun;
+    this.vmGunShaft.visible = true;
+    this.vmHand.position.z = -0.28;
   }
 
   /** Why the current spear target cannot be taken, or null if it can. */
@@ -896,11 +1174,21 @@ export class Game {
     if (!e.ok) return e.reason;
     const kg = weightOf(def, t.agent.s);
     const T = this.spearTool;
+    if (e.shark && !this.has('powerhead')) return 'サメは手強い。大物用の水中銃でないと歯が立たない';
     if (kg < FISHING.minKg) return '小さすぎる。逃がしてあげよう';
-    if (kg > T.maxKg) return `${fmtKg(kg)}の大物。手銛では仕留めきれない（水中銃が必要）`;
+    if (kg > T.maxKg) return `${fmtKg(kg)}の大物。${T.name}では仕留めきれない`;
     if (this.bagKg + kg > this.bagCap) return `クーラーに入らない（あと${fmtKg(Math.max(0, this.bagCap - this.bagKg))}）`;
     if (t.dist > T.range) return `届かない — あと${(t.dist - T.range).toFixed(1)}m近づく`;
     return null;
+  }
+
+  /** What the diner taught: shown for species the player has identified (photographed) before. */
+  private spearWarn(t: NonNullable<Game['spearT']>): string {
+    const def = t.rt.def;
+    if (!this.save.found[def.id] && !this.pending.has(def.id)) return '';
+    const e = edibleInfo(def);
+    if (!e.ok) return '';
+    return e.protected ? '　<span class="gC">保護種：獲ると罰金</span>' : e.poison ? '　<span class="gC">毒あり</span>' : '';
   }
 
   private hitChance(t: NonNullable<Game['spearT']>): number {
@@ -921,7 +1209,7 @@ export class Game {
     this.audio.shutter();
     if (!t) return;
     const block = this.spearBlock(t);
-    if (block) { this.toast(block, 'warn'); this.reload = 0.4; return; }
+    if (block) { this.toast(block, 'warn'); this.reload = 0.4; this.spearAnim = -1; return; }
     this.spearTo.copy(t.agent.p);
     const def = t.rt.def;
     if (Math.random() > this.hitChance(t)) {
@@ -932,8 +1220,11 @@ export class Game {
     const kg = weightOf(def, t.agent.s);
     this.creatures.take(t.rt, t.agent, cam.position);
     this.diveCatch.push({ id: def.id, kg });
+    // hauling the fish in on the line and holding it while it struggles costs breath
+    const haul = PENALTY.haulBar + kg * PENALTY.haulBarPerKg;
+    this.air = Math.max(1, this.air - haul);
     const known = !!this.save.found[def.id] || this.pending.has(def.id);
-    this.toast(`${known ? def.name : '見たことのない魚'}を獲った！ ${fmtKg(kg)}${kg >= BIG_KG ? '　大物だ！' : ''}`, '', 2.6);
+    this.toast(`${known ? def.name : '見たことのない魚'}を獲った！ ${fmtKg(kg)}${kg >= BIG_KG ? '　大物だ！' : ''}（引き寄せてエア -${Math.round(haul)}）`, '', 2.8);
     this.audio.chime(kg >= BIG_KG);
     this.freezeT = kg >= BIG_KG ? 0.22 : 0.12;
     this.shake = Math.max(this.shake, kg >= BIG_KG ? 0.6 : 0.3);
@@ -943,21 +1234,29 @@ export class Game {
     }
   }
 
+  /** Thrust of the hand spear / flight of the gun's shaft and its retrieval on the line. */
   private updateSpearFx(dt: number): void {
     const fx = this.spearFx;
-    if (this.spearAnim < 0) { fx.visible = false; return; }
+    if (this.spearAnim < 0) { fx.visible = false; this.vmGunShaft.visible = true; this.vmHand.position.z = -0.28; return; }
     this.spearAnim += dt;
     const cam = this.camera;
-    // shaft from just below the mask out to the aim point, then pulled back on its line
-    const from = this.tmpDir.set(0.18, -0.22, -0.3).applyQuaternion(cam.quaternion).add(cam.position);
-    const out = this.spearAnim < 0.12 ? this.spearAnim / 0.12 : Math.max(0, 1 - (this.spearAnim - 0.25) / 0.35);
-    const len = from.distanceTo(this.spearTo) * out;
-    fx.visible = len > 0.05;
-    fx.position.copy(from);
-    fx.lookAt(this.spearTo);
-    fx.rotateY(Math.PI);
-    fx.scale.set(1, 1, Math.max(0.01, len));
-    if (this.spearAnim > 0.6) this.spearAnim = -1;
+    const out = this.spearAnim < 0.1 ? this.spearAnim / 0.1 : Math.max(0, 1 - (this.spearAnim - 0.2) / 0.4);
+    if (this.vmHand.visible) {
+      // the sling launches the whole spear forward along the aim line, then the hand pulls it back
+      const reach = Math.min(this.spearTool.range, this.spearTo.distanceTo(cam.position) + 0.2);
+      this.vmHand.position.z = -0.28 - reach * out;
+      fx.visible = false;
+    } else {
+      const from = this.tmpDir.set(0.14, -0.12, -1.0).applyQuaternion(cam.quaternion).add(cam.position);
+      const len = from.distanceTo(this.spearTo) * out;
+      fx.visible = len > 0.05;
+      this.vmGunShaft.visible = !fx.visible;
+      fx.position.copy(from);
+      fx.lookAt(this.spearTo);
+      fx.rotateY(Math.PI);
+      fx.scale.set(1, 1, Math.max(0.01, len));
+    }
+    if (this.spearAnim > 0.65) this.spearAnim = -1;
   }
 
   private canSurface(): boolean {
@@ -979,8 +1278,11 @@ export class Game {
     ctx.drawImage(src, (src.width - sw) / 2, (src.height - sh) / 2, sw, sh, 0, 0, pc.width, pc.height);
     const photo = pc.toDataURL('image/jpeg', 0.72);
     this.diveShots++;
+    // special sights: the sleeping whales (any in-range shot of a staged one) or coral spawn filling the lens
+    if (this.scenes.spawningInView(this.camera)) this.sceneShot('spawning', photo);
+    else if (t && t.inRange && t.rt.def.id === 'makkou' && this.scenes.active.has('whalesleep') && t.rt.agents.indexOf(t.agent) < 3) this.sceneShot('whalesleep', photo);
     if (!t) {
-      this.toast('何も写っていない…');
+      if (!this.pendingScenes.size) this.toast('何も写っていない…');
       return;
     }
     const def = t.rt.def;
@@ -1007,6 +1309,27 @@ export class Game {
     // hit-stop + small kick: the shot "lands"
     this.freezeT = ev.grade.g === 'S' ? 0.2 : ev.grade.g === 'A' ? 0.13 : 0.07;
     this.shake = Math.max(this.shake, ev.grade.g === 'S' ? 0.5 : 0.25);
+  }
+
+  private sceneShot(id: SceneId, photo: string): void {
+    if (this.pendingScenes.has(id)) return;
+    const first = !this.save.scenes?.[id];
+    const pay = first ? SCENES[id].pay : Math.round((SCENES[id].pay * PHOTO.repeatShare) / 10) * 10;
+    this.pendingScenes.set(id, { photo, pay });
+    this.bonuses.push({ label: `特別な光景「${SCENES[id].name}」`, value: pay });
+    this.updateDexChip();
+    this.audio.chime(true);
+    this.freezeT = 0.3;
+    this.shake = Math.max(this.shake, 0.5);
+    const el = $('discover');
+    el.classList.remove('hidden', 'known');
+    ($('disc-photo') as HTMLImageElement).src = photo;
+    $('disc-tag').textContent = '特別な光景';
+    $('disc-name').textContent = SCENES[id].name;
+    $('disc-sci').textContent = first ? 'めったに見られない瞬間を撮った！' : 'また出会えた！';
+    $('disc-pay').textContent = `+${yen(pay)}`;
+    $('disc-grade').classList.add('hidden');
+    this.discoverTimer = 4.5;
   }
 
   private showDiscover(id: string, photo: string, isNew: boolean, ev?: ReturnType<typeof evaluateShot>, paid = 0, better?: Shot, record = false): void {
@@ -1054,7 +1377,7 @@ export class Game {
     $('narc').style.opacity = String(this.narc * 0.8);
     if (this.minimap && this.frame % 10 === 0) {
       if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
-      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks()];
+      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.storyMarks];
     }
     this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
@@ -1083,7 +1406,7 @@ export class Game {
         const def = st.rt.def;
         const known = this.save.found[def.id] || this.pending.has(def.id);
         const kg = weightOf(def, st.agent.s);
-        const sub = block ?? `<span class="gA">命中 ${Math.round(this.hitChance(st) * 100)}%</span>　約${fmtKg(kg)}${st.speed > 0.6 ? '　動きが速い' : st.ang > 0.12 ? '　中心で狙う↑' : ''}`;
+        const sub = (block ?? `<span class="gA">命中 ${Math.round(this.hitChance(st) * 100)}%</span>　約${fmtKg(kg)}${st.speed > 0.6 ? '　動きが速い' : st.ang > 0.12 ? '　中心で狙う↑' : ''}`) + this.spearWarn(st);
         lab.innerHTML = `${known ? def.name : '？？？'}<small>${sub}</small>`;
       } else lab.innerHTML = `<small>${this.spearTool.name}（射程${this.spearTool.range}m）— 魚に近づいて中央で狙う</small>`;
       return this.updateToasts(dt);

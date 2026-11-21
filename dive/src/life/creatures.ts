@@ -54,6 +54,7 @@ const _m = new THREE.Matrix4();
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+const _eStage = new THREE.Euler();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _qt = new THREE.Quaternion();
 const _sc = new THREE.Vector3();
@@ -266,6 +267,8 @@ export class Creatures {
   shield = false;
   /** night dive: nocturnal species come out */
   night = false;
+  /** staged individuals for a special sight: species id -> fixed poses (head-up sleeping whales, ...) */
+  stage = new Map<string, { p: THREE.Vector3; yaw: number; pitch: number }[]>();
   /** test-only: pin agent 0 of a species */
   pin: { id: string; p: THREE.Vector3; yaw: number } | null = null;
   readonly group = new THREE.Group();
@@ -783,11 +786,11 @@ export class Creatures {
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
-      if (this.pin && this.pin.id === rt.def.id) near = true;
+      if ((this.pin && this.pin.id === rt.def.id) || this.stage.has(rt.def.id)) near = true;
       if (near && !rt.mesh && rt.def.kind !== 'none') {
         // lazy build, a few species per frame so a dive never stalls on texture painting
         // (the budget counts build time only, and at least one species is built every frame)
-        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id) near = false;
+        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id && !this.stage.has(rt.def.id)) near = false;
         else {
           const t0 = performance.now();
           this.buildMesh(rt);
@@ -852,6 +855,18 @@ export class Creatures {
       for (let i = 0; i < rt.agents.length; i++) {
         const a = rt.agents[i];
         const g = rt.groups[a.g];
+        const staged = this.stage.get(def.id);
+        if (staged && i < staged.length) {
+          const st = staged[i];
+          g.absent = false;
+          a.taken = false;
+          a.p.set(st.p.x, st.p.y + Math.sin(this.time * 0.25 + i * 2) * 0.12, st.p.z);
+          a.v.set(0, 0.01, 0);
+          a.yaw = st.yaw;
+          a.q.setFromEuler(_eStage.set(st.pitch, st.yaw + Math.sin(this.time * 0.05 + i) * 0.05, 0, 'YXZ'));
+          this.writeInstance(rt, a, i);
+          continue;
+        }
         if (this.pin && this.pin.id === def.id && i === 0) {
           // test showcase: hold one individual side-on in front of the camera
           g.absent = false;
@@ -1121,7 +1136,8 @@ export class Creatures {
     for (const rt of this.list) {
       if (!rt.active || !rt.mesh) continue;
       const def = rt.def;
-      if (def.kind !== 'fish' && def.kind !== 'squid' && def.kind !== 'octopus' && !(def.kind === 'ray' && def.ray?.flounder)) continue;
+      if (def.kind !== 'fish' && def.kind !== 'squid' && def.kind !== 'octopus' && def.kind !== 'turtle' && !(def.kind === 'ray' && def.ray?.flounder)) continue;
+      if (this.stage.has(def.id)) continue;
       for (const a of rt.agents) {
         if (rt.groups[a.g].absent || a.taken) continue;
         _v2.copy(a.p).sub(cp);

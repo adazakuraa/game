@@ -2,22 +2,23 @@ import { ARCH, DIVE_POINTS, heightAt, rockyWeight, VENT, WORLD, WRECK, zoneAt } 
 
 const RES = 2.5; // meters per map pixel
 const LANDMARKS = [
-  { x: WRECK.x, z: WRECK.z, label: '沈没船' },
-  { x: ARCH.x, z: ARCH.z, label: '岩のアーチ' },
-  { x: VENT.x, z: VENT.z, label: '熱水噴出孔' },
+  { x: WRECK.x, z: WRECK.z, label: '沈没船', id: 'dropoff' },
+  { x: ARCH.x, z: ARCH.z, label: '岩のアーチ', id: 'rocky' },
+  { x: VENT.x, z: VENT.z, label: '熱水噴出孔', id: 'deep' },
 ];
+// each label belongs to a dive point; it is written on the chart once that point is known
 const ZONE_LABELS = [
-  { x: 0, z: 30, label: '浅瀬ラグーン' },
-  { x: -70, z: 235, label: 'サンゴ礁' },
-  { x: 130, z: 170, label: '岩礁' },
-  { x: 0, z: 410, label: 'ドロップオフ' },
-  { x: 0, z: 600, label: '沖の大海原' },
-  { x: 0, z: 840, label: '深海' },
-  { x: -320, z: 180, label: '流氷の入り江' },
-  { x: -330, z: 520, label: '海底遺跡' },
-  { x: -330, z: 700, label: 'ブルーホール' },
-  { x: -330, z: 900, label: '水中洞窟' },
-  { x: 330, z: 220, label: '海藻の森' },
+  { x: 0, z: 30, label: '浅瀬ラグーン', id: 'lagoon' },
+  { x: -70, z: 235, label: 'サンゴ礁', id: 'reef' },
+  { x: 130, z: 170, label: '岩礁', id: 'rocky' },
+  { x: 0, z: 410, label: 'ドロップオフ', id: 'dropoff' },
+  { x: 0, z: 600, label: '沖の大海原', id: 'dropoff' },
+  { x: 0, z: 840, label: '深海', id: 'deep' },
+  { x: -320, z: 180, label: '流氷の入り江', id: 'cold' },
+  { x: -330, z: 520, label: '海底遺跡', id: 'ruins' },
+  { x: -330, z: 700, label: 'ブルーホール', id: 'bluehole' },
+  { x: -330, z: 900, label: '水中洞窟', id: 'cave' },
+  { x: 330, z: 220, label: '海藻の森', id: 'kelp' },
 ];
 
 /**
@@ -25,6 +26,8 @@ const ZONE_LABELS = [
  * map's right is world -x (as seen when facing offshore).
  */
 export class Minimap {
+  /** dive points the player knows about */
+  known: Set<string> = new Set(['lagoon']);
   private chart: HTMLCanvasElement;
   private W: number;
   private H: number;
@@ -199,6 +202,7 @@ export class Minimap {
     g.textBaseline = 'middle';
     g.font = `700 ${Math.max(11, sc * 6)}px "Zen Kaku Gothic New", sans-serif`;
     for (const l of ZONE_LABELS) {
+      if (!this.known.has(l.id)) continue;
       const [sx, sy] = P(l.x, l.z);
       g.fillStyle = 'rgba(0,0,0,0.45)';
       g.fillText(l.label, sx + 1, sy + 1);
@@ -207,6 +211,7 @@ export class Minimap {
     }
     g.font = `500 ${Math.max(10, sc * 4.6)}px "Zen Kaku Gothic New", sans-serif`;
     for (const l of LANDMARKS) {
+      if (!this.known.has(l.id)) continue;
       const [sx, sy] = P(l.x, l.z);
       g.strokeStyle = '#fff';
       g.lineWidth = 1.5;
@@ -215,6 +220,7 @@ export class Minimap {
       g.fillText(l.label, sx, sy + 13);
     }
     for (const dp of DIVE_POINTS) {
+      if (!this.known.has(dp.id)) continue;
       const [sx, sy] = P(dp.x, dp.z);
       g.fillStyle = '#ff9a3c';
       g.beginPath();

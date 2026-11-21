@@ -49,6 +49,7 @@
           <div id="catch-chip" class="glass chip hidden" aria-label="クーラーの中の獲物の重さ"><svg viewBox="0 0 24 24"><path d="M2 12c3-5 9-6 14-3l5-3v12l-5-3c-5 3-11 2-14-3z"/></svg><b id="catch-val">0</b></div>
         </div>
         <div id="reticle"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div id="ret-label"></div></div>
+        <div id="coach" class="hidden"><div class="coach-head"><span id="coach-step"></span><button id="coach-skip" type="button">チュートリアルを飛ばす</button></div><div id="coach-text"></div></div>
         <div id="mission" class="hidden"><div id="ms-title"></div><div id="ms-prog"></div><div class="ms-bar"><i id="ms-bar-fill"></i></div><div id="ms-ask" class="hidden"><button id="ms-yes" type="button">受ける</button><button id="ms-no" type="button">断る</button></div></div>
         <button id="surface-btn" class="hidden" type="button">
           <svg viewBox="0 0 24 24"><path d="M12 4l-7 7h4v9h6v-9h4z"/></svg><span id="surface-text">浮上してボートに戻る</span>
@@ -102,10 +103,14 @@
           <header class="brand">
             <div class="brand-kicker">DIVE LOG</div>
             <h1>BLUE<span>DEPTHS</span></h1>
-            <p>島の食堂を手伝いながら、海へ潜って撮って、獲って、食べよう</p>
+            <p>駆け出しの海中写真家として、雑誌の表紙を飾る一枚を目指そう</p>
             <div class="t-goal" id="t-goal"></div>
           </header>
-          <button id="open-kitchen" type="button" class="btn pri kitchen-btn"><svg viewBox="0 0 24 24"><path d="M3 11h18l-2 9H5zM6 11a6 6 0 0 1 12 0M12 3v2"/></svg><span>しおさい亭（食堂）</span><small id="k-badge"></small></button>
+          <div id="story-card" class="panel story-card"></div>
+          <div class="hub">
+            <button id="open-shop" type="button" class="btn sec hub-btn"><svg viewBox="0 0 24 24"><path d="M4 7h16l-1.5 12h-13zM8 7a4 4 0 0 1 8 0" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>ダイブショップ</span><small id="shop-badge"></small></button>
+            <button id="open-kitchen" type="button" class="btn sec hub-btn hidden"><svg viewBox="0 0 24 24"><path d="M3 11h18l-2 9H5zM6 11a6 6 0 0 1 12 0" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>しおさい亭</span><small id="k-badge"></small></button>
+          </div>
           <div id="daytime" class="panel daytime"></div>
           <div class="panel" id="points"></div>
           <div class="row-actions">
@@ -117,7 +122,19 @@
               <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="snd-wave" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>
             </button>
           </div>
+        </div>
+      </section>
+
+      <!-- ===================== SHOP ===================== -->
+      <section id="shop" class="screen full hidden" aria-label="ダイブショップ">
+        <div class="full-wrap">
+          <div class="k-head">
+            <div><div class="res-kicker">DIVE SHOP</div><h2>ダイブショップ</h2></div>
+            <button id="shop-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4"/></svg></button>
+          </div>
+          <div id="shop-status" class="k-status"></div>
           <div class="panel gear" id="gear"></div>
+          <p class="note">装備は図鑑を埋めると入荷し、写真や料理で稼いだお金で買う。漁具はしおさい亭の評判で入荷する。</p>
         </div>
       </section>
 
@@ -146,8 +163,8 @@
       </section>
 
       <!-- ===================== DINER ===================== -->
-      <section id="kitchen" class="screen hidden" aria-label="しおさい亭">
-        <div class="modal wide kitchen">
+      <section id="kitchen" class="screen full hidden" aria-label="しおさい亭">
+        <div class="full-wrap kitchen">
           <div class="k-head">
             <div><div class="res-kicker">SHIOSAI-TEI</div><h2>しおさい亭</h2></div>
             <button id="k-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4"/></svg></button>
