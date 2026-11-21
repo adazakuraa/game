@@ -892,7 +892,7 @@ export class Game {
       if (t.inRange) {
         // live grade: the player sees closer / side-on / centred pays more before pressing the shutter
         const ev = evaluateShot(t, this.lastClear, -t.agent.p.y, this.currentF > 0.2, this.env.night > 0);
-        const hint = t.side < 0.6 ? '横から狙うと↑' : t.frac < 0.2 ? '寄ると↑' : t.centred < 0.6 ? '中央で↑' : '';
+        const hint = t.fit < 0.99 ? 'はみ出している・少し離れる' : t.fill > PHOTO.fillMax ? '近すぎ・少し離れる' : t.side < 0.6 ? '横から狙うと↑' : t.frac < 0.2 ? '寄ると↑' : t.centred < 0.6 ? '中央で↑' : '';
         sub = `<span class="g${ev.grade.g}">評価 ${ev.grade.g}</span>${t.danger ? ' <span class="gS">危険手当！</span>' : ''}${hint ? '　' + hint : ''}`;
       }
       lab.innerHTML = `${known ? t.rt.def.name : '？？？'}<small>${sub}</small>`;
@@ -999,6 +999,7 @@ export class Game {
     };
     (window as unknown as Record<string, unknown>).__THREE_GAME_TEST_HOOKS__ = {
       game: this,
+      offerMission: () => { this.missions.forceOffer = true; },
       startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure') => { this.missions.force = k; },
       currents: () => this.currents,
       currentF: () => this.currentF,

@@ -24,6 +24,8 @@ export const MISSION = {
   photo: { time: 90, rewardMult: 4, minGrade: ['S', 'A', 'B'] },
   lost: { time: 100, reward: 2500, radius: 22 },
   treasure: { time: 120, reward: 4500, radius: 30 },
+  /** 【依頼の返事を待つ時間】s: ignoring an offer simply lets it lapse */
+  offerTime: 15,
   /** 【拾える距離】m */
   pickR: 1.15,
 };
@@ -51,6 +53,11 @@ export class Missions {
   active: Active | null = null;
   /** test hook: start this kind at the next update */
   force: Kind | null = null;
+  /** A request waiting for the player's yes/no. Nothing starts until they accept. */
+  offer: { kind: Kind; t: number; sp?: SpeciesDef } | null = null;
+  private answer: 'yes' | 'no' | null = null;
+  /** test hook: make the next update propose a request */
+  forceOffer = false;
   private count = 0;
   private lastEnd = -1e9;
   private nextCheck = 0;
@@ -67,9 +74,13 @@ export class Missions {
     title: document.getElementById('ms-title')!,
     prog: document.getElementById('ms-prog')!,
     bar: document.getElementById('ms-bar-fill')!,
+    ask: document.getElementById('ms-ask')!,
   };
 
   constructor() {
+    for (const id of ['ms-yes', 'ms-no']) for (const ev of ['pointerdown', 'touchstart']) document.getElementById(id)!.addEventListener(ev, (e) => e.stopPropagation());
+    document.getElementById('ms-yes')!.addEventListener('click', (e) => { e.stopPropagation(); this.answer = 'yes'; });
+    document.getElementById('ms-no')!.addEventListener('click', (e) => { e.stopPropagation(); this.answer = 'no'; });
     const ug = buildUrchin({ spine: 0.6, n: 90, thin: 0.03 });
     ug.scale(0.16, 0.16, 0.16);
     this.urchinMesh = new THREE.InstancedMesh(ug, new THREE.MeshStandardMaterial({ color: 0x4a2050, roughness: 0.5, emissive: 0x2a0c30 }), MISSION.urchin.spawn);
@@ -96,6 +107,8 @@ export class Missions {
 
   reset(): void {
     this.end(false, true);
+    this.offer = null;
+    this.answer = null;
     this.count = 0;
     this.lastEnd = -1e9;
     this.nextCheck = 0;
@@ -111,12 +124,30 @@ export class Missions {
   }
 
   update(c: MissionCtx): void {
-    if (!this.active && this.force) { const k = this.force; this.force = null; this.start(c, k); return; }
+    if (!this.active && this.force) { const k = this.force; this.force = null; this.offer = null; this.start(c, k); return; }
+    if (!this.active && this.offer) {
+      const o = this.offer;
+      o.t -= c.dt;
+      const ans = this.answer;
+      this.answer = null;
+      if (ans === 'yes') { this.offer = null; this.el.ask.classList.add('hidden'); this.start(c, o.kind, o.sp, true); return; }
+      if (ans === 'no' || o.t <= 0) {
+        this.offer = null;
+        this.lastEnd = c.time;
+        this.end(false, true);
+        if (ans === 'no') c.toast('依頼を断った', '', 1.5);
+        return;
+      }
+      this.el.bar.style.width = `${Math.max(0, (o.t / MISSION.offerTime) * 100)}%`;
+      return;
+    }
+    if (!this.active && this.forceOffer) { this.forceOffer = false; this.propose(c); return; }
     if (!this.active) {
+      this.answer = null;
       this.nextCheck -= c.dt;
       if (this.count >= MISSION.maxPerDive || c.diveTime < MISSION.firstAfter || c.time - this.lastEnd < MISSION.gap || this.nextCheck > 0) return;
       this.nextCheck = MISSION.checkEvery;
-      if (Math.random() < MISSION.chance) this.start(c);
+      if (Math.random() < MISSION.chance) this.propose(c);
       return;
     }
     const a = this.active;
@@ -167,19 +198,50 @@ export class Missions {
     if (a?.kind === 'photo' && a.target?.id === id && MISSION.photo.minGrade.includes(grade)) a.got = 1;
   }
 
-  private start(c: MissionCtx, forced?: Kind): void {
+  /** Ask first: show what the request is and let the player accept or decline. */
+  private propose(c: MissionCtx): void {
     const opts: Kind[] = ['photo'];
     if (c.zone === 'rocky' || c.zone === 'cold' || c.zone === 'kelp') opts.push('urchin', 'urchin');
     if (c.zone === 'lagoon' || c.zone === 'reef') opts.push('trash', 'trash');
     if (c.zone === 'reef' || c.zone === 'dropoff') opts.push('lost');
     if (c.zone === 'ruins') opts.push('treasure', 'treasure', 'treasure');
-    const kind = forced ?? opts[Math.floor(Math.random() * opts.length)];
+    const kind = opts[Math.floor(Math.random() * opts.length)];
+    let sp: SpeciesDef | undefined;
+    let text: string, time: number, reward: number;
+    if (kind === 'photo') {
+      sp = c.nearbySpecies() ?? undefined;
+      if (!sp) return;
+      time = MISSION.photo.time; reward = [0, 300, 900, 2400, 8000][sp.rarity] * MISSION.photo.rewardMult;
+      text = `雑誌から：${sp.name}の写真がほしい`;
+    } else if (kind === 'urchin') {
+      time = MISSION.urchin.time; reward = c.zone === 'cold' ? MISSION.urchin.coldReward : MISSION.urchin.reward;
+      text = `漁協から：ウニを${MISSION.urchin.need}個獲って`;
+    } else if (kind === 'trash') {
+      time = MISSION.trash.time; reward = MISSION.trash.reward; text = `海のごみを${MISSION.trash.need}個拾って`;
+    } else if (kind === 'treasure') {
+      time = MISSION.treasure.time; reward = MISSION.treasure.reward; text = '遺跡に沈んだ宝箱を探して';
+    } else {
+      time = MISSION.lost.time; reward = MISSION.lost.reward; text = '落とした水中カメラを探して';
+    }
+    this.offer = { kind, t: MISSION.offerTime, sp };
+    this.answer = null;
+    this.count++;
+    this.el.title.textContent = `依頼が来た！ ${text}`;
+    this.el.prog.textContent = `${time}秒・報酬 ¥${reward.toLocaleString('ja-JP')}`;
+    this.el.bar.style.width = '100%';
+    this.el.ask.classList.remove('hidden');
+    this.el.root.classList.remove('hidden');
+    c.chime(false);
+  }
+
+  private start(c: MissionCtx, forced?: Kind, sp0?: SpeciesDef, fromOffer = false): void {
+    const kind = forced ?? 'photo';
     const ahead = c.player.clone().addScaledVector(c.forward.clone().setY(0).normalize(), 8);
     this.items = [];
     this.taken = [];
     if (kind === 'photo') {
-      const sp = c.nearbySpecies();
-      if (!sp) return;
+      const sp = sp0 ?? c.nearbySpecies();
+      if (!sp) { this.end(false, true); return; }
       const base = [0, 300, 900, 2400, 8000][sp.rarity];
       this.active = { kind, t: MISSION.photo.time, time: MISSION.photo.time, need: 1, got: 0, reward: base * MISSION.photo.rewardMult, title: `雑誌の依頼：${sp.name}をB以上で撮影`, target: sp };
       c.toast(`【依頼】海洋雑誌から「${sp.name}の写真がほしい！」 ${MISSION.photo.time}秒以内にB評価以上で撮ろう`, 'warn', 4.5);
@@ -231,7 +293,8 @@ export class Missions {
       this.active = { kind, t: L.time, time: L.time, need: 1, got: 0, reward: L.reward, title: '落とし物のカメラ探し', spot };
       c.toast(`【依頼】ダイバーが水中カメラを落とした！ ${L.time}秒以内に見つけて（マップの金色の印のあたり）`, 'warn', 4.5);
     }
-    this.count++;
+    if (!fromOffer) this.count++;
+    this.el.ask.classList.add('hidden');
     this.el.root.classList.remove('hidden');
     this.renderHud();
   }
@@ -262,5 +325,6 @@ export class Missions {
     this.camMesh.visible = false;
     this.chestMesh.visible = false;
     if (!silent || this.el.root) this.el.root.classList.add('hidden');
+    this.el.ask.classList.add('hidden');
   }
 }

@@ -290,6 +290,11 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 .ms-bar i { display: block; height: 100%; width: 100%; background: var(--warn); transition: width 0.25s linear; }
 .res-bonus { width: 100%; display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; padding: 7px 10px; border-radius: 10px; background: rgba(255,181,71,0.12); color: var(--warn); }
 .res-bonus b { font-family: var(--num); color: var(--ok); }
+#ms-ask { display: flex; gap: 8px; justify-content: center; margin-top: 7px; pointer-events: auto; }
+#ms-ask.hidden { display: none; }
+#ms-ask button { min-width: 84px; min-height: 40px; border-radius: 10px; border: 1px solid var(--warn); font: inherit; font-size: 14px; font-weight: 900; cursor: pointer; }
+#ms-yes { background: var(--warn); color: #1a1206; }
+#ms-no { background: transparent; color: var(--warn); }
 @media (width <= 520px) { #mission { top: calc(214px + var(--safe-t)); max-width: calc(100vw - 32px); } }
 
 .night-toggle { justify-content: flex-start; gap: 10px; text-align: left; flex-wrap: wrap; }

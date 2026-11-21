@@ -12,6 +12,10 @@ export const PHOTO = {
   weight: { size: 0.36, side: 0.26, centre: 0.16, clear: 0.22 },
   /** 【画面占有の目標】fraction of frame height at which size scores full marks */
   sizeFull: 0.32,
+  /** 【大きすぎ】once the subject spans more than this share of the frame it crowds the edges and the size score falls off */
+  fillMax: 0.8,
+  /** 【はみ出し】body share that must be inside the frame for an S */
+  fitForS: 0.99,
   /** grade thresholds and pay multipliers */
   grades: [
     { g: 'S', min: 86, mult: 2.5, word: 'すばらしい！' },
@@ -49,11 +53,16 @@ export function gradeOf(score: number): Grade {
 /** Score 0..100 and money for one in-range shot. */
 export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCurrent: boolean, night = false): ShotEval {
   const W = PHOTO.weight;
-  const size = Math.min(1, Math.max(0, (t.frac - 0.06) / (PHOTO.sizeFull - 0.06)));
+  let size = Math.min(1, Math.max(0, (t.frac - 0.06) / (PHOTO.sizeFull - 0.06)));
+  const fill = t.fill ?? 0.5;
+  if (fill > PHOTO.fillMax) size = Math.max(0.2, 1 - (fill - PHOTO.fillMax) * 3);
   const clarity = Math.min(1, Math.max(0, 1 - t.dist / (t.clear ?? clear))) ** 0.7;
-  const score = Math.round(100 * (W.size * size + W.side * t.side + W.centre * t.centred + W.clear * clarity));
+  const fit = t.fit ?? 1;
+  let score = Math.round(100 * (W.size * size + W.side * t.side + W.centre * t.centred + W.clear * clarity) * (0.3 + 0.7 * fit ** 3));
+  if (fit < PHOTO.fitForS || fill > 0.92) score = Math.min(score, PHOTO.grades[0].min - 1);
   const grade = gradeOf(score);
   const bonus: string[] = [];
+  if (fit < 0.8) bonus.push('見切れ減点');
   let mult = grade.mult;
   if (t.danger) { mult *= PHOTO.dangerMult; bonus.push('危険手当 ×' + PHOTO.dangerMult); }
   if (inCurrent) { mult *= PHOTO.currentMult; bonus.push('激流手当 ×' + PHOTO.currentMult); }

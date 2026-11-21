@@ -226,6 +226,10 @@ export type PhotoTarget = {
   rt: SpeciesRuntime; agent: Agent; dist: number; angle: number; inRange: boolean; reason: 'ok' | 'small' | 'murky' | 'dark' | 'hidden'; frac: number;
   /** 0..1: how close to the middle of the frame */
   centred: number;
+  /** share of the body (head to tail, top to bottom) that lies inside the photo crop, 0..1 */
+  fit: number;
+  /** how much of the crop the subject's outline spans (0..1+, by its larger side): above ~0.9 it crowds the edges */
+  fill: number;
   /** 0..1: 1 = perfect side view (fish), always 1 for animals without a "side" */
   side: number;
   /** the individual is circling / charging the diver right now */
@@ -1084,7 +1088,22 @@ export class Creatures {
             const c = Math.abs(f.dot(_v2) / Math.max(dist, 1e-3));
             side = Math.sqrt(Math.max(0, 1 - c * c));
           }
-          best = { rt, agent: a, dist, angle: _v2.angleTo(fwd), inRange: reason === 'ok', reason, frac, centred: Math.max(0, centred), side, danger: !!a.aggro && (a.mode === 1 || a.mode === 2), clear };
+          // framing: sample the body outline and count how much of it is inside the crop
+          const ax = _v3.set(0, 0, 1).applyQuaternion(a.q);
+          const half = a.s * 0.5;
+          const up = def.kind === 'fish' ? a.s * 0.18 : a.s * 0.3;
+          let inside = 0, total = 0, x0 = 9, x1 = -9, y0 = 9, y1 = -9;
+          for (let k = -2; k <= 2; k++) {
+            for (const h of k === 0 ? [-1, 0, 1] : [0]) {
+              ndc.copy(a.p).addScaledVector(ax, (half * k) / 2);
+              ndc.y += up * h;
+              ndc.project(cam);
+              total++;
+              x0 = Math.min(x0, ndc.x); x1 = Math.max(x1, ndc.x); y0 = Math.min(y0, ndc.y); y1 = Math.max(y1, ndc.y);
+              if (Math.abs(ndc.x) <= o.cropX && Math.abs(ndc.y) <= o.cropY && ndc.z < 1) inside++;
+            }
+          }
+          best = { rt, agent: a, dist, angle: _v2.angleTo(fwd), inRange: reason === 'ok', reason, frac, centred: Math.max(0, centred), fit: inside / total, fill: Math.max((x1 - x0) / (2 * o.cropX), (y1 - y0) / (2 * o.cropY)), side, danger: !!a.aggro && (a.mode === 1 || a.mode === 2), clear };
         }
       }
     }
