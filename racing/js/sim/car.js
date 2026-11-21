@@ -51,8 +51,8 @@ export const DRIFT = {
   minSpeed: 5, // m/s これ未満ではチャージしない（約 18km/h）
   startSteer: 0.35, // これ以上ハンドルを切っていれば「曲がっている」
   levels: [0.35, 0.8, 1.35], // チャージ時間（秒）: 青・オレンジ・紫
-  boostTime: [0.7, 1.1, 1.6],
-  boostAccel: 6.0, // m/s^2（タイヤのグリップと関係なく押し出す）
+  boostTime: [1.5, 2.5, 3.4], // ターボの長さ（秒）: 青・オレンジ・紫
+  boostAccel: 11.0, // m/s^2（タイヤのグリップと関係なく押し出す）
 };
 
 export class Car {
@@ -176,12 +176,12 @@ export class Car {
     // ドリフト（＝ブレーキを押しながら曲がっている状態）。車の挙動は普段と同じで、続けている間チャージし、やめたらターボ
     {
       const brk0 = Math.max(0, Math.min(1, input.brake));
-      const turning = Math.abs(steerIn) > DRIFT.startSteer && Math.abs(u) > DRIFT.minSpeed;
-      const on = !this.noDrift && brk0 > 0.25 && turning && !(this.crashT > 0);
+      const turning = Math.abs(steerIn) > DRIFT.startSteer;
+      const on = !this.noDrift && brk0 > 0.25 && turning && !(this.crashT > 0) && (this.drift || Math.abs(u) > DRIFT.minSpeed);
       if (on) {
         if (!this.drift) { this.drift = Math.sign(steerIn); this.driftT = 0; this.driftLvl = 0; }
         this.driftOffT = 0;
-        this.driftT += dt;
+        if (Math.abs(u) > DRIFT.minSpeed) this.driftT += dt; // 遅くなりすぎたらチャージだけ止まる
         while (this.driftLvl < 3 && this.driftT >= DRIFT.levels[this.driftLvl]) this.driftLvl++;
       } else if (this.drift) {
         // ほんの一瞬の離れは見逃す
@@ -197,7 +197,7 @@ export class Car {
       }
       // コース外・壁ではチャージが消える
       if (this.drift && (this.offTrack >= 3 || (this.scrape && Math.abs(u) < 20))) { this.drift = 0; this.driftLvl = 0; this.driftT = 0; }
-      if (this.boostT > 0) { this.boostT -= dt; if (brk0 > 0.5 && !this.drift) this.boostT = 0; }
+      if (this.boostT > 0) this.boostT -= dt;
     }
 
     // パワートレイン
@@ -290,7 +290,7 @@ export class Car {
     const cd = Math.cos(delta), sd = Math.sin(delta);
     let du = (Fxr + Fxf * cd - Fyf * sd - Fdrag - Froll + Fg) / c.mass + vl * r;
     // ターボ（アクセルを踏んでいる間だけ押し出す）
-    if (this.boostT > 0 && throttle > 0.3) du += DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl);
+    if (this.boostT > 0 && throttle > 0.3) du += DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl) * Math.max(0.4, 1 - Math.abs(u) / 110); // 高速ほど控えめ
     let dvl = (Fyr + Fyf * cd + Fxf * sd) / c.mass - u * r;
     let dr = (c.a * (Fyf * cd + Fxf * sd) - c.b * Fyr) / c.Iz;
 

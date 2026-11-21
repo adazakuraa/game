@@ -165,8 +165,10 @@ export class AICar {
     let boostA = 0;
     if (this.boostT > 0) {
       this.boostT -= dt;
-      boostA = DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl);
-      vt += 4;
+      boostA = DRIFT.boostAccel * (0.85 + 0.15 * this.boostLvl) * Math.max(0.4, 1 - this.v / 110);
+      // 上乗せは、この先でブレーキが要らない間だけ（ターボの勢いでコーナーを速く曲がることはできない）
+      const ahead = this.targetSpeed(this.s + 2 + this.v * 1.2);
+      vt = Math.min(vt + 3 + 3 * this.boostLvl, Math.max(vt, ahead));
     }
     // 直線（目標速度が高い所）では、スリップストリームで少しだけ伸びる
     this.draft = draft;
