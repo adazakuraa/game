@@ -90,3 +90,20 @@ export function buildSpeargun(): { gun: THREE.Group; shaft: THREE.Mesh } {
   g.add(reel);
   return { gun: g, shaft };
 }
+
+/** A short steel pry bar (バール) for prising urchins off the rock: flattened claw end, red grip. */
+export function buildBar(): THREE.Group {
+  const g = new THREE.Group();
+  const st = new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.85, roughness: 0.4 });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.42, 8).rotateX(Math.PI / 2), st);
+  shaft.position.z = -0.18;
+  g.add(shaft);
+  const claw = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.006, 0.06), st);
+  claw.position.set(0, -0.012, -0.41);
+  claw.rotation.x = 0.5;
+  g.add(claw);
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.12, 10).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xb02a20, roughness: 0.7 }));
+  grip.position.z = 0.04;
+  g.add(grip);
+  return g;
+}

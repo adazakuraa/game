@@ -268,7 +268,7 @@ export class Creatures {
   /** night dive: nocturnal species come out */
   night = false;
   /** staged individuals for a special sight: species id -> fixed poses (head-up sleeping whales, ...) */
-  stage = new Map<string, { p: THREE.Vector3; yaw: number; pitch: number }[]>();
+  stage = new Map<string, { p: THREE.Vector3; yaw: number; pitch: number; s?: number; still?: boolean }[]>();
   /** test-only: pin agent 0 of a species */
   pin: { id: string; p: THREE.Vector3; yaw: number } | null = null;
   readonly group = new THREE.Group();
@@ -283,10 +283,27 @@ export class Creatures {
     for (const def of SPECIES) this.list.push(this.spawn(def, homes));
   }
 
+  /** how many groups were sent to each habitat point this dive (spreads species out instead of stacking them) */
+  private homeUse = new Map<THREE.Vector3, number>();
+
+  /** Of a few random candidates, take the least crowded habitat point. */
+  private pickSpread(arr: THREE.Vector3[], ok: (q: THREE.Vector3) => boolean = () => true, tries = 8): THREE.Vector3 | null {
+    let best: THREE.Vector3 | null = null, bestUse = Infinity;
+    for (let k = 0, found = 0; k < tries * 5 && found < tries; k++) {
+      const q = arr[Math.floor(this.rnd() * arr.length)];
+      if (!q || !ok(q)) continue;
+      found++;
+      const u = (this.homeUse.get(q) ?? 0) + this.rnd() * 0.5;
+      if (u < bestUse) { bestUse = u; best = q; }
+    }
+    if (best) this.homeUse.set(best, (this.homeUse.get(best) ?? 0) + 1);
+    return best;
+  }
+
   private pickHome(def: SpeciesDef, homes: Homes, i: number): THREE.Vector3 {
     const r = this.rnd;
     const reg = def.region;
-    const fromList = (arr: THREE.Vector3[]) => arr[Math.floor(r() * arr.length) % Math.max(1, arr.length)].clone();
+    const fromList = (arr: THREE.Vector3[]) => (this.pickSpread(arr) ?? arr[Math.floor(r() * arr.length) % Math.max(1, arr.length)]).clone();
     let p: THREE.Vector3;
     if (reg === 'anemones') {
       // each anemonefish species keeps its own host anemones
@@ -641,10 +658,8 @@ export class Creatures {
     if (typeof reg === 'string') {
       const list = (this.homes as unknown as Record<string, THREE.Vector3[]>)[reg];
       if (!list?.length) return false;
-      for (let k = 0; k < 40 && !p; k++) {
-        const q = list[Math.floor(r() * list.length)];
-        if (ok(q.x, q.z)) p = q.clone();
-      }
+      const q = this.pickSpread(list, (h) => ok(h.x, h.z));
+      if (q) p = q.clone();
     } else {
       const x0 = Math.max(reg[0], player.x - 75), x1 = Math.min(reg[1], player.x + 75);
       const z0 = Math.max(reg[2], player.z - 75), z1 = Math.min(reg[3], player.z + 75);
@@ -669,7 +684,8 @@ export class Creatures {
       if (a.g !== gi) continue;
       if (def.behavior === 'static') {
         a.p.copy(p);
-        const spread = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots' ? 1.2 : 3;
+        // benthic animals scatter over several metres rather than piling up on one rock
+        const spread = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots' ? 3.5 : 6;
         a.p.x += (r() - 0.5) * spread; a.p.z += (r() - 0.5) * spread;
         a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
         a.gx = undefined;
@@ -698,6 +714,7 @@ export class Creatures {
    */
   reshuffle(player: THREE.Vector3, seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0): void {
     this.rnd = mulberry32(seed);
+    this.homeUse.clear();
     for (const rt of this.list) {
       const p = rt.def.when === 'night' && !this.night ? 0 : this.presence(rt.def.rarity);
       const movable = this.canRelocate(rt.def);
@@ -713,11 +730,11 @@ export class Creatures {
   }
 
   /** A random species with an individual within `radius` (for photo requests). */
-  randomNear(p: THREE.Vector3, radius: number): SpeciesDef | null {
+  randomNear(p: THREE.Vector3, radius: number, minSize = 0.06): SpeciesDef | null {
     const cands: SpeciesDef[] = [];
     for (const rt of this.list) {
       const d = rt.def;
-      if (!rt.active || !rt.mesh || d.kind === 'none' || d.size < 0.06 || d.behavior === 'buried') continue;
+      if (!rt.active || !rt.mesh || d.kind === 'none' || d.size < minSize || d.behavior === 'buried' || this.stage.has(d.id)) continue;
       if (rt.agents.some((a) => !rt.groups[a.g].absent && a.p.distanceTo(p) < radius)) cands.push(d);
     }
     return cands.length ? cands[Math.floor(Math.random() * cands.length)] : null;
@@ -860,7 +877,9 @@ export class Creatures {
           const st = staged[i];
           g.absent = false;
           a.taken = false;
-          a.p.set(st.p.x, st.p.y + Math.sin(this.time * 0.25 + i * 2) * 0.12, st.p.z);
+          if (st.still) a.p.set(st.p.x, st.p.y + Math.sin(this.time * 0.25 + i * 2) * 0.12, st.p.z);
+          else a.p.copy(st.p);
+          if (st.s) a.s = st.s;
           a.v.set(0, 0.01, 0);
           a.yaw = st.yaw;
           a.q.setFromEuler(_eStage.set(st.pitch, st.yaw + Math.sin(this.time * 0.05 + i) * 0.05, 0, 'YXZ'));

@@ -25,8 +25,16 @@ export const MISSION = {
   photo: { time: 90, rewardMult: 4, minGrade: ['S', 'A', 'B'] },
   lost: { time: 100, reward: 2500, radius: 22 },
   treasure: { time: 120, reward: 4500, radius: 30 },
+  /** 【ウミガメ救出】stay this long next to the net to cut it free */
+  rescue: { time: 120, reward: 3500, cut: 3, radius: 28 },
+  /** 【生き物調査】different species, grade B or better */
+  survey: { time: 100, need: 3, reward: 2200 },
+  /** 【標識の読み取り】keep a large animal in the viewfinder within this distance for this long */
+  tag: { time: 100, dist: 4, hold: 2, reward: 3000, minSize: 0.8 },
   /** 【依頼の返事を待つ時間】s: ignoring an offer simply lets it lapse */
   offerTime: 15,
+  /** 【バールではがす】presses needed, reach (m) */
+  pry: { hits: 3, reach: 1.8 },
   /** 【拾える距離】m */
   pickR: 1.15,
 };
@@ -42,7 +50,7 @@ export const URCHINS = [
   { id: 'rappa', name: 'ラッパウニ', edible: false, pts: 0, n: 3, geo: { spine: 0.2, n: 170, thin: 0.045 }, color: 0xc8a0ac, emissive: 0x2a1418, scale: 0.17, sting: 14, text: 'ラッパウニの毒でしびれる！（エア -14）' },
 ] as const;
 
-type Kind = 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure';
+type Kind = 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag';
 
 export type MissionCtx = {
   dt: number;
@@ -58,13 +66,21 @@ export type MissionCtx = {
   reward: (yen: number, label: string) => void;
   /** touched something that stings: lose air, shake */
   sting: (bar: number, text: string) => void;
+  /** a large animal near the diver (for tag reading) */
+  nearbyBig: () => SpeciesDef | null;
+  /** what the viewfinder is on right now */
+  aim: () => { id: string; dist: number } | null;
+  /** pose a creature in place (the netted turtle), or release it */
+  stage: (id: string, pose: { p: THREE.Vector3; yaw: number; pitch: number } | null) => void;
 };
 
-type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; title: string; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number };
+type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; hold?: number; seen?: Set<string>; title: string; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number };
 
 export class Missions {
   readonly group = new THREE.Group();
   active: Active | null = null;
+  /** called when a staged animal must be let go (mission ended) */
+  onRelease: (() => void) | null = null;
   /** test hook: start this kind at the next update */
   force: Kind | null = null;
   /** A request waiting for the player's yes/no. Nothing starts until they accept. */
@@ -82,9 +98,11 @@ export class Missions {
   private itemType: number[] = [];
   private itemSlot: number[] = [];
   private stingT: number[] = [];
+  private pried: number[] = [];
   private trashMesh: THREE.InstancedMesh;
   private camMesh: THREE.Mesh;
   private chestMesh: THREE.Group;
+  private netMesh: THREE.LineSegments;
   private _m = new THREE.Matrix4();
   private _q = new THREE.Quaternion();
   private el = {
@@ -123,7 +141,19 @@ export class Missions {
     lid.rotation.z = Math.PI / 2; lid.position.y = 0.2;
     this.chestMesh.add(box, lid);
     for (const x of [-0.25, 0.25]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.66, 0.47), gold); b.position.set(x, 0.12, 0); this.chestMesh.add(b); }
-    for (const m of [...this.urchinMeshes, this.trashMesh, this.camMesh, this.chestMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
+    // ghost net: a tangle of torn mesh draped over a turtle
+    const np: number[] = [];
+    const nr = (k: number) => Math.sin(k * 12.9898) * 43758.5453 % 1;
+    for (let i = 0; i < 260; i++) {
+      const a1 = nr(i) * Math.PI * 2, b1 = Math.abs(nr(i + 7)) * Math.PI * 0.6;
+      const a2 = a1 + (nr(i + 3) - 0.5) * 0.9, b2 = b1 + (nr(i + 5) - 0.5) * 0.6;
+      const R1 = 0.75 + nr(i + 9) * 0.15, R2 = 0.75 + nr(i + 11) * 0.15;
+      np.push(Math.cos(a1) * Math.sin(b1) * R1, Math.cos(b1) * R1 * 0.6, Math.sin(a1) * Math.sin(b1) * R1, Math.cos(a2) * Math.sin(b2) * R2, Math.cos(b2) * R2 * 0.6, Math.sin(a2) * Math.sin(b2) * R2);
+    }
+    const ng = new THREE.BufferGeometry();
+    ng.setAttribute('position', new THREE.Float32BufferAttribute(np, 3));
+    this.netMesh = new THREE.LineSegments(ng, new THREE.LineBasicMaterial({ color: 0x5a8a6a }));
+    for (const m of [this.netMesh, ...this.urchinMeshes, this.trashMesh, this.camMesh, this.chestMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
   }
 
   reset(): void {
@@ -139,7 +169,7 @@ export class Missions {
   marks(): { x: number; z: number; rare: boolean }[] {
     const a = this.active;
     if (!a) return [];
-    if ((a.kind === 'lost' || a.kind === 'treasure') && a.spot) return [{ x: a.spot.x + 6, z: a.spot.z - 4, rare: true }]; // rough area only
+    if ((a.kind === 'lost' || a.kind === 'treasure' || a.kind === 'rescue') && a.spot) return [{ x: a.spot.x + 6, z: a.spot.z - 4, rare: true }]; // rough area only
     if (a.kind === 'trash') return this.items.filter((_, i) => !this.taken[i]).map((p) => ({ x: p.x, z: p.z, rare: false }));
     // urchins: only the area is marked; telling them apart is the game
     if (a.kind === 'urchin' && this.items.length) return [{ x: this.items[0].x, z: this.items[0].z, rare: false }];
@@ -184,21 +214,8 @@ export class Missions {
         if (a.kind === 'urchin') {
           this.stingT[i] = Math.max(0, (this.stingT[i] ?? 0) - c.dt);
           const u = URCHINS[this.itemType[i]];
-          if (p.distanceTo(c.player) < (u.edible ? MISSION.pickR : MISSION.pickR + u.geo.spine * u.scale)) {
-            if (!u.edible) {
-              // touched a dangerous one: it stays where it is
-              if (this.stingT[i] <= 0) { this.stingT[i] = 3; c.sting(u.sting, u.text); }
-              continue;
-            }
-            this.taken[i] = true;
-            a.got += u.pts;
-            if (u.id === 'aka') { a.aka = (a.aka ?? 0) + 1; a.reward += MISSION.urchin.akaBonus; }
-            const mesh = this.urchinMeshes[this.itemType[i]];
-            mesh.setMatrixAt(this.itemSlot[i], this._m.makeScale(0, 0, 0));
-            mesh.instanceMatrix.needsUpdate = true;
-            c.chime(u.id === 'aka');
-            if (u.id === 'aka') c.toast('高級なアカウニ！（2点）', '', 1.4);
-          }
+          // swimming into a spiny one hurts; edible ones are taken with the bar (see pry)
+          if (!u.edible && p.distanceTo(c.player) < 0.7 + u.geo.spine * u.scale && this.stingT[i] <= 0) { this.stingT[i] = 3; c.sting(u.sting, u.text); }
           continue;
         }
         if (p.distanceTo(c.player) < MISSION.pickR) {
@@ -220,6 +237,27 @@ export class Missions {
       }
       if (d < MISSION.pickR + 0.3) a.got = 1;
     }
+    if (a.kind === 'rescue' && a.spot) {
+      const d = a.spot.distanceTo(c.player);
+      if (d < 2) {
+        a.hold = (a.hold ?? 0) + c.dt;
+        if (a.hold >= MISSION.rescue.cut) {
+          a.got = 1;
+          this.netMesh.visible = false;
+          c.stage('turtle', null);
+        }
+      } else if ((a.lastHint ?? 0) <= c.time - 7) {
+        a.lastHint = c.time;
+        c.toast(d < 8 ? '網に絡まったウミガメがいる！ すぐそばでじっとして網を切ろう' : d < 18 ? '近づいている…' : 'マップの金色の印のあたり', 'warn', 2);
+      }
+    }
+    if (a.kind === 'tag' && a.target) {
+      const aim = c.aim();
+      if (aim && aim.id === a.target.id && aim.dist <= MISSION.tag.dist) {
+        a.hold = (a.hold ?? 0) + c.dt;
+        if (a.hold >= MISSION.tag.hold) a.got = 1;
+      } else a.hold = Math.max(0, (a.hold ?? 0) - c.dt * 0.5);
+    }
     this.renderHud();
     if (a.got >= a.need) {
       c.reward(a.reward, a.title);
@@ -234,10 +272,53 @@ export class Missions {
     }
   }
 
+  /** The urchin in front of the diver within reach of the bar, if any. */
+  pryTarget(player: THREE.Vector3, fwd: THREE.Vector3): number | null {
+    const a = this.active;
+    if (a?.kind !== 'urchin') return null;
+    let best: number | null = null, bd = Infinity;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < this.items.length; i++) {
+      if (this.taken[i]) continue;
+      v.copy(this.items[i]).sub(player);
+      const d = v.length();
+      if (d > MISSION.pry.reach || v.normalize().dot(fwd) < 0.55) continue;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** Presses left before the urchin comes off the rock. */
+  pryLeft(i: number): number {
+    return MISSION.pry.hits - (this.pried[i] ?? 0);
+  }
+
+  /** One push of the bar. Edible urchins come off after a few; the spiny ones fight back. */
+  pry(i: number, c: Pick<MissionCtx, 'chime' | 'toast' | 'sting'>): void {
+    const a = this.active;
+    if (a?.kind !== 'urchin' || this.taken[i]) return;
+    const u = URCHINS[this.itemType[i]];
+    if (!u.edible) { c.sting(u.sting, `${u.name}はバールではがしても食べられない… ${u.text}`); return; }
+    this.pried[i] = (this.pried[i] ?? 0) + 1;
+    if (this.pried[i] < MISSION.pry.hits) { c.chime(false); return; }
+    this.taken[i] = true;
+    a.got += u.pts;
+    if (u.id === 'aka') { a.aka = (a.aka ?? 0) + 1; a.reward += MISSION.urchin.akaBonus; }
+    const mesh = this.urchinMeshes[this.itemType[i]];
+    mesh.setMatrixAt(this.itemSlot[i], this._m.makeScale(0, 0, 0));
+    mesh.instanceMatrix.needsUpdate = true;
+    c.chime(u.id === 'aka');
+    c.toast(u.id === 'aka' ? '高級なアカウニがとれた！（2点）' : 'ムラサキウニがとれた！（1点）', '', 1.4);
+  }
+
   /** Called on every in-range shot. */
   onPhoto(id: string, grade: string): void {
     const a = this.active;
     if (a?.kind === 'photo' && a.target?.id === id && MISSION.photo.minGrade.includes(grade)) a.got = 1;
+    if (a?.kind === 'survey' && MISSION.photo.minGrade.includes(grade)) {
+      (a.seen ??= new Set()).add(id);
+      a.got = a.seen.size;
+    }
   }
 
   /** Ask first: show what the request is and let the player accept or decline. */
@@ -247,7 +328,11 @@ export class Missions {
     if (c.zone === 'lagoon' || c.zone === 'reef') opts.push('trash', 'trash');
     if (c.zone === 'reef' || c.zone === 'dropoff') opts.push('lost');
     if (c.zone === 'ruins') opts.push('treasure', 'treasure', 'treasure');
-    const kind = opts[Math.floor(Math.random() * opts.length)];
+    if (c.zone === 'lagoon' || c.zone === 'reef' || c.zone === 'rocky') opts.push('rescue');
+    opts.push('survey');
+    if (c.zone === 'dropoff' || c.zone === 'offshore' || c.zone === 'reef' || c.zone === 'kelp' || c.zone === 'cold') opts.push('tag');
+    let kind = opts[Math.floor(Math.random() * opts.length)];
+    if (kind === 'tag' && !c.nearbyBig()) kind = 'survey';
     let sp: SpeciesDef | undefined;
     let text: string, time: number, reward: number;
     if (kind === 'photo') {
@@ -262,6 +347,12 @@ export class Missions {
       time = MISSION.trash.time; reward = MISSION.trash.reward; text = `海のごみを${MISSION.trash.need}個拾って`;
     } else if (kind === 'treasure') {
       time = MISSION.treasure.time; reward = MISSION.treasure.reward; text = '遺跡に沈んだ宝箱を探して';
+    } else if (kind === 'rescue') {
+      time = MISSION.rescue.time; reward = MISSION.rescue.reward; text = '漁師から：網に絡まったウミガメを助けて';
+    } else if (kind === 'survey') {
+      time = MISSION.survey.time; reward = MISSION.survey.reward; text = `研究所から：ちがう生き物を${MISSION.survey.need}種類、B評価以上で撮って`;
+    } else if (kind === 'tag' && (sp = c.nearbyBig() ?? undefined)) {
+      time = MISSION.tag.time; reward = MISSION.tag.reward; text = `研究所から：${sp.name}の標識番号を読み取って`;
     } else {
       time = MISSION.lost.time; reward = MISSION.lost.reward; text = '落とした水中カメラを探して';
     }
@@ -292,11 +383,19 @@ export class Missions {
       this.itemType = [];
       this.itemSlot = [];
       this.stingT = [];
+      this.pried = [];
       URCHINS.forEach((u, ti) => {
         for (let k = 0; k < u.n; k++) {
-          const a = Math.random() * Math.PI * 2, d = 2 + Math.random() * 11;
-          const x = ahead.x + Math.cos(a) * d, z = ahead.z + Math.sin(a) * d;
+          // scattered over the rocks, a few metres apart
+          let x = ahead.x, z = ahead.z, a = 0;
+          for (let tr = 0; tr < 40; tr++) {
+            a = Math.random() * Math.PI * 2;
+            const d = 3 + Math.sqrt(Math.random()) * 24;
+            x = ahead.x + Math.cos(a) * d; z = ahead.z + Math.sin(a) * d;
+            if (this.items.every((q) => Math.hypot(q.x - x, q.z - z) > 3.2)) break;
+          }
           const pos = new THREE.Vector3(x, surfaceAt(x, z) + 0.05, z);
+          this.pried.push(0);
           this.items.push(pos);
           this.taken.push(false);
           this.itemType.push(ti);
@@ -309,7 +408,7 @@ export class Missions {
       });
       const reward = c.zone === 'cold' ? U.coldReward : U.reward;
       this.active = { kind, t: U.time, time: U.time, need: U.need, got: 0, reward, aka: 0, title: 'ウニ漁（磯焼け対策）' };
-      c.toast(`【依頼】ムラサキウニ（黒紫・トゲ長め）は1点、アカウニ（赤茶色・トゲ少し短め・高級）は2点。トゲがとても長いガンガゼと、花のような桃色のラッパウニは毒があるので触らないこと！ ${U.time}秒で${U.need}点`, 'warn', 7);
+      c.toast(`【依頼】ウニに近づいてバールで3回突いてはがそう。ムラサキウニ（黒紫・トゲ長め）は1点、アカウニ（赤茶色・トゲ少し短め・高級）は2点。トゲがとても長いガンガゼと、花のような桃色のラッパウニは触ると痛い！ ${U.time}秒で${U.need}点`, 'warn', 8);
     } else if (kind === 'trash') {
       const T = MISSION.trash;
       for (let i = 0; i < T.spawn; i++) {
@@ -323,6 +422,32 @@ export class Missions {
       this.trashMesh.visible = true;
       this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '海のごみ拾い' };
       c.toast(`【依頼】海のごみが流れてきた！ ${T.time}秒で${T.need}個拾おう（近づくと拾える）`, 'warn', 4.5);
+    } else if (kind === 'rescue') {
+      const T = MISSION.rescue;
+      let spot: THREE.Vector3 | null = null;
+      for (let k = 0; k < 30 && !spot; k++) {
+        const a = Math.random() * Math.PI * 2, d = 12 + Math.random() * T.radius;
+        const x = c.player.x + Math.cos(a) * d, z = c.player.z + Math.sin(a) * d;
+        const g = surfaceAt(x, z);
+        if (g < -30 || g > -2) continue;
+        spot = new THREE.Vector3(x, g + 0.55, z);
+      }
+      if (!spot) { this.end(false, true); return; }
+      this.netMesh.position.copy(spot);
+      this.netMesh.visible = true;
+      c.stage('turtle', { p: spot.clone(), yaw: Math.random() * 6, pitch: 0.15 });
+      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: 'ウミガメの救出', spot, hold: 0 };
+      c.toast(`【依頼】捨てられた網（ゴーストネット）にウミガメが絡まっているらしい！ ${T.time}秒以内に見つけて、すぐそばで${T.cut}秒じっとして網を切ろう`, 'warn', 5);
+    } else if (kind === 'survey') {
+      const T = MISSION.survey;
+      this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '生き物調査', seen: new Set() };
+      c.toast(`【依頼】研究所の生き物調査。${T.time}秒以内に、ちがう種類の生き物を${T.need}種類、B評価以上で撮ろう（撮ったことのある種でもOK）`, 'warn', 4.5);
+    } else if (kind === 'tag') {
+      const T = MISSION.tag;
+      const sp = sp0 ?? c.nearbyBig();
+      if (!sp) { this.end(false, true); return; }
+      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: `${sp.name}の標識読み取り`, target: sp, hold: 0 };
+      c.toast(`【依頼】${sp.name}に研究用の標識がついている。${T.dist}m以内まで近づいて、照準に${T.hold}秒収め続けて番号を読み取ろう`, 'warn', 4.5);
     } else if (kind === 'treasure') {
       const T = MISSION.treasure;
       const a = Math.random() * Math.PI * 2, d = 12 + Math.random() * T.radius;
@@ -362,7 +487,10 @@ export class Missions {
   private renderHud(): void {
     const a = this.active!;
     this.el.title.textContent = a.title;
-    this.el.prog.textContent = a.kind === 'urchin' ? `${Math.min(a.got, a.need)} / ${a.need}点${a.aka ? `（アカウニ×${a.aka}）` : ''}　残り${Math.ceil(a.t)}秒` : a.kind === 'trash' ? `${a.got} / ${a.need}個　残り${Math.ceil(a.t)}秒` : `残り${Math.ceil(a.t)}秒`;
+    this.el.prog.textContent = a.kind === 'rescue' ? (a.hold ? `網を切っている… ${Math.min(100, Math.round(((a.hold ?? 0) / MISSION.rescue.cut) * 100))}%　残り${Math.ceil(a.t)}秒` : `残り${Math.ceil(a.t)}秒`)
+      : a.kind === 'survey' ? `${a.got} / ${a.need}種類　残り${Math.ceil(a.t)}秒`
+      : a.kind === 'tag' ? `読み取り ${Math.min(100, Math.round(((a.hold ?? 0) / MISSION.tag.hold) * 100))}%　残り${Math.ceil(a.t)}秒`
+      : a.kind === 'urchin' ? `${Math.min(a.got, a.need)} / ${a.need}点${a.aka ? `（アカウニ×${a.aka}）` : ''}　残り${Math.ceil(a.t)}秒` : a.kind === 'trash' ? `${a.got} / ${a.need}個　残り${Math.ceil(a.t)}秒` : `残り${Math.ceil(a.t)}秒`;
     this.el.bar.style.width = `${Math.max(0, (a.t / a.time) * 100)}%`;
   }
 
@@ -371,6 +499,7 @@ export class Missions {
     this.items = [];
     this.taken = [];
     for (const m of this.urchinMeshes) m.visible = false;
+    if (this.netMesh.visible) { this.netMesh.visible = false; this.onRelease?.(); }
     this.trashMesh.visible = false;
     this.camMesh.visible = false;
     this.chestMesh.visible = false;

@@ -6,11 +6,25 @@
  * meet it, then left to chance.
  */
 
-export type SceneId = 'whalesleep' | 'spawning';
+export type SceneId = 'whalesleep' | 'spawning' | 'baitball' | 'mantatrain' | 'whaleshark' | 'humpback' | 'dolphins' | 'hammers' | 'noctiluca' | 'orcas' | 'tornado';
 
-export const SCENES: Record<SceneId, { name: string; desc: string; pay: number; chance: number }> = {
-  whalesleep: { name: '縦になって眠るマッコウクジラ', desc: '沖の水深15m付近で、数頭のマッコウクジラが頭を上にして立ったまま眠っている。息継ぎの合間の、ほんの十数分の眠り。', pay: 20000, chance: 0.15 },
-  spawning: { name: 'サンゴの一斉産卵', desc: '初夏の満月の夜、サンゴ礁のサンゴが一斉に卵の粒を放ち、海がピンクの雪のように舞い上がる。', pay: 16000, chance: 0.25 },
+/**
+ * Rare, photogenic sights (achievements). Each has the dive points where it can happen, day or night,
+ * the chance per dive and the species that stars in it. Two are staged once by the story; the rest are
+ * met by luck. Seeing one is announced ("something is out there…") before it comes into view.
+ */
+export const SCENES: Record<SceneId, { name: string; desc: string; pay: number; chance: number; points: string[]; night?: boolean; star?: string; n?: number; hint: string; sense: string }> = {
+  whalesleep: { name: '縦になって眠るマッコウクジラ', desc: '沖の水深15m付近で、数頭のマッコウクジラが頭を上にして立ったまま眠っている。息継ぎの合間の、ほんの十数分の眠り。', pay: 20000, chance: 0.12, points: ['dropoff'], star: 'makkou', n: 3, hint: '沖の大海原・昼', sense: '青い海の向こうに、黒い柱のような影が立っている…' },
+  spawning: { name: 'サンゴの一斉産卵', desc: '初夏の満月の夜、サンゴ礁のサンゴが一斉に卵の粒を放ち、海がピンクの雪のように舞い上がる。', pay: 16000, chance: 0.2, points: ['reef'], night: true, hint: 'サンゴ礁・夜', sense: '水の中に、ピンク色の粒が舞いはじめた…' },
+  baitball: { name: 'イワシのベイトボール', desc: '大型魚に追われたマイワシの大群が、身を守るためにぎゅっと固まって球になり、銀色に渦巻く。', pay: 12000, chance: 0.14, points: ['dropoff'], star: 'sardine', n: 200, hint: 'ドロップオフ／沖・昼', sense: '遠くで何かが銀色にきらめいている…' },
+  mantatrain: { name: 'マンタトレイン', desc: '繁殖期の雄のマンタたちが、雌の後ろに一列になってついて泳ぐ「トレイン」。', pay: 14000, chance: 0.1, points: ['dropoff', 'reef'], star: 'manta', n: 4, hint: 'ドロップオフ・サンゴ礁', sense: '大きな影がいくつも連なって近づいてくる…' },
+  whaleshark: { name: '立ち泳ぎで食事するジンベエザメ', desc: '水面近くで体を縦にして、口を大きく開けて海水ごとプランクトンを吸い込む。', pay: 14000, chance: 0.1, points: ['dropoff'], star: 'whaleshark', n: 1, hint: '沖の大海原・昼', sense: '水面の近くに、巨大な影が縦に浮かんでいる…' },
+  humpback: { name: 'ザトウクジラの親子', desc: '冬の暖かい海で生まれた子クジラが、母クジラに寄り添ってゆっくり泳ぐ。', pay: 15000, chance: 0.08, points: ['dropoff'], star: 'humpback', n: 2, hint: '沖の大海原', sense: '遠くからクジラの歌が聞こえる…' },
+  dolphins: { name: 'イルカと泳ぐ', desc: '好奇心の強いミナミハンドウイルカの群れが、ダイバーのまわりをくるくる泳ぎまわる。', pay: 9000, chance: 0.12, points: ['dropoff', 'reef', 'lagoon'], star: 'dolphin', n: 5, hint: '浅瀬からドロップオフ・昼', sense: 'キュイキュイという鳴き声が聞こえる…' },
+  hammers: { name: 'ハンマーヘッドの群れ', desc: '深場で何十匹ものアカシュモクザメが群れをつくってゆっくり回る。昼の間だけ集まる不思議な群れ。', pay: 16000, chance: 0.08, points: ['dropoff', 'bluehole'], star: 'hammerhead', n: 9, hint: 'ドロップオフの深場・ブルーホール', sense: '深いところに、たくさんのサメの影が回っている…' },
+  noctiluca: { name: '夜光虫の青い光', desc: '夜の海で手を動かすと、夜光虫が青白く光って星空のように瞬く。', pay: 8000, chance: 0.25, points: ['lagoon', 'reef', 'rocky', 'kelp'], night: true, hint: '浅い海・夜', sense: '体のまわりで、何かが青く光った…' },
+  orcas: { name: 'シャチの家族', desc: '群れごとに独自の言葉をもつシャチの家族が、一列になって通り過ぎていく。', pay: 16000, chance: 0.08, points: ['cold', 'dropoff'], star: 'shachi', n: 3, hint: '流氷の入り江・沖', sense: '白と黒の背びれが水面を切っていく…' },
+  tornado: { name: 'ギンガメアジのトルネード', desc: '何百匹ものギンガメアジが、竜巻のように渦を巻いて泳ぐ。', pay: 11000, chance: 0.14, points: ['dropoff', 'reef', 'rocky'], star: 'giganmeaji', n: 50, hint: 'サンゴ礁・岩礁・ドロップオフ・昼', sense: '中層に、銀色の柱が渦巻いている…' },
 };
 
 export type StoryState = {

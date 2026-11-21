@@ -527,6 +527,8 @@ export class Flora {
   readonly group = new THREE.Group();
   private sets: ScatterSet[] = [];
   private mats: THREE.Material[] = [];
+  /** rock ledges a diver can swim under (for tests and hints) */
+  ledges: { x: number; z: number; bottom: number }[] = [];
   readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], kelpSpots: [] };
   boat: THREE.Group;
   carpetCount = 0;
@@ -822,6 +824,69 @@ export class Flora {
       }
       solid(g, rockMat, items, 90, 60);
     });
+
+    // ---- rock ledges with a diver-sized gap underneath: a dark shelter for fish that like it under rock
+    {
+      const slabG = rockGeometry(21, 3, 0.32);
+      slabG.computeBoundingBox();
+      const sb = slabG.boundingBox!;
+      const legG = rockGeometry(29, 2, 0.9);
+      legG.computeBoundingBox();
+      const lb = legG.boundingBox!;
+      const slabs: ScatterItem[] = [], legs: ScatterItem[] = [];
+      const spots: [number, number][] = [];
+      const bottoms: number[] = [];
+      const ledgeRegions: [[number, number, number, number], (x: number, z: number) => boolean, number][] = [
+        [[-10, 210, 30, 350], (x, z) => rockyWeight(x, z) > 0.5, 9],
+        [[-200, 200, 120, 345], (x, z) => zoneAt(x, z) === 'reef', 6],
+        [[232, 425, 45, 395], (x, z) => zoneAt(x, z) === 'kelp', 4],
+      ];
+      const loc = new THREE.Vector3();
+      for (const [reg, ok, n] of ledgeRegions) {
+        const pts = sample(n * 3, reg, (x, z) => ok(x, z) && heightAt(x, z) < -7.5 && heightAt(x, z) > -22 && slopeAt(x, z) < 0.1 && spots.every(([a, b]) => Math.hypot(a - x, b - z) > 22));
+        const start = spots.length;
+        for (const [x, z] of pts) {
+          if (spots.length - start >= n) break;
+          if (!spots.every(([a, b]) => Math.hypot(a - x, b - z) > 22)) continue;
+          spots.push([x, z]);
+          const W = 5 + r() * 2.5, D = 3.8 + r() * 1.4, TH = 1.0 + r() * 0.4, gap = 1.75 + r() * 0.35, yaw = r() * Math.PI * 2;
+          const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, (r() - 0.5) * 0.06));
+          const at = (u: number, v: number) => loc.set(u, 0, v).applyQuaternion(q).add(new THREE.Vector3(x, 0, z));
+          let gmax = -1e9, gmin = 1e9;
+          for (const [u, v] of [[-W / 2, -D / 2], [W / 2, -D / 2], [-W / 2, D / 2], [W / 2, D / 2], [0, 0]]) { const p = at(u, v); const h = heightAt(p.x, p.z); gmax = Math.max(gmax, h); gmin = Math.min(gmin, h); }
+          // deep enough to swim under with water above, and a fairly flat floor
+          if (gmax > -6.5 || gmax - gmin > 2.2) { spots.pop(); continue; }
+          const bottom = gmax + gap;
+          bottoms.push(bottom);
+          const sx = W / (sb.max.x - sb.min.x), sy = TH / (sb.max.y - sb.min.y), sz = D / (sb.max.z - sb.min.z);
+          const ctr = new THREE.Vector3(((sb.min.x + sb.max.x) / 2) * sx, ((sb.min.y + sb.max.y) / 2) * sy, ((sb.min.z + sb.max.z) / 2) * sz).applyQuaternion(q);
+          const tone = 0.4 + r() * 0.2;
+          slabs.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x - ctr.x, bottom + TH / 2 - ctr.y, z - ctr.z), q, new THREE.Vector3(sx, sy, sz)), c: new THREE.Color(tone, tone * 0.97, tone * 0.92) });
+          // the slab is solid only between its underside and top, so the gap below stays open
+          for (const u of [-W * 0.3, 0, W * 0.3]) for (const v of [-D * 0.22, D * 0.22]) {
+            const p = at(u, v);
+            addCollider({ x: p.x, z: p.z, r: Math.min(W, D) * 0.3, y0: bottom - 0.05, y1: bottom + TH, roof: true });
+          }
+          // two pillars at the back and one at a side; the front and the other side stay open to swim in
+          for (const [u, v] of [[-W * 0.4, D * 0.4], [W * 0.4, D * 0.4], [W * 0.45, -D * 0.2]]) {
+            const p = at(u, v);
+            const g = heightAt(p.x, p.z);
+            const h = bottom - g + 0.4, rad = 0.75;
+            const lx = (rad * 2) / (lb.max.x - lb.min.x), ly = h / (lb.max.y - lb.min.y), lz = (rad * 2) / (lb.max.z - lb.min.z);
+            legs.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(p.x, g - lb.min.y * ly - 0.2, p.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, r() * 6, 0)), new THREE.Vector3(lx, ly, lz)), c: new THREE.Color(tone * 0.95, tone * 0.93, tone * 0.88) });
+            addCollider({ x: p.x, z: p.z, r: rad * 0.9, y0: g - 0.5, y1: bottom });
+          }
+          // where the shade-lovers live
+          for (const [u, v] of [[-W * 0.15, 0], [W * 0.12, -D * 0.1], [0, D * 0.15]]) {
+            const p = at(u, v);
+            this.homes.underTables.push(new THREE.Vector3(p.x, heightAt(p.x, p.z) + 0.55, p.z));
+          }
+        }
+      }
+      add(slabG, rockMat, slabs, 90, 60);
+      add(legG, rockMat, legs, 90, 60);
+      this.ledges = spots.map(([x, z], i) => ({ x, z, bottom: bottoms[i] }));
+    }
 
     // ---- kelp / sargassum in rocky zone
     const kelpG = bladeTuft(5, 5, 2.4, 0.16, 7, 0.8);

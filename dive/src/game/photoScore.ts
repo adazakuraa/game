@@ -83,7 +83,6 @@ export const SHOP: readonly ShopItem[] = [
   { id: 'light', need: 5, price: 2500, name: '強力ライト', desc: '暗い所でも遠くまで照らして撮れる', icon: '<path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/>' },
   { id: 'spear', need: 4, price: 2500, name: '手銛', desc: '魚を獲れる（しおさい亭から頼まれごとが来る）', icon: '<path d="M3 21L18 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M15 3.5l5.5-1-1 5.5z"/>' },
   { id: 'drysuit', need: 7, price: 4000, name: 'ドライスーツ', desc: '冷たい海でもエアが普通にもつ', icon: '<path d="M8 3h8l2 6-2 1v11h-3v-7h-2v7H8V10L6 9z"/>' },
-  { id: 'tank', need: 9, price: 5000, name: '大型タンク', desc: 'エア容量 1.5倍', icon: '<rect x="8" y="5" width="8" height="16" rx="3"/><rect x="10.5" y="2" width="3" height="3"/>' },
   { id: 'macro', need: 12, price: 6000, name: 'マクロレンズ', desc: '小さな生き物（20cm未満）を大きく写せる', icon: '<circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.6"/>' },
   { id: 'rebreather', need: 16, price: 9000, name: 'リブリーザー', desc: '泡が出ず、魚に気づかれにくい', icon: '<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M5 15h14v3H5z"/>' },
   { id: 'wide', need: 20, price: 8000, name: 'ワイドレンズ', desc: '大物（1m以上）を離れた所から撮れる', icon: '<path d="M3 12c4-6 14-6 18 0-4 6-14 6-18 0z"/><circle cx="12" cy="12" r="3" fill="#0b2a3a"/>' },
@@ -104,7 +103,22 @@ export const SHOP: readonly ShopItem[] = [
 ];
 export type GearId = string;
 
+/**
+ * 【エアタンクの強化】The one tank is upgraded step by step instead of buying new ones. Capacity in bar
+ * (the first one lasts about 3 minutes at 8-10 m). After the spear is in hand, the shop also takes fish
+ * (kg from the cooler) in place of half the money.
+ */
+export const AIR_TANK = [
+  { cap: 140, price: 0, kg: 0 },
+  { cap: 170, price: 2000, kg: 1 },
+  { cap: 200, price: 4000, kg: 2 },
+  { cap: 240, price: 7000, kg: 3 },
+  { cap: 280, price: 11000, kg: 5 },
+  { cap: 330, price: 16000, kg: 8 },
+  { cap: 400, price: 24000, kg: 12 },
+];
+
 /** Earlier saves unlocked gear by species count: keep what those players already had. */
-export const LEGACY_NEED: Partial<Record<GearId, number>> = { fins: 5, tank: 12, scooter: 22, ads: 35 };
+export const LEGACY_NEED: Partial<Record<GearId, number>> = { fins: 5, scooter: 22, ads: 35 };
 
 export const yen = (n: number) => '¥' + Math.round(n).toLocaleString('ja-JP');

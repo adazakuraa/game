@@ -317,7 +317,7 @@ export const SPECIES: SpeciesDef[] = [
       p.g.fillStyle = '#26282c'; p.g.fillRect(0, p.H * 0.5, p.W, 6); p.g.fillRect(0, p.H - 6, p.W, 6);
     },
     tex: [256, 256],
-    count: 2, groups: 2, behavior: 'pelagic', region: [-160, 160, 330, 470], speed: 1.1, flee: 0, curious: true, flap: [0.32, 0.2, 2.5], photoRange: 30,
+    count: 5, groups: 3, behavior: 'pelagic', region: [-160, 160, 330, 470], speed: 1.1, flee: 0, curious: true, flap: [0.32, 0.2, 2.5], photoRange: 30,
   },
   {
     id: 'whaleshark', name: 'ジンベエザメ', sci: 'Rhincodon typus', zone: 'offshore', depth: [3, 40], size: 9, rarity: 3,
@@ -363,7 +363,7 @@ export const SPECIES: SpeciesDef[] = [
       p.clipBody(() => { p.g.strokeStyle = 'rgba(220,220,220,0.5)'; p.g.lineWidth = 1; for (let i = 0; i < 12; i++) { p.g.beginPath(); p.g.moveTo(p.U(0.48), p.V(-0.03 - i * 0.006)); p.g.lineTo(p.U(0.02), p.V(-0.06 - i * 0.004)); p.g.stroke(); } p.g.fillStyle = 'rgba(30,30,30,0.8)'; for (let i = 0; i < 18; i++) { p.g.beginPath(); p.g.arc(p.U(0.38 + p.rnd() * 0.11), p.V(0.04 + p.rnd() * 0.05), 1.6, 0, Math.PI * 2); p.g.fill(); } });
       p.blotch(30, 2, 5, ['rgba(200,200,200,0.4)'], true); p.eye(0.04, '#111');
     },
-    count: 1, groups: 1, behavior: 'pelagic', region: [-120, 120, 520, 715], speed: 1.3, flee: 0, curious: true, swim: [0.3, 0.05, 1.6], photoRange: 70,
+    count: 2, groups: 1, behavior: 'pelagic', region: [-120, 120, 520, 715], speed: 1.3, flee: 0, curious: true, swim: [0.3, 0.05, 1.6], photoRange: 70,
   },
   {
     id: 'moonjelly', name: 'ミズクラゲ', sci: 'Aurelia coerulea', zone: 'offshore', depth: [1, 20], size: 0.3, rarity: 1,
@@ -450,7 +450,8 @@ import { WILD_SPECIES } from './species8';
 import { SITE_SPECIES } from './species9';
 import { KELP_SPECIES } from './species10';
 import { MORE_600 } from './species11';
-SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES, ...WILD_SPECIES, ...SITE_SPECIES, ...KELP_SPECIES, ...MORE_600);
+import { FUGU_SPECIES } from './species12';
+SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES, ...WILD_SPECIES, ...SITE_SPECIES, ...KELP_SPECIES, ...MORE_600, ...FUGU_SPECIES);
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
 export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];

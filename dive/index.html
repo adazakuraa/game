@@ -113,6 +113,7 @@
           </div>
           <div id="daytime" class="panel daytime"></div>
           <div class="panel" id="points"></div>
+          <button id="reset-save" type="button" class="reset-link">進行度をリセット（最初から）</button>
           <div class="row-actions">
             <button id="open-dex" type="button" class="btn sec">
               <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-4.5A2.5 2.5 0 0 0 13 6.5V20a2.5 2.5 0 0 1 2.5-2.5H20z"/></svg>
@@ -133,6 +134,7 @@
             <button id="shop-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4"/></svg></button>
           </div>
           <div id="shop-status" class="k-status"></div>
+          <div class="panel tank" id="tank"></div>
           <div class="panel gear" id="gear"></div>
           <p class="note">装備は図鑑を埋めると入荷し、写真や料理で稼いだお金で買う。漁具はしおさい亭の評判で入荷する。</p>
         </div>
@@ -175,10 +177,13 @@
           <div id="k-orders" class="k-list"></div>
           <h3 class="k-h">クーラーの中</h3>
           <div id="k-cooler" class="k-list"></div>
+          <h3 class="k-h">店の仕事</h3>
+          <div id="k-work" class="k-list"></div>
           <div id="k-buff" class="k-buff"></div>
           <button id="k-sleep" type="button" class="btn sec">店を閉めて休む（翌朝へ）</button>
           <p class="note">残った魚は休むときに市場へ卸す。注文の料理は日ごとに変わる。</p>
         </div>
+        <div id="mg" class="hidden"><div class="mg-box" id="mg-box"></div></div>
         <div id="cook-pop" class="hidden"><div class="cp-dish" id="cp-dish"></div><div class="cp-sub" id="cp-sub"></div></div>
       </section>
 

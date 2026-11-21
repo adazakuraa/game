@@ -4,9 +4,9 @@ import { Kitchen, type LandSave } from './kitchen';
 import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } from './story';
 import { SCENE_AT, Scenes } from './scenes';
 import { FIND_NAME, FINDS, Finds, openFind, type FindKind } from './finds';
-import { buildHandSpear, buildSpeargun } from './gearModels';
-import { BIG_KG, DISH, FISHING, PENALTY, edibleInfo, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
-import { evaluateShot, LEGACY_NEED, PHOTO, SHOP, yen, type GearId } from './photoScore';
+import { buildBar, buildHandSpear, buildSpeargun } from './gearModels';
+import { BIG_KG, DISH, FISHING, PENALTY, edibleInfo, isFugu, isGoodCatch, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
+import { AIR_TANK, evaluateShot, LEGACY_NEED, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
 import { Environment } from '../world/environment';
@@ -28,6 +28,8 @@ type Save = LandSave & {
   /** special sights photographed */
   scenes?: Partial<Record<SceneId, { photo: string; t: number }>>;
   tutorial?: boolean;
+  /** air tank upgrade level (AIR_TANK) */
+  airLv?: number;
  found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
@@ -100,6 +102,9 @@ export class Game {
   private vmHand!: THREE.Group;
   private vmGun!: THREE.Group;
   private vmGunShaft!: THREE.Mesh;
+  private vmBar!: THREE.Group;
+  private pryIdx: number | null = null;
+  private barJab = 0;
   /** first-dive tutorial: current step (-1 = off) */
   private tut = { step: -1, t: 0, moved: 0, looked: 0, praise: 0, from: new THREE.Vector3() };
   private nightAnnounced = 0;
@@ -152,6 +157,7 @@ export class Game {
     this.scene.add(this.creatures.group);
     this.missions = new Missions();
     this.scene.add(this.missions.group);
+    this.missions.onRelease = () => this.creatures.stage.delete('turtle');
     this.spearFx = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 1, 6).rotateX(Math.PI / 2).translate(0, 0, -0.5), new THREE.MeshStandardMaterial({ color: 0xc8ccd0, metalness: 0.9, roughness: 0.28 }));
     this.spearFx.visible = false;
     this.spearFx.frustumCulled = false;
@@ -164,7 +170,8 @@ export class Game {
     const gun = buildSpeargun();
     this.vmGun = gun.gun;
     this.vmGunShaft = gun.shaft;
-    for (const m of [this.vmHand, this.vmGun]) {
+    this.vmBar = buildBar();
+    for (const m of [this.vmHand, this.vmGun, this.vmBar]) {
       m.position.set(0.14, -0.15, -0.28);
       m.rotation.set(0.05, 0.08, 0);
       m.visible = false;
@@ -189,6 +196,11 @@ export class Game {
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
     $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
+    $('reset-save').addEventListener('click', () => {
+      if (!window.confirm('図鑑・お金・装備・ストーリーなど、すべての進行度を消して最初からやり直します。よろしいですか？')) return;
+      try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ }
+      window.location.reload();
+    });
     $('open-shop').addEventListener('click', () => { this.audio.unlock(); $('shop').classList.remove('hidden'); this.renderShop(); });
     $('shop-close').addEventListener('click', () => { $('shop').classList.add('hidden'); this.renderTitle(); });
     $('res-kitchen').addEventListener('click', () => { this.toTitle(); this.kitchen.open(); });
@@ -227,6 +239,7 @@ export class Game {
           sv.owned = SHOP.filter((g) => n >= (LEGACY_NEED[g.id] ?? 1e9)).map((g) => g.id);
           sv.money = 0;
         }
+        if (sv.airLv === undefined) sv.airLv = sv.owned?.includes('tank') ? 4 : sv.dives > 0 ? 2 : 0;
         if (!sv.discovered) {
           // earlier saves: every place where something was already photographed counts as found
           const zones = new Set(Object.keys(sv.found).map((id) => SPECIES_BY_ID.get(id)?.zone));
@@ -239,7 +252,7 @@ export class Game {
     } catch {
       /* storage unavailable */
     }
-    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], storyMain: 0, storyRead: -1 };
+    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0 };
   }
 
   private writeSave(): void {
@@ -324,8 +337,11 @@ export class Game {
     const i = this.save.storyMain ?? 0;
     const ch = CHAPTERS[i];
     const cleared = this.storyCleared.length ? `<div class="sc-clear">${this.storyCleared.join('<br>')}</div>` : '';
-    const scenes = Object.entries(this.save.scenes ?? {}) as [SceneId, { photo: string }][];
-    const album = scenes.length ? `<div class="sc-photos">${scenes.map(([id, v]) => `<img src="${v.photo}" alt="${SCENES[id].name}" title="${SCENES[id].name}">`).join('')}</div>` : '';
+    const all = Object.keys(SCENES) as SceneId[];
+    const got = all.filter((id) => this.save.scenes?.[id]);
+    const album = `<div class="sc-album"><div class="sc-kicker">特別な光景（実績）　${got.length} / ${all.length}</div><div class="sc-photos">${all.map((id) => this.save.scenes?.[id]
+      ? `<figure><img src="${this.save.scenes[id]!.photo}" alt=""><figcaption>${SCENES[id].name}</figcaption></figure>`
+      : `<figure class="locked"><div>？</div><figcaption>${SCENES[id].hint}</figcaption></figure>`).join('')}</div></div>`;
     if (!ch) {
       el.innerHTML = `<div class="sc-kicker">写真家の評価：表紙の写真家</div>${cleared}<div class="sc-intro">${ENDING}</div>${album}`;
       return;
@@ -462,11 +478,61 @@ export class Game {
     if (!$('shop').classList.contains('hidden')) this.renderShop();
   }
 
+  /** Fish in the cooler that the shop takes as material (good catches, lightest first). */
+  private fishFor(kg: number): number[] | null {
+    const list = (this.save.cooler ?? []).map((c, i) => ({ c, i })).filter(({ c }) => isGoodCatch(SPECIES_BY_ID.get(c.id)!)).sort((a, b) => a.c.kg - b.c.kg);
+    const out: number[] = [];
+    let sum = 0;
+    for (const { c, i } of list) { if (sum >= kg) break; out.push(i); sum += c.kg; }
+    return sum >= kg ? out : null;
+  }
+
+  /** The air tank: one tank, upgraded step by step. */
+  private renderTank(): void {
+    const lv = this.save.airLv ?? 0;
+    const cur = AIR_TANK[lv], next = AIR_TANK[lv + 1];
+    const mins = (cap: number) => (cap / (0.42 * 1.9) / 60).toFixed(1);
+    const money = this.save.money ?? 0;
+    const el = $('tank');
+    if (!next) { el.innerHTML = `<div class="tk-head">エアタンク Lv${lv + 1}（最大）<b>${cur.cap} bar</b><small>水深9mで約${mins(cur.cap)}分</small></div>`; return; }
+    const fish = this.has('spear') ? this.fishFor(next.kg) : null;
+    const half = Math.round(next.price / 2 / 100) * 100;
+    const coolerKg = (this.save.cooler ?? []).filter((c) => isGoodCatch(SPECIES_BY_ID.get(c.id)!)).reduce((a, c) => a + c.kg, 0);
+    el.innerHTML = `<div class="tk-head">エアタンク Lv${lv + 1}　<b>${cur.cap} bar</b><small>水深9mで約${mins(cur.cap)}分</small></div>
+      <div class="tk-next">強化すると Lv${lv + 2}：<b>${next.cap} bar</b>（約${mins(next.cap)}分）</div>
+      <div class="tk-acts"><button type="button" class="btn ${money >= next.price ? 'pri' : 'sec'}" id="tk-money" ${money >= next.price ? '' : 'disabled'}>お金で強化 ${yen(next.price)}</button>
+      ${this.has('spear') ? `<button type="button" class="btn ${fish && money >= half ? 'pri' : 'sec'}" id="tk-fish" ${fish && money >= half ? '' : 'disabled'}>魚${next.kg}kg＋${yen(half)}で強化</button>` : ''}</div>
+      ${this.has('spear') ? `<small class="tk-note">店の親父は魚が大好き。クーラーの魚（食べられる魚 ${coolerKg.toFixed(1)}kg）を素材として受け取ってくれる</small>` : '<small class="tk-note">手銛を手に入れると、魚を素材にして安く強化できるようになる</small>'}`;
+    document.getElementById('tk-money')?.addEventListener('click', () => this.upgradeTank(false));
+    document.getElementById('tk-fish')?.addEventListener('click', () => this.upgradeTank(true));
+  }
+
+  private upgradeTank(withFish: boolean): void {
+    const lv = this.save.airLv ?? 0;
+    const next = AIR_TANK[lv + 1];
+    if (!next) return;
+    const price = withFish ? Math.round(next.price / 2 / 100) * 100 : next.price;
+    if ((this.save.money ?? 0) < price) return;
+    if (withFish) {
+      const idx = this.fishFor(next.kg);
+      if (!idx) return;
+      this.save.cooler = this.save.cooler!.filter((_, i) => !idx.includes(i));
+    }
+    this.save.money = (this.save.money ?? 0) - price;
+    this.save.airLv = lv + 1;
+    this.writeSave();
+    this.audio.chime(true);
+    this.toast(`エアタンクを強化！ ${AIR_TANK[lv].cap} → ${next.cap} bar`, '', 3);
+    this.renderShop();
+    this.renderTitle();
+  }
+
   /** Gear, fishing tackle and charts: bought on their own screen. */
   private renderShop(): void {
     const gear = $('gear');
     const money = this.save.money ?? 0;
     $('shop-status').innerHTML = `<span>所持金 <b>${yen(money)}</b></span><span>図鑑 <b>${this.dexPct.toFixed(1)}%</b></span>${this.has('spear') ? `<span>しおさい亭の評判 Lv<b>${repLevel(this.save.rep ?? 0)}</b></span>` : ''}`;
+    this.renderTank();
     gear.innerHTML = SHOP.filter((u) => !u.rep || this.has('spear')).map((u) => {
       const on = this.owns(u);
       const gap = this.stockGap(u);
@@ -646,7 +712,7 @@ export class Game {
       // the dish eaten in the diner powers up this one dive
       this.buff = this.ads ? null : this.save.buff ?? null;
       if (this.buff) { this.save.buff = null; this.writeSave(); }
-      this.airMax = (this.ads ? 220 : this.has('tank') ? 300 : 200) * (this.buff === 'nabe' ? 1.2 : 1);
+      this.airMax = (this.ads ? 220 : AIR_TANK[this.save.airLv ?? 0].cap) * (this.buff === 'nabe' ? 1.2 : 1);
       this.air = this.airMax;
       this.diveTime = 0;
       this.diveMaxDepth = 0;
@@ -693,9 +759,23 @@ export class Game {
       this.vmHand.visible = this.vmGun.visible = false;
       // special sights: staged for the chapter that asks for them, later left to chance
       const ch = this.chapter;
-      const sceneIds = (Object.keys(SCENES) as SceneId[]).filter((id) => !this.ads && ((ch?.scene === id && !this.save.scenes?.[id]) || (!!this.save.scenes?.[id] && Math.random() < SCENES[id].chance)));
-      this.scenes.start(sceneIds);
-      this.storyMarks = ch?.scene && sceneIds.includes(ch.scene) ? [{ x: SCENE_AT[ch.scene].x, z: SCENE_AT[ch.scene].z, rare: true }] : [];
+      const nightNow = nightOf(this.save.clock ?? 0) >= 0.5;
+      const sceneIds: SceneId[] = [];
+      if (!this.ads && ch?.scene && !this.save.scenes?.[ch.scene]) sceneIds.push(ch.scene);
+      if (!this.ads) {
+        // at most one sight left to luck per dive; the story ones only after the story has shown them
+        const luck = (Object.keys(SCENES) as SceneId[]).filter((id) => {
+          const S = SCENES[id];
+          if (sceneIds.includes(id) || !S.points.includes(dp.id) || !!S.night !== nightNow && id !== 'spawning') return false;
+          if (CHAPTERS.some((c) => c.scene === id) && !this.save.scenes?.[id]) return false;
+          return true;
+        }).sort(() => Math.random() - 0.5);
+        const hit = luck.find((id) => Math.random() < SCENES[id].chance);
+        if (hit) sceneIds.push(hit);
+      }
+      this.scenes.start(sceneIds, new THREE.Vector3(dp.x, 0, dp.z));
+      const fixed = ch?.scene ? SCENE_AT[ch.scene] : undefined;
+      this.storyMarks = fixed && sceneIds.includes(ch!.scene!) ? [{ x: fixed.x, z: fixed.z, rare: true }] : [];
       // now and then something lies on the floor
       if (this.ads || !this.save.tutorial) this.finds.clear();
       else this.finds.spawn(new THREE.Vector3(dp.x, 0, dp.z), (x, z) => !(zoneAt(x, z) === 'cave') && caveRoofAt(x, z) === null);
@@ -921,7 +1001,7 @@ export class Game {
     const fwd = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const boosting = inp.boost && this.has('scooter');
-    let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.buff === 'shioyaki' ? 1.15 : 1) * (1 - Math.min(0.3, this.carryKg / 120));
+    let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.buff === 'shioyaki' ? 1.15 : this.buff === 'fugu' ? 1.1 : 1) * (1 - Math.min(0.3, this.carryKg / 120));
     if (boosting) speed = 6;
     const want = new THREE.Vector3().addScaledVector(fwd, inp.moveY * speed).addScaledVector(right, inp.moveX * speed * 0.7);
     if (inp.up) want.y += speed * 0.75;
@@ -1006,7 +1086,7 @@ export class Game {
       this.audio.warn();
       this.toast(this.buff === 'nitsuke' ? '水温2℃！ まかないの煮付けのおかげで少しはましだが、エアの減りが1.5倍に' : '水温2℃！ 寒さで震えてエアの減りが3倍に（ドライスーツがあれば平気）', 'danger', 3.5);
     }
-    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : 1)
+    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : this.buff === 'fugu' ? 0.9 : 1)
       * (1 + Math.min(PENALTY.carryAirMax, this.carryKg * PENALTY.carryAirPerKg)) * (this.tut.step >= 0 ? 0.5 : 1);
     this.air = Math.max(0, this.air - rate * dt);
     if (this.frame % 20 === 0) this.exploreCheck(p);
@@ -1017,7 +1097,9 @@ export class Game {
       this.freezeT = 0.12;
       this.toast(`「${FIND_NAME[picked]}」を拾った！ 中身はボートに戻ってから開けてみよう（持って泳ぐと少し息が上がる）`, '', 3.5);
     }
-    this.scenes.update(dt, this.env.night);
+    this.scenes.update(dt, this.env.night, p, this.vel.length());
+    const sensed = this.frame % 15 === 0 ? this.scenes.senseNear(p) : null;
+    if (sensed && (!SCENES[sensed].night || this.env.night >= 0.5)) { this.audio.chime(false); this.toast(SCENES[sensed].sense, 'warn', 4); }
     if (this.tut.step >= 0) this.updateTutorial(dt);
     // the day goes on while diving: dusk, then night
     if (!this.ads) {
@@ -1053,6 +1135,9 @@ export class Game {
       nearbySpecies: () => this.creatures.randomNear(p, 25),
       toast: (t, k, d) => this.toast(t, k ?? '', d),
       chime: (big) => this.audio.chime(big),
+      nearbyBig: () => this.creatures.randomNear(p, 30, 0.8),
+      aim: () => (this.target && this.target.inRange ? { id: this.target.rt.def.id, dist: this.target.dist } : null),
+      stage: (id, pose) => { if (pose) this.creatures.stage.set(id, [pose]); else this.creatures.stage.delete(id); },
       sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); },
       reward: (v, label) => { this.bonuses.push({ label: `依頼達成：${label}`, value: v }); this.shake = Math.max(this.shake, 0.4); this.freezeT = 0.15; this.updateDexChip(); },
     });
@@ -1068,10 +1153,22 @@ export class Game {
     cam.updateMatrixWorld();
     this.target = this.creatures.findTarget(cam, { clear, dark: d > 140 || this.env.night >= 0.5 || this.env.shade > 0, lightOn: this.env.lightOn, cropX, cropY, beam: this.has('light') ? 1.6 : 1, macro: this.has('macro'), wide: this.has('wide') });
     this.reload = Math.max(0, this.reload - dt);
+    // the pry bar comes out when an urchin is within reach in front of the mask
+    this.pryIdx = this.tool === 'camera' ? this.missions.pryTarget(p, this.tmpDir.set(0, 0, -1).applyQuaternion(cam.quaternion).clone()) : null;
+    this.vmBar.visible = this.pryIdx !== null;
+    this.barJab = Math.max(0, this.barJab - dt);
+    this.vmBar.position.z = -0.28 - Math.sin((this.barJab / 0.25) * Math.PI) * 0.18;
     if (this.tool === 'spear') {
       this.spearT = this.creatures.findSpearTarget(cam, this.spearTool.range);
       this.updateSpearFx(dt);
       if (inp.consume('shutter')) this.fireSpear();
+    } else if (this.pryIdx !== null && inp.consume('shutter')) {
+      // urchin harvest: the shutter button works the pry bar
+      const fw = this.tmpDir.set(0, 0, -1).applyQuaternion(cam.quaternion);
+      void fw;
+      this.missions.pry(this.pryIdx, { chime: (b) => this.audio.chime(b), toast: (t, k, d) => this.toast(t, k ?? '', d), sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); } });
+      this.barJab = 0.25;
+      this.shake = Math.max(this.shake, 0.15);
     } else if (inp.consume('shutter')) {
       this.captureReq = this.target;
       this.audio.shutter();
@@ -1188,7 +1285,9 @@ export class Game {
     if (!this.save.found[def.id] && !this.pending.has(def.id)) return '';
     const e = edibleInfo(def);
     if (!e.ok) return '';
-    return e.protected ? '　<span class="gC">保護種：獲ると罰金</span>' : e.poison ? '　<span class="gC">毒あり</span>' : '';
+    if (e.protected) return '　<span class="gC">保護種：獲ると罰金</span>';
+    if (e.poison) return this.has('fugulicense') && isFugu(def) ? '　<span class="gA">ふぐ：免許でさばける</span>' : '　<span class="gC">毒あり</span>';
+    return '';
   }
 
   private hitChance(t: NonNullable<Game['spearT']>): number {
@@ -1279,8 +1378,10 @@ export class Game {
     const photo = pc.toDataURL('image/jpeg', 0.72);
     this.diveShots++;
     // special sights: the sleeping whales (any in-range shot of a staged one) or coral spawn filling the lens
-    if (this.scenes.spawningInView(this.camera)) this.sceneShot('spawning', photo);
-    else if (t && t.inRange && t.rt.def.id === 'makkou' && this.scenes.active.has('whalesleep') && t.rt.agents.indexOf(t.agent) < 3) this.sceneShot('whalesleep', photo);
+    const particle = this.scenes.particlesInView(this.camera);
+    const staged = t && t.inRange ? this.scenes.sceneOf(t.rt.def.id, t.rt.agents.indexOf(t.agent)) : null;
+    if (particle) this.sceneShot(particle, photo);
+    else if (staged) this.sceneShot(staged, photo);
     if (!t) {
       if (!this.pendingScenes.size) this.toast('何も写っていない…');
       return;
@@ -1324,7 +1425,7 @@ export class Game {
     const el = $('discover');
     el.classList.remove('hidden', 'known');
     ($('disc-photo') as HTMLImageElement).src = photo;
-    $('disc-tag').textContent = '特別な光景';
+    $('disc-tag').textContent = first ? '実績解除！ 特別な光景' : '特別な光景';
     $('disc-name').textContent = SCENES[id].name;
     $('disc-sci').textContent = first ? 'めったに見られない瞬間を撮った！' : 'また出会えた！';
     $('disc-pay').textContent = `+${yen(pay)}`;
@@ -1396,6 +1497,13 @@ export class Game {
     $('catch-val').textContent = `${this.bagKg.toFixed(1)}/${this.bagCap}kg`;
     cc.classList.toggle('full', this.bagKg >= this.bagCap - 0.05);
     $('btn-shutter').classList.toggle('reload', this.tool === 'spear' && this.reload > 0);
+    if (this.pryIdx !== null) {
+      ret.classList.add('lock');
+      ret.classList.remove('far');
+      lab.innerHTML = `ウニ<small>バールではがす（あと${this.missions.pryLeft(this.pryIdx)}回押す）</small>`;
+      $('btn-shutter').classList.add('ready');
+      return this.updateToasts(dt);
+    }
     if (this.tool === 'spear') {
       const st = this.spearT;
       const block = st ? this.spearBlock(st) : null;
@@ -1533,7 +1641,7 @@ export class Game {
     (window as unknown as Record<string, unknown>).__THREE_GAME_TEST_HOOKS__ = {
       game: this,
       offerMission: () => { this.missions.forceOffer = true; },
-      startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure') => { this.missions.force = k; },
+      startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag') => { this.missions.force = k; },
       currents: () => this.currents,
       currentF: () => this.currentF,
       showcase: (id: string, dist = 2, side = 1) => {

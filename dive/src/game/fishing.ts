@@ -38,7 +38,7 @@ export const FISHING = {
 export type Cat = 'shiro' | 'ao' | 'iso' | 'ika';
 export const CAT_NAME: Record<Cat, string> = { shiro: '白身魚', ao: '青魚', iso: '磯の魚', ika: 'イカ・タコ' };
 
-export type DishId = 'nitsuke' | 'sashimi' | 'shioyaki' | 'karaage' | 'nabe';
+export type DishId = 'nitsuke' | 'sashimi' | 'shioyaki' | 'karaage' | 'nabe' | 'fugu';
 /** Each kind of fish has its dish; eating it yourself gives a power-up for the next dive. */
 export const DISH: Record<DishId, { name: string; buff: string; short: string }> = {
   nitsuke: { name: '煮付け', buff: '体が芯から温まる：冷たい海でのエアの減りが半分', short: '寒さに強い' },
@@ -46,6 +46,7 @@ export const DISH: Record<DishId, { name: string; buff: string; short: string }>
   shioyaki: { name: '塩焼き', buff: '体が軽い：泳ぐ速さ +15%', short: '泳ぎが速い' },
   karaage: { name: '唐揚げ', buff: '手元が冴える：銛の命中率 +15%', short: '銛が当たる' },
   nabe: { name: '鍋', buff: 'みんなで食べて元気百倍：エア容量 +20%', short: 'エア容量UP' },
+  fugu: { name: 'ふぐ料理（てっさ）', buff: 'ふぐで精がつく：エアの減り -10%・泳ぐ速さ +10%', short: 'エア長持ち＋速い' },
 };
 export const CAT_DISH: Record<Cat, DishId> = { shiro: 'nitsuke', ao: 'sashimi', iso: 'shioyaki', ika: 'karaage' };
 /** a fish this heavy (kg) is cooked as a pot for everyone */
@@ -92,6 +93,17 @@ export function edibleInfo(def: SpeciesDef): Edible {
   return { ok: true, cat };
 }
 
+/**
+ * Pufferfish a licensed fugu cook may prepare (the poisonous organs removed). Box-fish, sharp-nosed
+ * puffers and the reef Arothron stay off the menu even with a licence.
+ */
+const FUGU_OK = /トラフグ|ヒガンフグ|クサフグ|イシガキフグ|ハリセンボン/;
+export const isFugu = (def: SpeciesDef) => FUGU_OK.test(def.name);
+/** 【ふぐ調理師免許】exam fee (yen), reputation level at which the exam can be taken */
+export const FUGU_EXAM = { fee: 5000, level: 2, marketPerKg: 3000 };
+/** Is it poisonous for this cook? (a licence makes the listed fugu safe) */
+export const poisonFor = (def: SpeciesDef, licensed: boolean) => { const e = edibleInfo(def); return e.ok && !!e.poison && !(licensed && isFugu(def)); };
+
 /** A fish that is fine to catch, cook and sell. */
 export const isGoodCatch = (def: SpeciesDef) => { const e = edibleInfo(def); return e.ok && !e.poison && !e.protected && !e.shark; };
 
@@ -122,12 +134,14 @@ export const fmtKg = (kg: number) => (kg < 1 ? `${Math.round(kg * 1000)}g` : `${
 
 /** Which dish a catch becomes. */
 export function dishFor(def: SpeciesDef, kg: number): DishId {
+  if (isFugu(def)) return 'fugu';
   const e = edibleInfo(def);
   if (kg >= BIG_KG) return 'nabe';
   return e.ok ? CAT_DISH[e.cat] : 'shioyaki';
 }
 
-export function marketPrice(def: SpeciesDef, kg: number): number {
+export function marketPrice(def: SpeciesDef, kg: number, licensed = false): number {
+  if (licensed && isFugu(def)) return Math.round((FUGU_EXAM.marketPerKg * kg) / 10) * 10;
   const e = edibleInfo(def);
   const per = e.ok && !e.poison && !e.protected ? FISHING.market[e.cat] : 0;
   return Math.round((per * kg * (1 + (def.rarity - 1) * 0.5)) / 10) * 10;
@@ -171,7 +185,7 @@ export const STORY: { title: string; text: string; rules?: string[]; map?: strin
 ];
 
 /** Today's orders: more guests and harder dishes as the diner's reputation grows. */
-export function makeOrders(level: number, pool: SpeciesDef[], rnd: () => number = Math.random): Order[] {
+export function makeOrders(level: number, pool: SpeciesDef[], rnd: () => number = Math.random, fugu = false): Order[] {
   const n = Math.min(4, 2 + Math.floor(level / 2));
   const out: Order[] = [];
   const guests = [...GUESTS].sort(() => rnd() - 0.5);
@@ -187,6 +201,10 @@ export function makeOrders(level: number, pool: SpeciesDef[], rnd: () => number 
     if (level >= 4 && i === n - 1 && r < 0.6) {
       const kg = BIG_KG + Math.round(rnd() * 4);
       out.push({ id: `o${i}-${Date.now()}`, guest: '町内会', text: `宴会に${kg}kg以上の大物で鍋を`, dish: 'nabe', minKg: kg, reward: 9000 + kg * 500, rep: 3, hint: '沖やドロップオフの大きな魚。手銛では重すぎることも' });
+      continue;
+    }
+    if (fugu && i === 1 && r < 0.7) {
+      out.push({ id: `o${i}-${Date.now()}`, guest: '旅館の板長', text: 'ふぐ料理（てっさ）を一人前', dish: 'fugu', minKg: 0, reward: 4500, rep: 2, hint: 'トラフグ・ヒガンフグは岩礁、クサフグは浅瀬ラグーン' });
       continue;
     }
     const rare = level >= 5 && r < 0.35;
@@ -211,6 +229,7 @@ export function makeOrders(level: number, pool: SpeciesDef[], rnd: () => number 
 /** Does this catch satisfy the order? */
 export function fits(o: Order, def: SpeciesDef, kg: number): boolean {
   if (o.species) return o.species === def.id;
+  if (o.dish === 'fugu') return isFugu(def);
   if (kg < o.minKg) return false;
   if (o.dish === 'nabe') return true;
   const e = edibleInfo(def);

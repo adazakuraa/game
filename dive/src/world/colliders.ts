@@ -1,7 +1,7 @@
 import type * as THREE from 'three';
 
 /** Vertical-cylinder colliders for corals and rocks, bucketed in a coarse grid. */
-export type Collider = { x: number; z: number; r: number; y0: number; y1: number; sphere?: boolean; y?: number };
+export type Collider = { x: number; z: number; r: number; y0: number; y1: number; sphere?: boolean; y?: number; roof?: boolean };
 
 const CELL = 6;
 const grid = new Map<string, Collider[]>();
@@ -50,7 +50,12 @@ export function resolveSphere(p: THREE.Vector3, rad: number, vel?: THREE.Vector3
     if (d >= R) continue;
     const side = R - d;
     const up = c.y1 + rad - p.y;
-    if (up < side) {
+    // a roof (rock ledge) can also be left downwards, back into the gap under it
+    const down = c.roof ? p.y - (c.y0 - rad) : Infinity;
+    if (down < up && down < side) {
+      p.y -= down;
+      if (vel && vel.y > 0) vel.y = 0;
+    } else if (up < side) {
       p.y += up;
       if (vel && vel.y < 0) vel.y = 0;
     } else {
