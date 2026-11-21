@@ -259,7 +259,7 @@ export class Game {
   private renderTitle(): void {
     const n = this.foundCount;
     $('t-dex').textContent = `${n}/${SPECIES.length}`;
-    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70' };
+    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70', kelp: '#8ab060' };
     const pts = $('points');
     pts.innerHTML = '';
     for (const dp of DIVE_POINTS) {
@@ -270,7 +270,7 @@ export class Game {
       b.className = 'pt';
       b.type = 'button';
       b.disabled = locked;
-      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : '12m'}</span>
+      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : dp.id === 'kelp' ? '森' : '12m'}</span>
         <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `写真の稼ぎで「大気圧潜水服」を買うと行ける` : dp.sub}</div></span>
         <span class="pr"><b>${got}</b>/${zoneSpecies.length}<span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
       b.addEventListener('click', () => this.startDive(dp));
@@ -993,6 +993,7 @@ export class Game {
       ruins: { x: -330, y: -12, z: 445, yaw: Math.PI, pitch: -0.15 },
       bluehole: { x: -330, y: -9, z: 652, yaw: Math.PI, pitch: -0.45 },
       cave: { x: -326, y: -20, z: 856, yaw: Math.PI * 0.82, pitch: -0.05 },
+      kelp: { x: 330, y: -8, z: 150, yaw: Math.PI, pitch: 0.1 },
       surface: { x: 0, y: -4, z: 480, yaw: Math.PI, pitch: 0.75 },
       deep: { x: VENT.x - 14, y: heightAt(VENT.x - 14, VENT.z - 22) + 6, z: VENT.z - 22, yaw: Math.PI * 0.8, pitch: -0.15, light: true },
     };

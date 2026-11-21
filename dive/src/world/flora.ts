@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ARCH, bommieAt, BLUEHOLE, CAVE_PATH, caveDist, caveRoofAt, CENOTE, heightAt, reefEdgeZ, rockyWeight, RUINS, VENT, WRECK, WRECKS_WEST, zoneAt, DIVE_POINTS } from './layout';
+import { ARCH, bommieAt, BLUEHOLE, KELP, kelpWeight, CAVE_PATH, caveDist, caveRoofAt, CENOTE, heightAt, reefEdgeZ, rockyWeight, RUINS, VENT, WRECK, WRECKS_WEST, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
 import { addSurfaceItem } from './surface';
 import { addCollider, addSphere, resolveCapsule } from './colliders';
@@ -519,13 +519,15 @@ export type Homes = {
   coldSpots: THREE.Vector3[];
   /** points along the cave passage floor */
   caveSpots: THREE.Vector3[];
+  /** mid-water points on giant kelp stipes (seahorses, kelpfish) */
+  kelpSpots: THREE.Vector3[];
 };
 
 export class Flora {
   readonly group = new THREE.Group();
   private sets: ScatterSet[] = [];
   private mats: THREE.Material[] = [];
-  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [] };
+  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], kelpSpots: [] };
   boat: THREE.Group;
   carpetCount = 0;
   private landmarks: THREE.Object3D[] = [];
@@ -801,6 +803,7 @@ export class Flora {
       [25, [-200, 200, -60, 120], (x, z) => zoneAt(x, z) === 'lagoon', 0.4, 1.2],
       [200, [-200, 200, 720, 1080], (x, z) => zoneAt(x, z) === 'deep', 1.2, 5],
       [300, [-425, -215, -40, 360], (x, z) => zoneAt(x, z) === 'cold', 0.8, 3.8],
+      [220, [232, 425, 45, 395], (x, z) => zoneAt(x, z) === 'kelp', 0.8, 3.4],
     ];
     rockGs.forEach((g, gi) => {
       const items: ScatterItem[] = [];
@@ -826,6 +829,51 @@ export class Flora {
     // cold cove kelp forest (tall, dense)
     kelp.push(...sample(2200, [-425, -215, -40, 330], (x, z) => zoneAt(x, z) === 'cold' && heightAt(x, z) > -22, 3));
     add(kelpG, kelpMat, kelp.map(([x, z]) => ({ m: placeMatrix(x, z, 0.7 + r() * 0.8, r, 0.3, 0.1), c: color(0.12 + r() * 0.04, 0.5, 0.45 + r() * 0.15) })), 50, 30);
+
+    // ---- kelp forest (east): giant kelp stipes from the rocks to the surface, canopy fronds on top,
+    //      an understory of short kelp and sargassum, and boulders
+    {
+      const gk: THREE.BufferGeometry[] = [];
+      const kr = mulberry32(77);
+      // unit-height plant: thin stipe ribbon (two crossed strips) + alternating blades + floating canopy
+      for (const rot of [0, Math.PI / 2]) {
+        const st = new THREE.PlaneGeometry(0.05, 1, 1, 12);
+        st.translate(0, 0.5, 0);
+        st.rotateY(rot);
+        gk.push(st);
+      }
+      for (let i = 0; i < 40; i++) {
+        const y = 0.05 + (i / 40) * 0.88;
+        const bl = new THREE.PlaneGeometry(0.42, 0.075, 1, 1);
+        bl.translate(0.22, 0, 0);
+        bl.rotateZ(0.35 + kr() * 0.6);
+        bl.rotateY((i % 2 ? Math.PI : 0) + (kr() - 0.5) * 1.2 + i * 0.6);
+        bl.translate(0, y, 0);
+        gk.push(bl);
+      }
+      for (let i = 0; i < 16; i++) {
+        const bl = new THREE.PlaneGeometry(1.1, 0.03, 2, 1);
+        bl.translate(0.52, 0, 0);
+        bl.rotateY((i / 12) * Math.PI * 2 + kr());
+        bl.translate(0, 0.985 + kr() * 0.01, 0);
+        gk.push(bl);
+      }
+      const giantKelpG = mergeGeometries(gk.map((g) => { g.deleteAttribute('normal'); return g; }))!;
+      giantKelpG.computeVertexNormals();
+      const giantMat = plantMat('giantkelp', makeBlade('#4a4214', '#b09a36'), 0.9);
+      const giant: ScatterItem[] = [];
+      for (const [x, z] of sample(2600, [232, 425, 45, 395], (x, z) => kelpWeight(x, z) > 0.6 && fbm2(x * 0.03 + 9, z * 0.03, 2) > -0.35, 3)) {
+        const g = heightAt(x, z);
+        const H = -g - 0.25;
+        giant.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, g - 0.1, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * 6.28), new THREE.Vector3(1 + r() * 0.4, H, 1 + r() * 0.4)), c: color(0.11 + r() * 0.03, 0.55, 0.42 + r() * 0.12) });
+        if (r() < 0.18) this.homes.kelpSpots.push(new THREE.Vector3(x + 0.08, g + H * (0.25 + r() * 0.5), z));
+      }
+      add(giantKelpG, giantMat, giant, 70, 40);
+      // understory: short kelp (カジメ/アラメ-like) and sargassum tufts
+      const under = sample(4000, [232, 425, 45, 395], (x, z) => kelpWeight(x, z) > 0.6, 2);
+      add(bladeTuft(17, 7, 1.6, 0.26, 4, 0.9), kelpMat, under.map(([x, z]) => ({ m: placeMatrix(x, z, 0.9 + r() * 1.1, r, 0.3, 0.1), c: color(0.12 + r() * 0.05, 0.55, 0.4 + r() * 0.15) })), 45, 30);
+      void KELP;
+    }
 
     // ---- cold cove: drift ice on the surface (seen from below as bright slabs with dark gaps)
     const iceG = new THREE.IcosahedronGeometry(1, 1);

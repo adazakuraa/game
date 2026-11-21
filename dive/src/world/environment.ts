@@ -16,6 +16,7 @@ const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
   ruins: [0.012, 0.15, 0.36, 52],
   bluehole: [0.006, 0.1, 0.38, 60],
   cave: [0.01, 0.16, 0.2, 34],
+  kelp: [0.03, 0.2, 0.19, 30],
 };
 
 /** Water volume visuals: fog, lighting by depth, surface with Snell's window, god rays, marine snow, bubbles. */

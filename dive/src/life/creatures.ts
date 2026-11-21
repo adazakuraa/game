@@ -295,6 +295,7 @@ export class Creatures {
     else if (reg === 'bommieSpots') p = fromList(homes.bommieSpots);
     else if (reg === 'coldSpots') p = fromList(homes.coldSpots);
     else if (reg === 'caveSpots') p = fromList(homes.caveSpots);
+    else if (reg === 'kelpSpots') p = fromList(homes.kelpSpots);
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;

@@ -169,7 +169,7 @@ export class Missions {
 
   private start(c: MissionCtx, forced?: Kind): void {
     const opts: Kind[] = ['photo'];
-    if (c.zone === 'rocky' || c.zone === 'cold') opts.push('urchin', 'urchin');
+    if (c.zone === 'rocky' || c.zone === 'cold' || c.zone === 'kelp') opts.push('urchin', 'urchin');
     if (c.zone === 'lagoon' || c.zone === 'reef') opts.push('trash', 'trash');
     if (c.zone === 'reef' || c.zone === 'dropoff') opts.push('lost');
     if (c.zone === 'ruins') opts.push('treasure', 'treasure', 'treasure');

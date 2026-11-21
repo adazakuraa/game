@@ -1,9 +1,9 @@
 import { clamp, fbm2, lerp, ridged2, simplex2, smoothstep } from '../utils/noise';
 
 // World axes: y up (surface y=0), z increases offshore, x along the shore.
-export const WORLD = { minX: -430, maxX: 210, minZ: -70, maxZ: 1080 };
+export const WORLD = { minX: -430, maxX: 430, minZ: -70, maxZ: 1080 };
 
-export type ZoneId = 'lagoon' | 'reef' | 'rocky' | 'dropoff' | 'offshore' | 'deep' | 'cold' | 'ruins' | 'bluehole' | 'cave';
+export type ZoneId = 'lagoon' | 'reef' | 'rocky' | 'dropoff' | 'offshore' | 'deep' | 'cold' | 'ruins' | 'bluehole' | 'cave' | 'kelp';
 
 export const ZONE_NAMES: Record<ZoneId, string> = {
   lagoon: '浅瀬ラグーン',
@@ -16,6 +16,7 @@ export const ZONE_NAMES: Record<ZoneId, string> = {
   ruins: '海底遺跡',
   bluehole: 'ブルーホール',
   cave: '水中洞窟',
+  kelp: '海藻の森',
 };
 
 export const VENT = { x: 28, z: 965 };
@@ -56,6 +57,20 @@ export const WRECKS_WEST: { x: number; z: number; rot: number; tilt: number }[] 
   { x: -275, z: 585, rot: -0.7, tilt: -0.18 },
   { x: -365, z: 455, rot: 0.4, tilt: 0.12 },
 ];
+
+/** Giant-kelp forest east of the rocky reef (x > 230). */
+export const KELP = { x: 330, z: 215 };
+export function kelpWeight(x: number, z: number): number {
+  return smoothstep(212, 238, x) * smoothstep(20, 50, z) * (1 - smoothstep(380, 405, z));
+}
+function kelpHeight(x: number, z: number): number {
+  // rocky bottom 9-20 m: boulders, ledges and sand channels between them
+  const base = -9 - 11 * smoothstep(40, 380, z) - 3 * smoothstep(240, 420, x);
+  const rr = ridged2(x * 0.04 + 11, z * 0.04, 4);
+  const big = fbm2(x * 0.012 + 5, z * 0.012, 3);
+  const chan = smoothstep(0.15, 0.45, Math.abs(simplex2(x * 0.02, z * 0.02 + 3)));
+  return base + (rr * 4.5 + big * 3 - 1.5) * chan + 0.6 * simplex2(x * 0.3, z * 0.3);
+}
 
 export function westWeight(x: number, z: number): number {
   return (1 - smoothstep(-238, -212, x)) * smoothstep(388, 412, z);
@@ -201,6 +216,8 @@ export function heightAt(x: number, z: number): number {
   if (wd < 30) h -= (1 - wd / 30) ** 2 * 1.5;
   const ww = westWeight(x, z);
   if (ww > 0) h = lerp(h, westHeight(x, z), ww);
+  const kw = kelpWeight(x, z);
+  if (kw > 0) h = lerp(h, kelpHeight(x, z), kw);
   const cw = coldWeight(x, z);
   if (cw > 0) {
     // cold cove: boulder field sloping from a cobble shore (west) and the bay mouth (north) to ~26 m
@@ -224,6 +241,7 @@ export function bommieAt(x: number, z: number): number {
 
 export function zoneAt(x: number, z: number): ZoneId {
   if (coldWeight(x, z) > 0.5) return 'cold';
+  if (kelpWeight(x, z) > 0.5) return 'kelp';
   if (westWeight(x, z) > 0.5) return z < 607 ? 'ruins' : z < 782 ? 'bluehole' : 'cave';
   const edge = reefEdgeZ(x);
   if (z > 720) return 'deep';
@@ -264,7 +282,7 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     sand *= 1 - turf;
     reefHard = turf;
   }
-  const rw = Math.max(rockyWeight(x, z), coldWeight(x, z) * 0.9);
+  const rw = Math.max(rockyWeight(x, z), coldWeight(x, z) * 0.9, kelpWeight(x, z) * 0.8);
   const rockT = clamp(Math.max(rw * (0.35 + 0.6 * smoothstep(-0.25, 0.25, fbm2(x * 0.04 + 3, z * 0.04, 2))), smoothstep(0.25, 0.6, slope)), 0, 1);
   if (rockT > 0) {
     const alg = smoothstep(-40, -6, h) * smoothstep(0.0, 0.5, n + 0.3);
@@ -316,5 +334,6 @@ export const DIVE_POINTS: DivePoint[] = [
   { id: 'ruins', name: '海底遺跡', sub: '水深 6–24m・石の階段と沈船の墓場', x: -330, z: 440 },
   { id: 'bluehole', name: 'ブルーホール', sub: '水深 7→55m・浅瀬に開いた底なしの青い穴', x: -330, z: 640 },
   { id: 'cave', name: '水中洞窟', sub: '水深 22–28m・セノーテから暗い洞窟へ（ライト必須）', x: -330, z: 850 },
+  { id: 'kelp', name: '海藻の森', sub: '水深 9–20m・水面まで伸びるジャイアントケルプの森', x: 330, z: 120 },
   { id: 'deep', name: '深海', sub: '水深 170–430m・大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },
 ];
