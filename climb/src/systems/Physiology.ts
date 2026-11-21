@@ -35,6 +35,10 @@ export class Physiology {
   /** Altitude (m) the body is adapted to; climbing far above it lowers SpO2. */
   acclim = 5600;
   hasO2 = true;
+  /** Tonight's meal at camp, felt on the next leg. */
+  mods = { heat: 0, recover: 1, drain: 1, frost: 1 };
+  /** Extra warmth this frame (the dog curled up beside you while resting). */
+  extraHeat = 0;
 
   reset(spares: number, opts: { o2?: boolean; acclim?: number; frost?: number } = {}): void {
     this.acclim = opts.acclim ?? this.acclim;
@@ -90,9 +94,9 @@ export class Physiology {
 
     // Stamina.
     if (c.exertion > 0.05) {
-      this.stamina -= dt * (0.6 + 1.6 * c.exertion) * (1 + hypoxia * 1.0) * (this.coreTemp < 35 ? 1.4 : 1);
+      this.stamina -= dt * (0.6 + 1.6 * c.exertion) * (1 + hypoxia * 1.0) * (this.coreTemp < 35 ? 1.4 : 1) * this.mods.drain;
     } else {
-      const rec = (c.resting ? 10 : 6) * Math.pow(clamp(this.spo2 / 88, 0.3, 1.1), 3);
+      const rec = (c.resting ? 10 : 6) * Math.pow(clamp(this.spo2 / 88, 0.3, 1.1), 3) * this.mods.recover;
       this.stamina += dt * rec;
     }
     this.stamina = clamp(this.stamina, 0, 100);
@@ -101,14 +105,14 @@ export class Physiology {
 
     // Heat balance: moving warms you, wind and stillness strip heat.
     // a down suit plus moving keeps you warm; standing still in strong wind does not
-    const produce = 0.55 + c.exertion * 0.8;
+    const produce = 0.55 + c.exertion * 0.8 + this.mods.heat + this.extraHeat;
     const chill = 0.25 + Math.max(0, -c.ambientC - 25) * 0.01 + Math.pow(c.windKmh / 50, 1.3) * 0.45;
     this.heatBalance = produce - chill;
     const dT = this.heatBalance * 0.018 * dt;
     if (dT < 0 || this.coreTemp < 37) this.coreTemp = Math.min(37.0, this.coreTemp + dT);
 
     // Frostbite: extreme wind chill and exposed hands.
-    const frostRate = Math.max(0, chill - 0.9) * 0.3 + (c.handsExposed ? 1.2 : 0) + (this.coreTemp < 35 ? 0.4 : 0);
+    const frostRate = (Math.max(0, chill - 0.9) * 0.3 + (c.handsExposed ? 1.2 : 0) + (this.coreTemp < 35 ? 0.4 : 0)) * this.mods.frost;
     this.frostbite = clamp(this.frostbite + frostRate * dt, 0, 100);
 
     // HACE accumulates under sustained severe hypoxaemia.

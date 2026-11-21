@@ -23,6 +23,9 @@ import { NearGround } from '../world/NearGround';
 import { createSeededRandom } from '../utils/random';
 import { clamp, smoothstep } from '../utils/noise';
 import { STANDARD, gradeFor, formatDur, bestFor, submitTime, type Grade } from './Scoring';
+import { LORE, loreCollected, collectLore, type LoreEntry } from './Lore';
+import { CampScreen, MEALS, TREAT, dogTier, type MealId, type DogState, type CampData, type CampActions } from '../ui/CampScreen';
+import { Dog } from '../world/Dog';
 
 type GameState = 'title' | 'play' | 'paused' | 'dead' | 'summit' | 'camp' | 'won';
 type DeathKind = 'fall' | 'hace' | 'hypothermia' | 'serac' | 'exhaustion' | 'crevasse' | 'rock' | 'icefall';
@@ -50,6 +53,9 @@ interface SaveData {
   acclim: number;
   frost: number;
   spares: number;
+  money?: number;
+  dog?: DogState | null;
+  meal?: MealId | null;
 }
 
 function readSave(): SaveData | null {
@@ -204,6 +210,17 @@ export class Game {
   private checkpoint: Checkpoint | null = null;
   private lastNoRopeMsg = 0;
   private legResult: LegResult | null = null;
+  // --- camp life: sponsor money, tonight's meal, the dog, relics on the route
+  private money = 1000;
+  private mealNext: MealId | null = null;
+  private ateTonight: MealId | null = null;
+  private pettedTonight = false;
+  private dog: DogState | null = null;
+  private readonly dogObj = new Dog();
+  private dogWarned = false;
+  private readonly campScreen = new CampScreen();
+  private loreItems: { entry: LoreEntry; mesh: THREE.Object3D; glint: THREE.Sprite; pos: THREE.Vector3; taken: boolean }[] = [];
+  private reading = false;
   private maxAltitude = 0;
   private dprCap: number;
 
@@ -240,6 +257,7 @@ export class Game {
     };
     this.headlamp.castShadow = false;
     this.scene.add(this.headlamp, this.headlamp.target);
+    this.scene.add(this.dogObj.group);
     this.scene.add(this.camera);
 
     const surface = document.getElementById('touch-surface')!;
@@ -257,6 +275,7 @@ export class Game {
     this.buildStage(this.selected, 0);
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    document.getElementById('lore-close')!.addEventListener('click', () => this.closeLore());
     this.installTestHooks();
   }
 
@@ -364,24 +383,30 @@ export class Game {
     this.acclim = sv.acclim;
     this.frostCarry = sv.frost;
     this.spares = sv.spares;
+    this.money = sv.money ?? 1000;
+    this.dog = sv.dog ?? null;
+    this.mealNext = sv.meal ?? null;
     this.buildStage(sv.exp, sv.stage);
     document.querySelectorAll('.mcard').forEach((c) => c.classList.toggle('sel', (c as HTMLElement).dataset.id === sv.exp));
   }
 
   private save(): void {
-    writeSave({ exp: this.selected, stage: this.stageIndex, day: this.day, acclim: this.acclim, frost: this.frostCarry, spares: this.spares });
+    writeSave({ exp: this.selected, stage: this.stageIndex, day: this.day, acclim: this.acclim, frost: this.frostCarry, spares: this.spares, money: this.money, dog: this.dog, meal: this.mealNext });
   }
 
   /** Save as standing at the camp this leg ended at (i.e. the start of the next leg). */
   private saveAtCamp(): void {
     const last = EXPEDITIONS[this.selected].stages.length - 1;
-    writeSave({ exp: this.selected, stage: Math.min(last, this.stageIndex + 1), day: this.day, acclim: this.acclim, frost: this.frostCarry, spares: this.spares });
+    writeSave({ exp: this.selected, stage: Math.min(last, this.stageIndex + 1), day: this.day, acclim: this.acclim, frost: this.frostCarry, spares: this.spares, money: this.money, dog: this.dog, meal: this.mealNext });
   }
 
   private newExpedition(exp: 'everest' | 'k2'): void {
     this.selected = exp;
     this.day = 1;
     this.spares = 1;
+    this.money = 1000;
+    this.dog = null;
+    this.mealNext = null;
     this.acclim = EXPEDITIONS[exp].baseAltitude + 300; // acclimatised on the trek in
     this.frostCarry = 0;
     this.buildStage(exp, 0);
@@ -410,6 +435,8 @@ export class Game {
     this.physio.frostbite = Math.max(0, this.physio.frostbite - 15);
     this.frostCarry = Math.max(0, this.frostCarry - 15);
     this.day += 1;
+    this.ateTonight = null;
+    this.pettedTonight = false;
     this.saveAtCamp();
     this.audio.zip();
     this.showCamp(true);
@@ -428,6 +455,9 @@ export class Game {
   }
 
   private toTitle(): void {
+    this.campScreen.close();
+    this.closeLore();
+    this.dogObj.group.visible = false;
     this.refreshContinue();
     this.state = 'title';
     this.input.enabled = false;
@@ -500,6 +530,7 @@ export class Game {
     uniforms.uNear.value.set(0, 0, -1);
     this.near.onSwap = (cx, cz, half) => this.world?.terrainUniforms.uNear.value.set(cx, cz, half);
     this.env.cirrus = 0.25 + ((def.seed * 7) % 10) / 14;
+    this.buildLore(def, field, route, root);
     this.map.build(def, field, route, props, EXPEDITIONS[id], stage, (y) => this.altitudeAt(y));
     const marks = def.landmarks.slice(1, -1).map((l) => route.waypointS[l.routeIndex] / route.length);
     this.hud.setMarks(marks);
@@ -529,6 +560,24 @@ export class Game {
     this.checkpoint = null;
     this.lastDownMark = 99;
     this.player.rappelling = false;
+    // last night's meal
+    const m = this.mealNext;
+    this.physio.mods = {
+      heat: m === 'ramen' ? 0.14 : 0,
+      recover: m === 'dalbhat' ? 1.3 : 1,
+      drain: m === 'choco' ? 0.88 : 1,
+      frost: m === 'tea' ? 0.65 : 1,
+    };
+    this.physio.extraHeat = 0;
+    for (const l of this.loreItems) { l.taken = false; l.mesh.visible = true; }
+    this.reading = false;
+    // the dog walks every leg except the summit push (it waits in the tent at the top camp)
+    this.dogObj.group.visible = !!this.dog && def.goal !== 'summit';
+    this.dogWarned = false;
+    if (this.dogObj.group.visible) {
+      const dp = this.world.route.pointAt(3);
+      this.dogObj.place(dp, 0);
+    }
     this.player.reset(0);
     this.hours = def.startHours;
     this.playTime = 0;
@@ -567,6 +616,11 @@ export class Game {
         ? '無理をするな。今日は天気の窓だ、風も弱い。デポにボンベを1本足しておいた。'
         : '無理をするな。今日は天気の窓だ、崩れる心配はない。落ち着いて行け。');
     }
+    if (m) {
+      const meal = MEALS.find((x) => x.id === m)!;
+      this.radio.say('meal', `昨夜の${meal.name}が効いてるな。${meal.effect.split('。')[1] ?? ''}`, '体');
+    }
+    if (this.dog && def.goal === 'summit') this.radio.say('dogwait', `${this.dog.name}はテントで待たせてある。帰ってきてやれよ。`);
     this.radio.lore(def.stageKey, 0);
     const deadline = def.goal === 'summit' ? TURNAROUND : 18.5;
     this.radio.say('forecast', this.weather.willStorm && this.weather.stormAt < deadline + 1
@@ -623,6 +677,8 @@ export class Game {
     for (const b of this.billows) this.scene.remove(b.sprite);
     this.billows.length = 0;
     this.seracWarn = -1; this.seracTimer = 10; this.swapT = 0; this.collapseT = 0; this.hzInside = null;
+    this.dogWarned = false;
+    if (this.dogObj.group.visible) this.dogObj.place(w.route.pointAt(clamp(cp.s + (cp.descending ? -3 : 3), 0, w.route.length)), 0);
     this.map.show(false);
     this.state = 'play';
     this.input.enabled = true;
@@ -643,6 +699,7 @@ export class Game {
     const ph = this.physio;
     ph.stamina = Math.min(100, ph.stamina + 20);
     this.audio.cleared();
+    this.dogBark();
     this.hud.banner(T[kind][0], '張り詰めた息を吐く — 体力が少し戻った', 'good', 3000);
     this.radio.say(`praise-${kind}-${this.player!.descending ? 'd' : 'u'}`, T[kind][1]);
     this.saveCheckpoint(T[kind][0].replace('を抜けた', 'の先'));
@@ -677,6 +734,195 @@ export class Game {
     ex.classList.remove('hidden');
   }
 
+  // ---------------------------------------------------------------- relics
+  private buildLore(def: MountainDef, field: MountainField, route: Route, root: THREE.Group): void {
+    this.loreItems = [];
+    const got = loreCollected();
+    const glintTex = this.getPuffTex();
+    LORE.filter((l) => l.stage === def.stageKey).forEach((entry, i) => {
+      const s = entry.at * route.length;
+      const c = route.pointAt(s);
+      const d = route.directionAt(s);
+      const side = i % 2 ? 1 : -1;
+      const x = c.x - d.z * side * 2.6, z = c.z + d.x * side * 2.6;
+      const y = field.height(x, z);
+      const mesh = Game.loreMesh(entry.look);
+      mesh.position.set(x, y, z);
+      mesh.rotation.y = i * 1.7;
+      root.add(mesh);
+      // a glint so it reads at a distance (things you can touch should stand out)
+      const glint = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTex, color: got.has(entry.id) ? 0xc8d4e0 : 0xffe2a0, transparent: true, depthWrite: false, opacity: 0.8 }));
+      glint.scale.setScalar(0.9);
+      glint.position.set(x, y + 0.7, z);
+      root.add(glint);
+      this.loreItems.push({ entry, mesh, glint, pos: new THREE.Vector3(x, y, z), taken: false });
+    });
+  }
+
+  private static loreMesh(look: LoreEntry['look']): THREE.Object3D {
+    const g = new THREE.Group();
+    const M = (c: number, r = 0.8, m = 0) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) => {
+      const o = new THREE.Mesh(geo, mat); o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.castShadow = true; g.add(o); return o;
+    };
+    // a little cairn of stones marks every relic
+    for (let k = 0; k < 4; k++) add(new THREE.DodecahedronGeometry(0.16 - k * 0.025, 0), M(0x6d6862, 0.95), (k % 2 ? 0.05 : -0.04), 0.1 + k * 0.17, 0);
+    if (look === 'notebook') add(new THREE.BoxGeometry(0.22, 0.04, 0.3), M(0x7a2a22), 0.35, 0.03, 0.1, 0, 0.4, 0.1);
+    else if (look === 'bottle') add(new THREE.CylinderGeometry(0.08, 0.08, 0.55, 12), M(0xe4621f, 0.5, 0.3), 0.35, 0.08, 0, Math.PI / 2, 0, 0.3);
+    else if (look === 'axe') {
+      add(new THREE.CylinderGeometry(0.02, 0.02, 0.75, 8), M(0x8a6a3a), 0.35, 0.3, 0, 0, 0, 0.12);
+      add(new THREE.BoxGeometry(0.34, 0.05, 0.05), M(0x9aa0a6, 0.4, 0.8), 0.39, 0.66, 0);
+    } else if (look === 'flag') {
+      add(new THREE.CylinderGeometry(0.015, 0.015, 1.1, 6), M(0x6b4a2e), 0.3, 0.55, 0);
+      add(new THREE.PlaneGeometry(0.34, 0.24), new THREE.MeshStandardMaterial({ color: 0xd8402f, side: THREE.DoubleSide, roughness: 0.9 }), 0.48, 0.95, 0);
+    } else if (look === 'photo') add(new THREE.BoxGeometry(0.16, 0.01, 0.12), M(0xf4efe4, 0.6), 0.32, 0.02, 0.05, 0, 0.7, 0);
+    else add(new THREE.TorusGeometry(0.06, 0.014, 6, 16), M(0x8f969c, 0.35, 0.9), 0.3, 0.05, 0.05, Math.PI / 2.4, 0, 0);
+    return g;
+  }
+
+  private openLore(item: Game['loreItems'][number]): void {
+    item.taken = true;
+    item.mesh.visible = false;
+    item.glint.visible = false;
+    const first = collectLore(item.entry.id);
+    const got = loreCollected().size;
+    if (first) this.physio.stamina = Math.min(100, this.physio.stamina + 10);
+    document.getElementById('lore-item')!.textContent = `拾った：${item.entry.item}`;
+    document.getElementById('lore-title')!.textContent = item.entry.title;
+    document.getElementById('lore-body')!.textContent = item.entry.body;
+    document.getElementById('lore-note')!.textContent = first
+      ? `記録帳に加えた（${got} / ${LORE.length}）。読んで、少し勇気が湧いた — 体力+10`
+      : `記録帳にはもうある（${got} / ${LORE.length}）`;
+    this.reading = true;
+    this.input.enabled = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.audio.zip();
+    document.getElementById('lore')!.classList.remove('hidden');
+  }
+
+  closeLore(): void {
+    if (!this.reading) return;
+    this.reading = false;
+    document.getElementById('lore')!.classList.add('hidden');
+    this.input.enabled = this.state === 'play';
+    if (!this.mobile && this.state === 'play') this.tryPointerLock();
+  }
+
+  // ---------------------------------------------------------------- the dog
+  private updateDog(dt: number): void {
+    const p = this.player!, w = this.world!;
+    if (!this.dog || !this.dogObj.group.visible) { this.physio.extraHeat = 0; return; }
+    const tier = dogTier(this.dog.affection).hearts;
+    const t = new THREE.Vector3();
+    if (p.resting) {
+      // curl up beside the climber
+      t.set(p.pos.x + Math.cos(p.yaw) * 0.9, 0, p.pos.z - Math.sin(p.yaw) * 0.9);
+    } else {
+      // trot a few metres ahead along the track, a little to the side
+      const s = clamp(p.routeS + (p.descending ? -3.4 : 3.4), 0, w.route.length);
+      const c = w.route.pointAt(s);
+      const d = w.route.directionAt(s);
+      t.set(c.x - d.z * 1.2, 0, c.z + d.x * 1.2);
+      // if the climber has wandered off the track, stay close to them instead
+      if (p.routeDist > 6) t.set(p.pos.x + (c.x - p.pos.x) * 0.3, 0, p.pos.z + (c.z - p.pos.z) * 0.3);
+    }
+    t.y = p.groundAt(t.x, t.z).y;
+    this.dogObj.update(dt, t, (x, z) => p.groundAt(x, z).y, p.resting, p.pos, this.dog.affection / 100);
+    const close = this.dogObj.pos.distanceTo(p.pos) < 2.2;
+    this.physio.extraHeat = p.resting && tier >= 2 && close ? 0.35 : 0;
+    if (p.resting && tier >= 2 && close && !this.warned.has('snuggle')) {
+      this.warned.add('snuggle');
+      this.hud.banner(`${this.dog.name}が寄り添ってきた`, '温かい。体温が下がりにくい', 'good', 2200);
+    }
+    if (!p.resting) this.warned.delete('snuggle');
+  }
+
+  private dogBark(text?: string, sub = ''): void {
+    if (!this.dog || !this.dogObj.group.visible) return;
+    this.dogObj.bark();
+    const d = this.dogObj.pos.distanceTo(this.player!.pos);
+    this.audio.bark(clamp(1.4 - d / 20, 0.3, 1));
+    if (text) this.hud.banner(text, sub, 'danger', 1900);
+  }
+
+  // ---------------------------------------------------------------- camp
+  private campReward(r: LegResult | null): number {
+    const base = !r ? 600 : { top: 1500, good: 1100, ok: 800, slow: 500 }[r.grade.tone];
+    return base + this.nearMisses * 100;
+  }
+
+  private campData(rested: boolean): CampData {
+    const w = this.world!;
+    const exp = EXPEDITIONS[this.selected];
+    const next = exp.stages[this.stageIndex + 1];
+    const r = this.legResult;
+    const rows: [string, string][] = [
+      ...(!rested && r ? this.resultRows(r, '区間タイム') : []),
+      ['高度順応', `${Math.round(this.acclim).toLocaleString('en-US')}m`],
+      ['遠征日数', `${this.day}日目`],
+    ];
+    return {
+      kicker: `${this.day}日目 · ${formatClock(rested ? 7 : this.hours)}`,
+      title: `${w.def.goalName}（${w.def.summitAltitude.toLocaleString('en-US')}m）`,
+      desc: rested
+        ? `${w.def.goalName}で1日休養した。体が高度に慣れ、指先の感覚も少し戻った。だが、モンスーンは近づいている。`
+        : `${w.def.goalName}に到着。テントに潜り込み、雪を溶かして湯を沸かす。明日は「${next?.stageName ?? '山頂'}」。`,
+      money: this.money,
+      grade: !rested && r ? { name: r.grade.name, tone: r.grade.tone, isNew: r.isNew, praise: Game.praiseFor(r.grade) } : null,
+      rows,
+      kitchen: this.stageIndex <= 1 ? 'full' : 'basic',
+      ateTonight: this.ateTonight,
+      dog: this.dog,
+      dogMeet: !this.dog,
+      pettedTonight: this.pettedTonight,
+      loadout: next?.goal === 'summit' ? this.spares : null,
+      departLabel: next ? (next.goal === 'summit' ? `今夜23時に出発 — ${next.stageName}` : `翌朝出発 — ${next.stageName}`) : '出発',
+      lore: { got: loreCollected(), list: LORE.filter((l) => l.stage.startsWith(this.selected)) },
+    };
+  }
+
+  private campActions(rested: boolean): CampActions {
+    return {
+      data: () => this.campData(rested),
+      eat: (id) => {
+        const m = MEALS.find((x) => x.id === id)!;
+        if (this.ateTonight || this.money < m.price) return false;
+        this.money -= m.price;
+        this.ateTonight = id;
+        this.mealNext = id;
+        if (id === 'tea') { this.frostCarry = Math.max(0, this.frostCarry - 15); this.physio.frostbite = Math.max(0, this.physio.frostbite - 15); }
+        if (id === 'dalbhat') this.acclim += 100;
+        this.saveAtCamp();
+        return true;
+      },
+      treat: () => {
+        if (!this.dog || this.money < TREAT.price) return false;
+        this.money -= TREAT.price;
+        this.dog.affection = Math.min(100, this.dog.affection + 20);
+        this.saveAtCamp();
+        return true;
+      },
+      pet: () => {
+        if (!this.dog || this.pettedTonight) return;
+        this.pettedTonight = true;
+        this.dog.affection = Math.min(100, this.dog.affection + 5);
+        this.saveAtCamp();
+      },
+      adopt: (name) => {
+        this.dog = { name, affection: 10 };
+        this.saveAtCamp();
+      },
+      spares: (n) => { this.spares = n; this.saveAtCamp(); },
+      depart: () => { this.campScreen.close(); this.withLoading(() => this.departNextStage()); },
+      rest: () => this.restDay(),
+      quit: () => { this.campScreen.close(); this.toTitle(); },
+      sound: (k) => {
+        const a = this.audio;
+        ({ slurp: () => a.slurp(), munch: () => a.munch(), gulp: () => a.gulp(), bark: () => a.bark(), coin: () => a.coin(), stamp: () => a.stamp(), fanfare: () => a.fanfare(), clink: () => a.clink() })[k]();
+      },
+    };
+  }
+
   private static praiseFor(g: Grade): string {
     return {
       top: 'シェルパ並みの速さだ。BCのテントがざわついている。',
@@ -709,7 +955,10 @@ export class Game {
       this.lastFrame = t;
       dt = Math.min(dt, 0.05);
       for (let i = 0; i < this.simSpeed; i++) this.step(dt);
-      this.render();
+      // Behind the camp screens the 3D view barely changes: redraw it rarely so the
+      // celebration and eating animations stay smooth (and phones stay cool).
+      const overlay = this.campScreen.isOpen || this.campScreen.celebrating;
+      if (!overlay || this.frame % 12 === 0) this.render();
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -737,8 +986,8 @@ export class Game {
     if (intents.mapPressed && (this.state === 'play' || this.map.open)) this.map.show(!this.map.open);
     if (this.state !== 'play' && this.map.open) this.map.show(false);
     if (this.map.open && this.player) this.map.update(this.player.pos.x, this.player.pos.z, this.player.yaw, this.player.routeS);
-    if (this.state === 'play' && !this.tutorial.open) this.updatePlay(dt);
-    else if (this.tutorial.open && this.player) { this.updateCamera(0); this.updateEnvironment(0, this.weather.state.storm); }
+    if (this.state === 'play' && !this.tutorial.open && !this.reading) this.updatePlay(dt);
+    else if ((this.tutorial.open || this.reading) && this.player) { this.updateCamera(0); this.updateEnvironment(0, this.weather.state.storm); }
     else if (this.state === 'dead') this.updateDead(dt);
     else if (this.state === 'title') this.updateTitle(dt);
     this.input.consumeEdges();
@@ -809,7 +1058,11 @@ export class Game {
     // Interactions: cache pickup / bottle swap
     let interact: string | null = null;
     const cache = w.props.caches.find((c) => !c.taken && c.position.distanceTo(p.pos) < 3);
-    if (this.swapT > 0) {
+    const relic = this.loreItems.find((l) => !l.taken && l.pos.distanceTo(p.pos) < 2.8);
+    if (relic && this.swapT <= 0) {
+      interact = '拾う';
+      if (intents.interactPressed) this.openLore(relic);
+    } else if (this.swapT > 0) {
       this.swapT -= dt;
       if (this.swapT <= 0) {
         ph.spares -= 1;
@@ -866,6 +1119,9 @@ export class Game {
       }
       this.ladderEnterS = -1;
     }
+
+    this.updateDog(dt);
+    for (const l of this.loreItems) if (!l.taken) l.glint.position.y = l.pos.y + 0.7 + Math.sin(this.realTime * 2.2 + l.pos.x) * 0.12;
 
     // Physiology
     const handsExposed = swapping || p.mode === 'transfer';
@@ -1062,7 +1318,14 @@ export class Game {
         this.hud.banner(TEXT[hz.kind].zone[0], TEXT[hz.kind].zone[1], 'danger', 3600);
       }
       this.seracTimer -= dt;
+      if (this.dog && this.dogObj.group.visible && dogTier(this.dog.affection).hearts >= 3 && !this.dogWarned && this.seracWarn < 0 && this.seracTimer < 1.8) {
+        // it hears the ice groan before you do
+        this.dogWarned = true;
+        this.dogObj.lookAt(hz.origin, 3);
+        this.dogBark(`${this.dog.name}が上を見て吠えた！`, '何か来る — 身構えろ');
+      }
       if (this.seracTimer <= 0 && this.seracWarn < 0) {
+        this.dogWarned = false;
         // the warning stays up until the debris has come through (~5 s to arrive, ~2 s to pass)
         this.seracWarn = 7;
         const isRock = hz.kind === 'rock';
@@ -1095,6 +1358,7 @@ export class Game {
         this.nearThisFall = false;
         this.radio.interrupt();
         this.hazSrc.copy(hz.origin);
+        if (this.dog && this.dogObj.group.visible) this.dogObj.lookAt(hz.origin, 4);
         this.flash = 0.2;
         this.hud.banner(TEXT[hz.kind].warn[0], warnSub, 'danger', 4000);
         this.chunkKind = hz.kind;
@@ -1291,8 +1555,6 @@ export class Game {
         this.state = 'camp';
         this.input.enabled = false;
         if (document.pointerLockElement) document.exitPointerLock();
-        this.audio.summit();
-        this.hud.banner(`${w.def.goalName} 到着`, `${w.def.summitAltitude.toLocaleString('en-US')}m`, 'good', 2500);
         const campAlt = w.def.summitAltitude;
         this.acclim = Math.max(this.acclim, campAlt + 300);
         this.frostCarry = Math.max(0, this.physio.frostbite * 0.8 - 5);
@@ -1300,7 +1562,25 @@ export class Game {
         const { std, elapsed } = this.legStd();
         this.legResult = std ? this.rate(w.def.stageKey, elapsed, std.up) : null;
         this.legDeaths = 0;
-        setTimeout(() => this.showCamp(false), 1200);
+        // a new night at camp
+        const reward = this.campReward(this.legResult);
+        this.money += reward;
+        this.mealNext = null;
+        this.ateTonight = null;
+        this.pettedTonight = false;
+        if (this.dog) this.dog.affection = Math.min(100, this.dog.affection + 5);
+        this.saveAtCamp();
+        this.hud.show(false);
+        const r = this.legResult;
+        this.campScreen.celebrate({
+          kicker: `${this.day}日目 · ${formatClock(this.hours)}`,
+          title: `${w.def.goalName} 到着`,
+          sub: `${w.def.summitAltitude.toLocaleString('en-US')} m`,
+          grade: r ? { name: r.grade.name, tone: r.grade.tone, isNew: r.isNew } : null,
+          reward,
+          dogName: this.dog?.name ?? null,
+        }, this.campActions(false).sound, () => this.showCamp(false));
+        this.radio.interrupt(99);
       }
       return;
     }
@@ -1410,55 +1690,21 @@ export class Game {
   }
 
   private showCamp(rested: boolean): void {
-    const w = this.world!;
-    const exp = EXPEDITIONS[this.selected];
-    const next = exp.stages[this.stageIndex + 1];
-    const desc = rested
-      ? `${w.def.goalName}で1日休養した。体が高度に慣れ、指先の感覚も少し戻った。だが、モンスーンは近づいている。`
-      : `${w.def.goalName}に到着。テントに潜り込み、雪を溶かして水を作る。明日は「${next?.stageName ?? '山頂'}」。`;
-    this.showResult(
-      `${this.day}日目 · ${formatClock(this.hours)}`,
-      `${w.def.goalName}（${w.def.summitAltitude.toLocaleString('en-US')}m）`,
-      desc,
-      'win',
-      next ? (next.goal === 'summit' ? `今夜23時に出発 — ${next.stageName}` : `翌朝出発 — ${next.stageName}`) : '出発',
-      [
-        ...(!rested && this.legResult ? this.resultRows(this.legResult, '区間タイム') : []),
-        ['高度順応', `${Math.round(this.acclim).toLocaleString('en-US')}m`], ['遠征日数', `${this.day}日目`],
-      ],
-    );
-    document.getElementById('result-rest')!.classList.remove('hidden');
-    const ex = document.getElementById('result-extra')!;
-    let html = '';
-    if (!rested && this.legResult) {
-      const r = this.legResult;
-      html += `<div class="grade ${r.grade.tone}">${r.grade.name}${r.isNew ? '<span class="new">自己ベスト</span>' : ''}</div><div>${Game.praiseFor(r.grade)}</div>`;
-    }
-    if (next?.goal === 'summit') {
-      // The risk/return choice belongs right before the push, where its weight is felt.
-      const opts: [number, string, string][] = [
-        [0, '予備 0本 — 軽い', '歩く速さ +6%。使っている1本が尽きたら無酸素'],
-        [1, '予備 1本 — 標準', '速さ ±0。往復ぎりぎりの量'],
-        [2, '予備 2本 — 重い', '歩く速さ −6%。酸素に余裕、流量を上げられる'],
-      ];
-      html += `<div style="margin-top:8px">山頂アタックに持つ酸素ボンベ</div><div class="load">${opts.map(([v, a, b]) =>
-        `<label class="${v === this.spares ? 'sel' : ''}"><input type="radio" name="load" value="${v}" ${v === this.spares ? 'checked' : ''}/><span>${a}<small>${b}</small></span></label>`).join('')}</div>`;
-    }
-    if (html) {
-      ex.innerHTML = html;
-      ex.classList.remove('hidden');
-      ex.querySelectorAll<HTMLInputElement>('input[name="load"]').forEach((inp) => inp.addEventListener('change', () => {
-        this.spares = Number(inp.value);
-        ex.querySelectorAll('.load label').forEach((l) => l.classList.toggle('sel', (l.querySelector('input') as HTMLInputElement).checked));
-        this.saveAtCamp();
-      }));
-    }
+    this.hud.show(false);
+    this.showScreen(null);
+    this.campScreen.open(this.campActions(rested));
   }
 
   private showWin(): void {
     writeSave(null);
     const w = this.world!;
-    this.showResult('生還', `${w.def.name} 登頂・生還`, 'あなたは頂に立ち、そして生きて帰ってきた。デスゾーンから戻れることこそ、本当の登頂だ。', 'win', 'もう一度登る', [
+    let desc = 'あなたは頂に立ち、そして生きて帰ってきた。デスゾーンから戻れることこそ、本当の登頂だ。';
+    if (this.dog) {
+      this.dog.affection = Math.min(100, this.dog.affection + 10);
+      desc += `　テントから${this.dog.name}が飛び出してきて、ちぎれそうなほど尻尾を振った。`;
+      this.audio.bark();
+    }
+    this.showResult('生還', `${w.def.name} 登頂・生還`, desc, 'win', 'もう一度登る', [
       ['登頂時刻', formatClock(this.summitHours)],
       ...(this.legResult ? this.resultRows(this.legResult, '往復の時間') : []),
     ]);
@@ -1627,6 +1873,7 @@ export class Game {
       clipBtn = clipState === 'need' ? 'urgent' : 'ready';
       prompt = 'フィックスロープ：<b>クリップ / E</b> で確保';
     }
+    if (interact === '拾う') prompt = '先人の遺した物：<b>拾う / F</b>';
     if (interact === '回収') prompt = 'デポしたボンベ：<b>回収 / F</b>';
     else if (interact === '交換' && !prompt) prompt = 'ボンベ残量わずか：<b>交換 / F</b>';
     if (p.mode === 'slide') prompt = '<b>ピッケル！</b> 休むボタン長押し / Space';

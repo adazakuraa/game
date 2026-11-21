@@ -263,6 +263,57 @@ export class Audio {
     this.tone(880, 0.6, 0.07, 'triangle', t + 0.12);
   }
 
+  /** "Wan!" — a short bark from the dog (pitch slides down, a little throaty noise). */
+  bark(near = 1): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (const [dt, f] of [[0, 620], [0.2, 560]] as const) {
+      this.tone(f, 0.13, 0.09 * near, 'sawtooth', t + dt, f * 0.55);
+      this.burst({ t: t + dt, dur: 0.12, freq: 900, q: 1.2, gain: 0.08 * near, attack: 0.005 });
+    }
+  }
+
+  /** Noodle slurp: a rising airy whoosh. */
+  slurp(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst({ t, dur: 0.55, freq: 1800, q: 2.5, gain: 0.09, attack: 0.08, rate: 1.4 });
+    this.burst({ t: t + 0.15, dur: 0.4, freq: 2600, q: 3, gain: 0.06, attack: 0.05, rate: 1.7 });
+  }
+
+  /** Crunch / chew. */
+  munch(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst({ t, dur: 0.08, freq: 2400, q: 0.8, gain: 0.1, attack: 0.003 });
+    this.burst({ t: t + 0.11, dur: 0.07, freq: 2000, q: 0.8, gain: 0.08, attack: 0.003 });
+  }
+
+  /** Warm gulp of tea. */
+  gulp(): void {
+    this.tone(180, 0.18, 0.08, 'sine', undefined, 120);
+  }
+
+  /** Coin counter tick. */
+  coin(): void {
+    this.tone(1568, 0.08, 0.035, 'square');
+    this.tone(2093, 0.12, 0.03, 'triangle');
+  }
+
+  /** Camp arrival: a short bright fanfare. */
+  fanfare(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    [[523.3, 0], [659.3, 0.12], [784, 0.24], [1046.5, 0.4]].forEach(([f, d]) => this.tone(f, d === 0.4 ? 1.4 : 0.3, 0.07, 'triangle', t + d));
+    [261.6, 329.6, 392].forEach((f) => this.tone(f, 1.8, 0.035, 'sine', t + 0.4));
+  }
+
+  /** The grade stamp hitting the paper. */
+  stamp(): void {
+    this.burst({ dur: 0.18, freq: 220, q: 0.7, gain: 0.35, attack: 0.002, type: 'lowpass' });
+    this.tone(90, 0.2, 0.15, 'sine', undefined, 55);
+  }
+
   summit(): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
