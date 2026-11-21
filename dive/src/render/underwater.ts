@@ -48,10 +48,15 @@ export function patchFogChunks(): void {
 #endif`;
   C.fog_fragment = `#ifdef USE_FOG
   vec3 uwDir = normalize( vFogWorld - cameraPosition );
+  // Things below the camera are seen through more water than their distance suggests: the light that lit them
+  // already crossed the column above, and little of it comes back up. A deep floor seen from the surface
+  // (the bottom of a blue hole, a drop-off) sinks into the blue instead of showing through.
+  float uwBelow = max( cameraPosition.y - vFogWorld.y, 0.0 );
+  float uwDist = vFogDepth + uwBelow * 0.9 + uwBelow * uwBelow * 0.012;
   #ifdef FOG_EXP2
-    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
+    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * uwDist * uwDist );
   #else
-    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+    float fogFactor = smoothstep( fogNear, fogFar, uwDist );
   #endif
   // water absorbs red first: tint the in-scattered path color
   gl_FragColor.rgb = mix( gl_FragColor.rgb * mix( vec3( 1.0 ), vec3( 0.55, 0.85, 1.0 ), fogFactor * 0.8 ), uwWaterColor( uwDir ), fogFactor );
