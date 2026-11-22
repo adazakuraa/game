@@ -252,7 +252,7 @@ export const MORE_SPECIES: SpeciesDef[] = [
     look: { c: ['#6a6a4a', '#8a8a6a', '#b8b8a0'], fin: '#8a8a6a', net: 'rgba(240,240,220,0.35)' }, desc: '網目模様のアイゴ。海草を食べる。稚魚の群れは沖縄で「スク」と呼ばれる。' }),
   F({ id: 'bora', name: 'ボラ', sci: 'Mugil cephalus', zone: 'lagoon', d: [0.3, 5], size: 0.5, body: sh('mullet'), hab: 'surface', region: [-160, 160, -50, 150], n: 16, g: 2, spread: 3,
     look: { c: ['#4a5a6a', '#a8b4bc', '#e8ecee'], mid: 0.4, fin: '#8a98a2', lines: { n: 7, color: 'rgba(60,70,80,0.35)', ang: 0 } }, desc: '出世魚。水面近くを群れで泳ぎ、ときどき水面から跳ねる。', metal: 0.5 }),
-  F({ id: 'okizayori', name: 'オキザヨリ', sci: 'Tylosurus crocodilus', zone: 'lagoon', d: [0.2, 3], size: 1.1, r: 2, body: sh('needle'), hab: 'surface', n: 6, g: 2, speed: 1.4, spread: 3,
+  F({ id: 'okizayori', aggro: { kind: 'light', chance: 1, range: 12, bite: 8, speed: 7 }, name: 'オキザヨリ', sci: 'Tylosurus crocodilus', zone: 'lagoon', d: [0.2, 3], size: 1.1, r: 2, body: sh('needle'), hab: 'surface', n: 6, g: 2, speed: 1.4, spread: 3,
     look: { c: ['#2a5a6a', '#8ab8c4', '#e8f0f2'], mid: 0.4, fin: '#5a8a98', hl: [[0.0, 0.18, '#3a7a9a']] }, desc: 'ダツの仲間。槍のような長いくちばし。水面直下を素早く泳ぐ。光に向かって突進することがある。', metal: 0.5 }),
   F({ id: 'ojisan', name: 'オジサン', sci: 'Parupeneus multifasciatus', zone: 'lagoon', d: [1, 40], size: 0.25, body: sh('goat'), hab: 'sandForage', n: 12, g: 4,
     look: { c: ['#c86a8a', '#e09aa8', '#f0d0d0'], fin: '#e8b0b8', bars: [[0.1, 0.06, '#2a1a1a'], [-0.1, 0.04, '#2a1a1a'], [-0.3, 0.05, '#2a1a1a']] }, desc: 'あごの2本のひげで砂の中の餌を探る。この「ひげ」が名前の由来。' }),

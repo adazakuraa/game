@@ -6,7 +6,7 @@ import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
-import { caveRoofAt, heightAt, VENT } from '../world/layout';
+import { caveRoofAt, heightFast, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
 import { resolveCapsule, resolveSphere } from '../world/colliders';
@@ -257,6 +257,18 @@ function fleeDir(away: THREE.Vector3, vel: THREE.Vector3, radialW: number, out: 
 
 export type CreatureEvent = { type: 'warn' | 'charge' | 'hit' | 'repel'; def: SpeciesDef; p: THREE.Vector3 };
 
+/** Night dive risk: daytime fish sleep (fewer groups show), and needlefish rush at the diver's light. */
+export const NIGHT = {
+  /** chance multiplier for a daytime species' group to be out at night (rarity-1 species keep one group) */
+  dayPresence: 0.4,
+  /** 'light' aggro only reacts to a diver shallower than this (m) */
+  lightDepth: 8,
+  /** seconds a needlefish hangs in the beam before it charges */
+  lightWind: 0.8,
+};
+/** A rescued animal swimming with the diver. */
+const COMPANION = { ahead: 2.2, side: 1.6, minSpeed: 1.2, warp: 25, warpBack: 4 };
+
 export class Creatures {
   /** encounters for the game layer (warnings, charges, bites); drained every frame */
   events: CreatureEvent[] = [];
@@ -271,6 +283,10 @@ export class Creatures {
   stage = new Map<string, { p: THREE.Vector3; yaw: number; pitch: number; s?: number; still?: boolean }[]>();
   /** test-only: pin agent 0 of a species */
   pin: { id: string; p: THREE.Vector3; yaw: number } | null = null;
+  /** a rescued animal that swims beside the diver for the rest of the dive (agent 0 of that species) */
+  companion: { id: string; p: THREE.Vector3; v: THREE.Vector3; yaw: number } | null = null;
+  /** the diver's light is on (set by the game each frame); 'light' aggro species react to it at night */
+  lightOn = false;
   readonly group = new THREE.Group();
   readonly list: SpeciesRuntime[] = [];
   private rnd = mulberry32(77);
@@ -325,18 +341,18 @@ export class Creatures {
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;
-      p = new THREE.Vector3(x, heightAt(x, z), z);
+      p = new THREE.Vector3(x, heightFast(x, z), z);
     } else if (reg === 'eelPatch') {
       const a = r() * Math.PI * 2, d = Math.sqrt(r()) * GARDEN_EEL_PATCH.r;
       const x = GARDEN_EEL_PATCH.x + Math.cos(a) * d, z = GARDEN_EEL_PATCH.z + Math.sin(a) * d;
-      p = new THREE.Vector3(x, heightAt(x, z), z);
+      p = new THREE.Vector3(x, heightFast(x, z), z);
     } else {
       let x = 0, z = 0, ground = 0, y = 0;
       for (let k = 0; k < 40; k++) {
         const rg = reg as [number, number, number, number];
         x = rg[0] + r() * (rg[1] - rg[0]);
         z = rg[2] + r() * (rg[3] - rg[2]);
-        ground = heightAt(x, z);
+        ground = heightFast(x, z);
         y = -(def.depth[0] + r() * (def.depth[1] - def.depth[0]));
         if (y > ground + 1) break;
       }
@@ -402,7 +418,7 @@ export class Creatures {
     }
     if (b.anchor === 'home') out.y = g.home.y + rnd(b.lo, b.hi);
     else if (b.anchor === 'abs') out.y = rnd(b.lo, b.hi);
-    else out.y = Math.min(heightAt(out.x, out.z) + rnd(b.lo, b.hi), -0.8);
+    else out.y = Math.min(heightFast(out.x, out.z) + rnd(b.lo, b.hi), -0.8);
     return true;
   }
 
@@ -445,7 +461,7 @@ export class Creatures {
     for (let gi = 0; gi < def.groups; gi++) {
       const home = this.pickHome(def, homes, gi);
       if (def.behavior !== 'static' && def.behavior !== 'buried' && def.behavior !== 'crevice' && def.behavior !== 'anemone') {
-        const g0 = heightAt(home.x, home.z);
+        const g0 = heightFast(home.x, home.z);
         home.y = Math.max(home.y, g0 + this.altitude(def));
       }
       const roam = def.behavior === 'pelagic' ? 60 : def.behavior === 'drift' ? 14 : def.region === 'reefSpots' ? 5 : 20;
@@ -474,12 +490,12 @@ export class Creatures {
         if (def.region === 'eelPatch') {
           const a2 = r() * Math.PI * 2, d = Math.sqrt(r()) * GARDEN_EEL_PATCH.r;
           a.p.set(GARDEN_EEL_PATCH.x + Math.cos(a2) * d, 0, GARDEN_EEL_PATCH.z + Math.sin(a2) * d);
-          a.p.y = heightAt(a.p.x, a.p.z) - 0.12 * a.s;
+          a.p.y = heightFast(a.p.x, a.p.z) - 0.12 * a.s;
           a.fixed = true;
         } else {
           // goby hovering over its burrow (or a tube worm fixed on coral)
           a.p.set(g.home.x + (r() - 0.5) * 1.2, 0, g.home.z + (r() - 0.5) * 1.2);
-          a.p.y = def.anchorHome ? g.home.y + (r() - 0.5) * 0.2 : heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+          a.p.y = def.anchorHome ? g.home.y + (r() - 0.5) * 0.2 : heightFast(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
           if (def.anchorHome) a.fixed = true;
         }
       } else if (def.behavior === 'crevice') {
@@ -490,14 +506,14 @@ export class Creatures {
         const dir = new THREE.Vector3(Math.sin(a.yaw), 0, Math.cos(a.yaw));
         const d = rad * (def.kind === 'lobster' ? 1.05 : 0.95) + (def.kind === 'lobster' ? 0 : def.size * 0.25);
         a.p.set(c.x + dir.x * d, 0, c.z + dir.z * d);
-        a.p.y = heightAt(a.p.x, a.p.z) + (def.kind === 'lobster' ? 0.05 : 0.35 + r() * 0.4);
+        a.p.y = heightFast(a.p.x, a.p.z) + (def.kind === 'lobster' ? 0.05 : 0.35 + r() * 0.4);
         a.fixed = true;
       } else if (def.behavior === 'static') {
         const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots';
         const spread = onTop ? 1.2 : 3;
         a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * spread, 0, (r() - 0.5) * spread));
         a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
-        if (def.kind === 'none') a.p.set(VENT.x, heightAt(VENT.x, VENT.z) + 1.5, VENT.z);
+        if (def.kind === 'none') a.p.set(VENT.x, heightFast(VENT.x, VENT.z) + 1.5, VENT.z);
       }
       if (def.instColors) a.col = new THREE.Color(def.instColors[Math.floor(r() * def.instColors.length)]);
       rt.agents.push(a);
@@ -667,7 +683,7 @@ export class Creatures {
       for (let k = 0; k < 30 && !p; k++) {
         const x = x0 + r() * (x1 - x0), z = z0 + r() * (z1 - z0);
         if (!ok(x, z)) continue;
-        const ground = heightAt(x, z);
+        const ground = heightFast(x, z);
         const y = -(def.depth[0] + r() * (def.depth[1] - def.depth[0]));
         if (y < ground + 0.5 && def.behavior !== 'bottom' && def.behavior !== 'static') continue;
         p = new THREE.Vector3(x, Math.max(y, ground + this.altitude(def)), z);
@@ -692,15 +708,51 @@ export class Creatures {
         a.alarm = 0;
       } else if (def.behavior === 'buried') {
         a.p.set(p.x + (r() - 0.5) * 1.2, 0, p.z + (r() - 0.5) * 1.2);
-        a.p.y = def.anchorHome ? p.y + (r() - 0.5) * 0.2 : heightAt(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+        a.p.y = def.anchorHome ? p.y + (r() - 0.5) * 0.2 : heightFast(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
         a.retract = 0;
       } else {
         a.p.copy(g.c).add(a.off);
-        const gy = heightAt(a.p.x, a.p.z) + 0.1;
+        const gy = heightFast(a.p.x, a.p.z) + 0.1;
         if (a.p.y < gy) a.p.y = gy;
       }
     }
     return true;
+  }
+
+  /** Night dives: daytime species are asleep (hidden in the reef), so fewer of them show up. */
+  private nightGate(def: SpeciesDef): number {
+    return this.night && def.when !== 'night' ? (def.aggro?.kind === 'light' ? 1 : NIGHT.dayPresence) : 1;
+  }
+
+  /** Rescued animal: swims at the diver's right front, easing toward a point ahead of the camera. */
+  private stepCompanion(rt: SpeciesRuntime, a: Agent, i: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir: THREE.Vector3 | undefined, dt: number): void {
+    const c = this.companion!;
+    rt.groups[a.g].absent = false;
+    a.taken = false;
+    let fx = viewDir ? viewDir.x : 0, fz = viewDir ? viewDir.z : 1;
+    const fl = Math.hypot(fx, fz);
+    if (fl < 0.05) { fx = Math.sin(c.yaw); fz = Math.cos(c.yaw); } else { fx /= fl; fz /= fl; }
+    if (a.p.distanceTo(player) > COMPANION.warp) {
+      a.p.set(player.x - fx * COMPANION.warpBack, player.y, player.z - fz * COMPANION.warpBack);
+      a.v.set(0, 0, 0);
+    }
+    const tx = player.x + fx * COMPANION.ahead + fz * COMPANION.side + Math.sin(this.time * 0.7) * 0.4;
+    const tz = player.z + fz * COMPANION.ahead - fx * COMPANION.side + Math.cos(this.time * 0.6) * 0.4;
+    const gy = heightFast(tx, tz);
+    const ty = clamp(player.y - 0.3 + Math.sin(this.time * 0.9) * 0.25, gy + 0.6, -0.8);
+    _v2.set(tx - a.p.x, ty - a.p.y, tz - a.p.z);
+    a.v.addScaledVector(_v2, dt * 2.2);
+    a.v.multiplyScalar(1 - Math.min(0.9, dt * 1.6));
+    const maxV = Math.max(COMPANION.minSpeed, playerVel.length() + 0.6);
+    const vl = a.v.length();
+    if (vl > maxV) a.v.multiplyScalar(maxV / vl);
+    a.p.addScaledVector(a.v, dt);
+    const want = vl > 0.15 ? Math.atan2(a.v.x, a.v.z) : Math.atan2(fx, fz);
+    let dy = want - c.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    c.yaw += dy * Math.min(1, dt * 2.5);
+    a.yaw = c.yaw;
+    a.q.setFromEuler(_e.set(clamp(-a.v.y * 0.15, -0.3, 0.3), c.yaw, 0));
+    this.writeInstance(rt, a, i);
   }
 
   /** Chance that a group shows up on a given dive, by rarity. */
@@ -716,7 +768,7 @@ export class Creatures {
     this.rnd = mulberry32(seed);
     this.homeUse.clear();
     for (const rt of this.list) {
-      const p = rt.def.when === 'night' && !this.night ? 0 : this.presence(rt.def.rarity);
+      const p = rt.def.when === 'night' && !this.night ? 0 : rt.def.aggro?.kind === 'light' && this.night ? 1 : this.presence(rt.def.rarity) * this.nightGate(rt.def);
       const movable = this.canRelocate(rt.def);
       rt.groups.forEach((g, gi) => {
         g.absent = this.rnd() > p;
@@ -777,7 +829,11 @@ export class Creatures {
     }
   }
 
-  update(dt: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir?: THREE.Vector3): void {
+  private frameNo = 0;
+
+  update(dt0: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir?: THREE.Vector3): void {
+    const dt = dt0;
+    this.frameNo++;
     // re-home far groups (a few species per frame)
     this.relocT += dt;
     if (this.relocT > 0.05) {
@@ -788,7 +844,7 @@ export class Creatures {
         if (rt.def.rarity >= 3 && this.rnd() > 0.15) continue;
         rt.groups.forEach((g, gi) => {
           if (Math.hypot(g.c.x - player.x, g.c.z - player.z) > 100) {
-            g.absent = this.rnd() > this.presence(rt.def.rarity);
+            g.absent = this.rnd() > this.presence(rt.def.rarity) * this.nightGate(rt.def);
             if (!g.absent) this.relocate(rt, gi, player);
           }
         });
@@ -803,11 +859,11 @@ export class Creatures {
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
-      if ((this.pin && this.pin.id === rt.def.id) || this.stage.has(rt.def.id)) near = true;
+      if ((this.pin && this.pin.id === rt.def.id) || (this.companion && this.companion.id === rt.def.id) || this.stage.has(rt.def.id)) near = true;
       if (near && !rt.mesh && rt.def.kind !== 'none') {
         // lazy build, a few species per frame so a dive never stalls on texture painting
         // (the budget counts build time only, and at least one species is built every frame)
-        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id && !this.stage.has(rt.def.id)) near = false;
+        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id && this.companion?.id !== rt.def.id && !this.stage.has(rt.def.id)) near = false;
         else {
           const t0 = performance.now();
           this.buildMesh(rt);
@@ -844,9 +900,9 @@ export class Creatures {
         }
         if (def.behavior === 'bottom') {
           // bottom dwellers follow the seafloor wherever it is, regardless of their listed depth range
-          g.t.y = heightAt(g.t.x, g.t.z) + this.altitude(def);
+          g.t.y = heightFast(g.t.x, g.t.z) + this.altitude(def);
         } else if (!def.hab) {
-          const ground = heightAt(g.t.x, g.t.z);
+          const ground = heightFast(g.t.x, g.t.z);
           g.t.y = clamp(g.t.y, Math.max(ground + this.altitude(def), -def.depth[1]), Math.min(-def.depth[0], -0.6));
         } else g.t.y = Math.min(g.t.y, -0.3);
         if (def.behavior === 'anemone') g.t.copy(g.home);
@@ -863,7 +919,7 @@ export class Creatures {
           g.v.addScaledVector(_v, dt * def.speed * 2);
         }
         g.c.addScaledVector(g.v, dt);
-        const gg = heightAt(g.c.x, g.c.z);
+        const gg = heightFast(g.c.x, g.c.z);
         const minAlt = def.hab ? (def.hab === 'sandForage' || def.hab === 'under' ? 0.1 : 0.2) : this.altitude(def) * 0.8;
         g.c.y = clamp(g.c.y, gg + minAlt, -0.3);
       }
@@ -886,6 +942,10 @@ export class Creatures {
           this.writeInstance(rt, a, i);
           continue;
         }
+        if (this.companion && this.companion.id === def.id && i === 0) {
+          this.stepCompanion(rt, a, i, player, playerVel, viewDir, dt0);
+          continue;
+        }
         if (this.pin && this.pin.id === def.id && i === 0) {
           // test showcase: hold one individual side-on in front of the camera
           g.absent = false;
@@ -898,13 +958,17 @@ export class Creatures {
         }
         if (g.absent || a.taken) continue;
         if (Math.abs(g.c.x - player.x) > 100 || Math.abs(g.c.z - player.z) > 100) continue;
+        // far individuals are simulated every third frame (with three frames' worth of time): nobody sees the difference
+        const lod = Math.abs(a.p.x - player.x) + Math.abs(a.p.z - player.z) > 45 && !a.aggro ? 3 : 1;
+        if (lod > 1 && (this.frameNo + i) % lod !== 0) { this.writeInstance(rt, a, i); continue; }
+        const dt = dt0 * lod;
         const dPlayer = a.p.distanceTo(player);
         if (def.behavior === 'buried') {
           const want = dPlayer < def.flee + playerVel.length() * 1.5 ? 1 : 0;
           a.retract += (want - a.retract) * Math.min(1, dt * (want ? 6 : 0.35));
           // face roughly toward the current (gobies hover and slowly turn)
           a.yaw = def.region === 'eelPatch' ? 0.6 + Math.sin(a.ph) * 0.4 : a.ph + Math.sin(this.time * 0.3 + a.ph) * 0.6;
-          if (def.region !== 'eelPatch' && !def.anchorHome) a.p.y = heightAt(a.p.x, a.p.z) + 0.1 + a.s * 0.3 + Math.sin(this.time * 1.3 + a.ph) * 0.02;
+          if (def.region !== 'eelPatch' && !def.anchorHome) a.p.y = heightFast(a.p.x, a.p.z) + 0.1 + a.s * 0.3 + Math.sin(this.time * 1.3 + a.ph) * 0.02;
           this.orient(rt, a, 1);
           this.writeInstance(rt, a, i);
           continue;
@@ -966,20 +1030,30 @@ export class Creatures {
           const homeD = Math.hypot(player.x - g.home.x, player.z - g.home.z);
           if (mode === 0) {
             const rng = ag.range * (ag.kind === 'territory' ? this.stealth * 0.4 + 0.6 : 1);
-            const trig = ag.kind === 'territory' ? dPlayer < rng && homeD < rng * 1.8 : dPlayer < rng;
+            const trig = ag.kind === 'territory' ? dPlayer < rng && homeD < rng * 1.8
+              : ag.kind === 'light' ? this.night && this.lightOn && player.y > -NIGHT.lightDepth && dPlayer < rng
+              : dPlayer < rng;
             if (trig && a.modeT <= 0) {
               a.mode = ag.kind === 'territory' ? 2 : 1;
-              a.modeT = ag.kind === 'territory' ? 1.2 : 5 + r() * 6;
+              a.modeT = ag.kind === 'territory' ? 1.2 : ag.kind === 'light' ? NIGHT.lightWind : 5 + r() * 6;
               this.events.push({ type: 'warn', def, p: a.p.clone() });
             }
           } else if (mode === 1) {
             // shark: tightening circles around the diver, then a bumping pass
-            const ang = this.time * (0.9 / (1 + def.size * 0.3)) + a.ph * 6;
-            const R = 3 + def.size * 1.2 + Math.max(0, a.modeT) * 0.25;
-            tx = player.x + Math.cos(ang) * R; tz = player.z + Math.sin(ang) * R; ty = player.y - 0.6;
-            if (dPlayer > ag.range * 1.8) { a.mode = 0; a.modeT = 10; }
-            else if (a.modeT <= 0) { a.mode = 2; a.modeT = 0; this.events.push({ type: 'charge', def, p: a.p.clone() }); }
+            if (ag.kind === 'light') {
+              // needlefish: hang in the beam for a moment, then dash straight at the light
+              tx = a.p.x; ty = a.p.y; tz = a.p.z;
+              if (!this.lightOn) { a.mode = 0; a.modeT = 4; }
+              else if (a.modeT <= 0) { a.mode = 2; a.modeT = 0; this.events.push({ type: 'charge', def, p: a.p.clone() }); }
+            } else {
+              const ang = this.time * (0.9 / (1 + def.size * 0.3)) + a.ph * 6;
+              const R = 3 + def.size * 1.2 + Math.max(0, a.modeT) * 0.25;
+              tx = player.x + Math.cos(ang) * R; tz = player.z + Math.sin(ang) * R; ty = player.y - 0.6;
+              if (dPlayer > ag.range * 1.8) { a.mode = 0; a.modeT = 10; }
+              else if (a.modeT <= 0) { a.mode = 2; a.modeT = 0; this.events.push({ type: 'charge', def, p: a.p.clone() }); }
+            }
           } else if (mode === 2) {
+            if (ag.kind === 'light' && !this.lightOn) { a.mode = 3; a.modeT = 5; } // light out: it loses the target
             if (ag.kind === 'territory' && a.modeT > 0) {
               // threat display: turn to face the intruder, fins raised
               tx = a.p.x + (player.x - a.p.x) * 0.05; ty = a.p.y; tz = a.p.z + (player.z - a.p.z) * 0.05;
@@ -1032,7 +1106,7 @@ export class Creatures {
         // keep a minimum cruising speed for pelagics so they never hover
         if (def.behavior === 'pelagic' && vl < def.speed * 0.4) a.v.add(_v2.set(Math.sin(a.yaw), 0, Math.cos(a.yaw)).multiplyScalar(def.speed * 0.4 * dt * 3));
         a.p.addScaledVector(a.v, dt);
-        const gy = heightAt(a.p.x, a.p.z);
+        const gy = heightFast(a.p.x, a.p.z);
         const minY = gy + Math.max(0.06, def.behavior === 'bottom' ? this.altitude(def) : def.hab === 'sandForage' ? a.s * 0.15 : a.s * 0.3);
         if (a.p.y < minY) { a.p.y = minY; a.v.y = Math.max(a.v.y, 0); }
         if (a.p.y > -0.4) { a.p.y = -0.4; a.v.y = Math.min(a.v.y, 0); }
@@ -1211,7 +1285,18 @@ export class Creatures {
   nightFall(player: THREE.Vector3): void {
     this.night = true;
     for (const rt of this.list) {
-      if (rt.def.when !== 'night') continue;
+      if (rt.def.when !== 'night') {
+        // daytime species go to sleep: some groups vanish (keep one of the common ones)
+        const gate = this.nightGate(rt.def);
+        if (gate < 1) {
+          for (const g of rt.groups) if (!g.absent && Math.random() > gate) g.absent = true;
+          if (rt.def.rarity === 1 && rt.groups.every((g) => g.absent)) rt.groups[0].absent = false;
+        } else if (rt.def.aggro?.kind === 'light') {
+          const mv = this.canRelocate(rt.def);
+          rt.groups.forEach((g, gi) => { if (g.absent) { g.absent = false; if (mv) this.relocate(rt, gi, player, 4); } });
+        }
+        continue;
+      }
       const movable = this.canRelocate(rt.def);
       rt.groups.forEach((g, gi) => {
         g.absent = Math.random() > this.presence(rt.def.rarity);
@@ -1226,8 +1311,10 @@ export class Creatures {
     for (const rt of this.list) {
       const def = rt.def;
       if (!rt.active || def.size < 0.9 || def.kind === 'jelly' || def.kind === 'none') continue;
-      for (const a of rt.agents) {
+      for (let ai = 0; ai < rt.agents.length; ai++) {
+        const a = rt.agents[ai];
         if (rt.groups[a.g].absent || a.taken) continue;
+        if (ai === 0 && this.companion?.id === def.id) continue; // the rescued animal does not shove the diver
         const reach = a.s * 0.7 + rad + 1;
         if (Math.abs(a.p.x - p.x) > reach || Math.abs(a.p.z - p.z) > reach || Math.abs(a.p.y - p.y) > reach) continue;
         fwd.set(0, 0, 1).applyQuaternion(a.q);
@@ -1247,7 +1334,7 @@ export class Creatures {
     for (let i = 1; i < n; i++) {
       const t = i / n;
       const x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t, z = from.z + (to.z - from.z) * t;
-      if (heightAt(x, z) > y + 0.15) return true;
+      if (heightFast(x, z) > y + 0.15) return true;
     }
     return false;
   }

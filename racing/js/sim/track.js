@@ -27,11 +27,14 @@ export class Track {
   constructor(def) {
     this.def = def;
     this.halfW = def.width / 2;
-    this.grip = def.grip;
+    this.grip = def.grip ?? 1;
     this.build(def);
+    this.buildSurfaces(def);
+    this.buildZones(def);
     this.buildRacingLine();
-    this.buildSpeedProfile();
+    this.buildSpeedProfile(def.spec || CAR_SPEC);
     this.buildHash();
+    this.buildShortcuts(def);
   }
 
   build(def) {
@@ -78,6 +81,27 @@ export class Track {
       }
       ys.set(Y);
     }
+    // ジャンプ台: def.jumps = [{ at: 先端の位置（ゴール/1周に対する割合）, len: 台の長さ m, h: 高さ m, gap: 谷の長さ m（なければ 0） }]
+    this.jumpArr = new Uint8Array(N); // 1 = 台、2 = 谷（路面なし）
+    this.jumps = [];
+    if (def.jumps) {
+      const len0 = def.stage ? def.stage * total : total;
+      for (const jd of def.jumps) {
+        const lip = jd.at * len0;
+        const j0 = Math.round((lip - jd.len) / this.ds), j1 = Math.round(lip / this.ds);
+        for (let i = j0; i < j1; i++) {
+          const k = ((i % N) + N) % N;
+          const t = (i - j0) / Math.max(1, j1 - j0);
+          Y[k] += jd.h * Math.pow(t, 1.4);
+          this.jumpArr[k] = 1;
+        }
+        const g1 = Math.round((lip + (jd.gap || 0)) / this.ds);
+        for (let i = j1; i < g1; i++) this.jumpArr[((i % N) + N) % N] = 2;
+        this.jumps.push({ ramp: (lip - jd.len), lip, end: lip + (jd.gap || 0), h: jd.h, gap: jd.gap || 0 });
+      }
+    }
+    this.holeDepth = 14;
+
     // 接線・左法線・方位・曲率・勾配
     this.tx = new Float32Array(N);
     this.tz = new Float32Array(N);
@@ -128,17 +152,46 @@ export class Track {
     // 縁石（曲率がある区間）
     this.curb = new Uint8Array(N);
     const kTh = 1 / 230;
-    for (let i = 0; i < N; i++) {
+    for (let i = 0; i < N && def.curbs !== false; i++) {
       if (Math.abs(this.kappa[i]) > kTh) {
         for (let o = -10; o <= 10; o++) this.curb[(i + o + N) % N] = 1;
       }
     }
   }
 
+  // 路面の種類ごとのグリップ（ラリー）。def.surfaces = [[開始割合, 終了割合, 種類], ...]（ステージ長に対する割合）
+  buildSurfaces(def) {
+    const N = this.N;
+    this.surfArr = new Uint8Array(N);
+    this.gripArr = new Float32Array(N).fill(this.grip);
+    this.stageEnd = def.stage ? def.stage * this.length : null; // 一本道のゴール位置 (m)
+    this.stageN = this.stageEnd ? Math.min(N - 1, Math.round(this.stageEnd / this.ds)) : N;
+    if (!def.surfaces) return;
+    const len = this.stageEnd || this.length;
+    for (const [a, b, kind] of def.surfaces) {
+      const k = SURFACE_KINDS.indexOf(kind);
+      if (k < 0) continue;
+      const i0 = Math.floor(((a * len) / this.length) * N), i1 = Math.ceil(((b * len) / this.length) * N);
+      for (let i = i0; i < i1 && i < N; i++) {
+        this.surfArr[i] = k;
+        this.gripArr[i] = SURFACE_GRIP[kind] * (def.grip ?? 1);
+      }
+    }
+    // 境目をなめらかに（路面が変わる瞬間にグリップが急変しないように）
+    const g = Float32Array.from(this.gripArr);
+    for (let i = 0; i < N; i++) {
+      let acc = 0;
+      for (let o = -6; o <= 6; o++) acc += g[(i + o + N) % N];
+      this.gripArr[i] = acc / 13;
+    }
+  }
+
+  gripAt(i) { return this.gripArr[i]; }
+
   // レーシングライン: 最小曲率に近いラインを反復スムージングで求める
   buildRacingLine() {
     const N = this.N;
-    const lim = this.halfW - 1.15;
+    const lim = this.def.lineLimit ?? this.halfW - 1.15;
     const o = new Float32Array(N);
     const px = new Float32Array(N), pz = new Float32Array(N);
     const lx = (i) => this.tz[i];
@@ -197,30 +250,31 @@ export class Track {
   }
 
   // 理想速度プロファイル（摩擦円・ダウンフォース・パワーを考慮）
-  buildSpeedProfile(muScale = 0.92) {
+  buildSpeedProfile(spec = CAR_SPEC, muScale = 0.92) {
     const N = this.N;
-    const c = CAR_SPEC;
-    const mu = c.mu * this.grip * muScale;
+    const c = spec;
+    const muOf = (i) => c.mu * this.gripArr[i] * muScale;
     const dfk = (0.5 * 1.2 * c.ClA) / c.mass; // a_down = dfk * v^2
     const dragk = (0.5 * 1.2 * c.CdA) / c.mass;
     const vmax = c.topSpeed;
     const v = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       const k = Math.abs(this.lineK[i]);
+      const mu = muOf(i);
       const den = k - mu * dfk;
       let vi = den <= 1e-6 ? vmax : Math.sqrt((mu * G) / den);
       v[i] = Math.min(vi, vmax);
     }
     const latUse = (vi, i) => vi * vi * Math.abs(this.lineK[i]);
-    const avail = (vi) => mu * (G + dfk * vi * vi);
+    const avail = (vi, i) => muOf(i) * (G + dfk * vi * vi);
     // 前進（加速制限）
     for (let pass = 0; pass < 2; pass++) {
       for (let k = 0; k < N; k++) {
         const i = k, b = (k + 1) % N;
         const vi = v[i];
         const lat = latUse(vi, i);
-        const tot = avail(vi);
-        const longAvail = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * 0.55; // 後輪駆動なのでトラクション控えめ
+        const tot = avail(vi, i);
+        const longAvail = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * (c.tractionK ?? 0.55); // 後輪駆動なのでトラクション控えめ
         const pw = c.power / (c.mass * Math.max(vi, 5));
         const acc = Math.min(longAvail, pw) - dragk * vi * vi;
         const vn = Math.sqrt(Math.max(0, vi * vi + 2 * Math.max(acc, 0) * this.lineDs[i]));
@@ -233,8 +287,8 @@ export class Track {
         const i = k, a = (k - 1 + N) % N;
         const vi = v[i];
         const lat = latUse(vi, i);
-        const tot = avail(vi);
-        const dec = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * 0.92 + dragk * vi * vi;
+        const tot = avail(vi, i);
+        const dec = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * (c.brakeK ?? 0.92) + dragk * vi * vi;
         const vp = Math.sqrt(vi * vi + 2 * dec * this.lineDs[a]);
         if (vp < v[a]) v[a] = vp;
       }
@@ -273,7 +327,8 @@ export class Track {
   buildHash() {
     this.cell = 24;
     this.hash = new Map();
-    for (let i = 0; i < this.N; i++) {
+    const lim = this.stageEnd ? Math.min(this.N, this.stageN + Math.ceil(160 / this.ds)) : this.N;
+    for (let i = 0; i < lim; i++) {
       const k = this.key(Math.floor(this.x[i] / this.cell), Math.floor(this.z[i] / this.cell));
       if (!this.hash.has(k)) this.hash.set(k, []);
       this.hash.get(k).push(i);
@@ -362,6 +417,66 @@ export class Track {
     return out;
   }
 
+  // ショートカット（本線から分かれて合流する別の道）。def.shortcuts = [{ a, b: 分岐・合流の位置（割合）, side: 1 左 / -1 右, surface }]
+  // 別の Track として作り（見えない戻り道を足したループ + stage）、本線の s に換算する toMain を持たせる
+  buildShortcuts(def) {
+    this.shortcuts = [];
+    this.openArr = new Int8Array(this.N); // 本線のガードレールを開ける所（1 左 / -1 右）
+    if (!def.shortcuts) return;
+    const len0 = this.stageEnd || this.length, hw = this.halfW;
+    let cx = 0, cz = 0;
+    for (let i = 0; i < this.N; i++) { cx += this.x[i]; cz += this.z[i]; }
+    cx /= this.N; cz /= this.N;
+    def.shortcuts.forEach((sd, k) => {
+      const sA = sd.a * len0, sB = sd.b * len0, side = sd.side;
+      const P = (s, d) => { const p = this.pointAt(s, d, {}); return [p.x, p.z, p.y]; };
+      // 入口・出口はなだらかに本線から離れる / 寄る
+      const A = P(sA + 45, side * (hw + 7)), B = P(sB - 45, side * (hw + 7));
+      const lerp = (t) => [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t];
+      const pts = [P(sA - 20, side * hw * 0.3), P(sA + 12, side * hw * 0.75), A, lerp(0.33), lerp(0.66), B, P(sB - 12, side * hw * 0.75), P(sB + 20, side * hw * 0.3)];
+      // 見えない戻り道（本線から離れる向きに大きく回る）
+      const last = pts[pts.length - 1], first = pts[0];
+      let ox = (last[0] + first[0]) / 2 - cx, oz = (last[1] + first[1]) / 2 - cz;
+      const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
+      const ret = [[last[0] + ox * 2500, last[1] + oz * 2500, last[2]], [first[0] + ox * 2500, first[1] + oz * 2500, first[2]]];
+      const base = { id: def.id + '-sc' + k, width: sd.width ?? 10, runoff: 4, grip: this.grip, scenery: def.scenery, env: def.env, curbs: false, points: pts.concat(ret) };
+      const tmp = new Track({ ...base, stage: 0.5 });
+      const pj = {};
+      tmp.project(last[0], last[1], -1, pj, 1e9);
+      const scLen = Math.min(pj.s, tmp.length * 0.6);
+      const sc = new Track({ ...base, stage: scLen / tmp.length, surfaces: [[0, 1, sd.surface || 'dirt']] });
+      sc.mainTrack = this;
+      sc.side = side;
+      sc.sA0 = sA - 20; sc.sB0 = sB + 20;
+      sc.toMain = (s) => sc.sA0 + Math.max(0, Math.min(1, s / sc.stageEnd)) * (sc.sB0 - sc.sA0);
+      // 分岐・合流の付近は、本線側の壁を開ける
+      const openSc = (from, to) => { for (let i = Math.max(0, Math.floor(from / sc.ds)); i < Math.min(sc.N, to / sc.ds); i++) { if (side > 0) sc.wallR[i] = sc.halfW + 16; else sc.wallL[i] = sc.halfW + 16; } };
+      openSc(0, 75); openSc(sc.stageEnd - 75, sc.stageEnd + 40);
+      for (let s = sA - 10; s < sA + 70; s += this.ds / 2) this.openMain(s, side);
+      for (let s = sB - 70; s < sB + 10; s += this.ds / 2) this.openMain(s, side);
+      this.shortcuts.push(sc);
+    });
+  }
+  openMain(s, side) {
+    const i = Math.floor((((s % this.length) + this.length) % this.length) / this.ds) % this.N;
+    if (side > 0) this.wallL[i] = Math.max(this.wallL[i], this.halfW + 13); else this.wallR[i] = Math.max(this.wallR[i], this.halfW + 13);
+    this.openArr[i] = side;
+  }
+
+  // 地面の高さ（谷の区間は路面がなく、深く落ちる）
+  inHole(s) {
+    for (const j of this.jumps || []) if (j.gap && s > j.lip && s < j.end) return true;
+    return false;
+  }
+  groundY(i, y) {
+    return this.jumpArr && this.jumpArr[i] === 2 ? y - this.holeDepth : y;
+  }
+  // 谷の先（着地できる場所）の s。谷でなければ null
+  holeExit(s) {
+    for (const j of this.jumps || []) if (j.gap && s >= j.lip - 5 && s <= j.end + 5) return j.end + 12;
+    return null;
+  }
+
   sampleArr(arr, s) {
     const N = this.N;
     s = ((s % this.length) + this.length) % this.length;
@@ -370,18 +485,42 @@ export class Track {
     return arr[i0] + (arr[i1] - arr[i0]) * t;
   }
 
-  surfaceAt(d, curbHere) {
+  surfaceAt(d, curbHere, i = -1) {
     // 返り値: grip倍率, 抵抗係数, 種別
     const a = Math.abs(d);
     if (a <= this.halfW) return SURF.asphalt;
     if (curbHere && a <= this.halfW + 1.3) return SURF.curb;
-    if (this.def.scenery === 'city') return SURF.asphalt;
-    if (this.def.scenery === 'desert') return SURF.sand;
+    const sc = i >= 0 && this.zoneArr ? this.zoneArr[i] : this.def.scenery;
+    if (sc === 'city') return SURF.asphalt;
+    if (sc === 'desert') return SURF.sand;
+    if (sc === 'alpine') return SURF.snow;
     return SURF.grass;
+  }
+
+  // 区間ごとの景色（コース外の路面に使う）。def.zones はゴールまで（周回なら全周）の長さに対する割合
+  buildZones(def) {
+    if (!def.zones) return;
+    const len = this.stageEnd || this.length;
+    this.zoneArr = new Array(this.N);
+    for (let i = 0; i < this.N; i++) {
+      const f = (i * this.ds) / len;
+      let k = def.zones[def.zones.length - 1][2];
+      for (const [a, b, kind] of def.zones) if (f >= a && f < b) { k = kind; break; }
+      if (f < def.zones[0][0]) k = def.zones[0][2];
+      this.zoneArr[i] = k;
+    }
   }
 }
 
+// 路面の種類（ラリー）とグリップ
+// セクションコース（スタートとゴールが別の場所）のスタートライン位置（m）。グリッドはこの手前に並ぶ
+export const STAGE_START = 130;
+
+export const SURFACE_KINDS = ['tarmac', 'gravel', 'dirt', 'snow', 'ice', 'sand', 'cobble'];
+export const SURFACE_GRIP = { tarmac: 1, gravel: 0.74, dirt: 0.8, snow: 0.5, ice: 0.3, sand: 0.64, cobble: 0.86 };
+
 export const SURF = {
+  snow: { grip: 0.5, drag: 260, type: 3 },
   asphalt: { grip: 1, drag: 0, type: 0 },
   curb: { grip: 0.93, drag: 30, type: 1 },
   grass: { grip: 0.58, drag: 230, type: 2 },

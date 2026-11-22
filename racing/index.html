@@ -14,21 +14,33 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
+<canvas id="speedfx"></canvas>
 
 <!-- メニュー -->
 <section id="menu" class="screen show">
   <div class="menu-bg"></div>
   <header class="brand">
     <div class="logo"><span class="logo-a">APEX</span><span class="logo-b">LINE</span></div>
-    <div class="tagline">GT RACING — 3D</div>
+    <div class="tagline">GT · RALLY · BIKE</div>
   </header>
   <div class="menu-body">
     <div class="row mode-row">
-      <div class="seg" id="modeSeg">
-        <button data-v="race" class="on">レース</button>
-        <button data-v="ta">タイムアタック</button>
+      <div class="row switches">
+        <div class="seg" id="genreSeg">
+          <button data-v="gt" class="on">GT</button>
+          <button data-v="rally">ラリー</button>
+          <button data-v="bike">バイク</button>
+        </div>
+        <div class="seg" id="modeSeg">
+          <button data-v="race" class="on">レース</button>
+          <button data-v="ta">タイムアタック</button>
+        </div>
       </div>
-      <button class="icon-btn" id="settingsBtn" aria-label="設定">⚙ 設定</button>
+      <div class="row tools">
+        <div class="coin-pill" title="所持コイン"><i class="coin"></i><b id="menuCoins">0</b></div>
+        <button class="icon-btn" id="garageBtn">ガレージ</button>
+        <button class="icon-btn" id="settingsBtn" aria-label="設定">⚙ 設定</button>
+      </div>
     </div>
     <div class="tracks" id="trackList"></div>
     <div class="row opts">
@@ -47,10 +59,6 @@
           <button data-v="3" class="on">3</button>
           <button data-v="5">5</button>
         </div>
-      </div>
-      <div class="opt">
-        <label>カラー</label>
-        <div class="swatches" id="colorSw"></div>
       </div>
     </div>
     <button class="start-btn" id="startBtn">スタート</button>
@@ -99,6 +107,28 @@
   </div>
 </section>
 
+<!-- ガレージ -->
+<section id="garage" class="screen">
+  <div id="garagePreview" aria-label="3Dプレビュー。ドラッグで回転"></div>
+  <header class="g-head">
+    <button class="icon-btn" id="garageBack">← 戻る</button>
+    <div class="g-title">GARAGE<small id="garageProg"></small></div>
+    <div class="coin-pill"><i class="coin"></i><b id="garageCoins">0</b></div>
+  </header>
+  <aside class="g-panel">
+    <div class="g-modes"><button class="g-mode on" data-mode="look">見た目</button><button class="g-mode" data-mode="perf">性能</button></div>
+    <div id="gStats" class="g-stats hidden"></div>
+    <nav id="gTabs" class="g-tabs"></nav>
+    <div id="gItems" class="g-items"></div>
+    <div class="g-buy">
+      <div class="g-sel"><b id="gSelName"></b><small id="gSelSub"></small></div>
+      <button id="gAction" class="start-btn small"></button>
+    </div>
+  </aside>
+  <div id="gToast" class="g-toast"></div>
+  <div class="g-hint">ドラッグで回転 / ピンチで拡大</div>
+</section>
+
 <!-- ロード -->
 <section id="loading" class="screen">
   <div class="load-box">
@@ -112,12 +142,13 @@
 <section id="hud" class="screen" data-steer="slide">
   <div class="hud-tl">
     <div class="pos"><span id="hPos">8</span><small>/<span id="hTot">8</span></small></div>
-    <div class="lap">LAP <span id="hLap">1</span>/<span id="hLaps">3</span></div>
+    <div class="lap" id="hLapBox">LAP <span id="hLap">1</span>/<span id="hLaps">3</span></div>
   </div>
   <div class="hud-tr">
     <div class="t-main" id="hTime">0:00.000</div>
-    <div class="t-sub"><span>LAST</span><b id="hLast">--:--.---</b></div>
-    <div class="t-sub"><span>BEST</span><b id="hBest">--:--.---</b></div>
+    <div class="t-sub"><span id="hLastL">LAST</span><b id="hLast">--:--.---</b></div>
+    <div class="t-sub"><span id="hBestL">BEST</span><b id="hBest">--:--.---</b></div>
+    <div class="t-sub t-target" id="hTarget"></div>
     <div class="t-delta" id="hDelta"></div>
     <canvas id="minimap" width="200" height="200"></canvas>
   </div>
@@ -125,15 +156,20 @@
     <button class="hud-btn" id="pauseBtn" aria-label="一時停止">Ⅱ</button>
     <button class="hud-btn" id="camBtn" aria-label="視点">◉</button>
   </div>
+  <div class="draft" id="hDraft">SLIPSTREAM<i></i></div>
+  <div class="driftHud" id="hDrift">DRIFT<span><b></b><b></b><b></b></span></div>
   <div class="gauge">
     <div class="rpm"><i id="hRpm"></i></div>
     <div class="spd"><b id="hSpd">0</b><small>km/h</small></div>
     <div class="gear" id="hGear">N</div>
     <div class="assist-flags"><span id="fTcs">TCS</span><span id="fAbs">ABS</span></div>
   </div>
+  <div class="coin-toast" id="coinToast"><i class="coin"></i><b></b></div>
   <div class="msg" id="hMsg"></div>
+  <div class="count" id="hCount"></div>
   <div class="sub-msg" id="hSubMsg"></div>
   <div class="standings" id="hStand"></div>
+  <div class="notes" id="hNotes"></div>
 
   <!-- タッチ操作 -->
   <div class="touch">
@@ -165,6 +201,7 @@
     <div id="resBody"></div>
     <div class="row center">
       <button class="start-btn small" id="againBtn">もう一度</button>
+      <button class="ghost-btn" id="resGarageBtn">ガレージ</button>
       <button class="ghost-btn" id="menuBtn">メニュー</button>
     </div>
   </div>
