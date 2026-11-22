@@ -7,15 +7,15 @@
 
 ---
 
-## 0. ゲーム一覧と最新ブランチ（2026-11-21 時点）
+## 0. ゲーム一覧と最新ブランチ（2026-11-22 時点）
 
 | フォルダ | タイトル | アーティファクト URL | 最新コードのブランチ | `main` との関係 |
 | --- | --- | --- | --- | --- |
-| `climb/` | DEATH ZONE 8000（高所登山） | https://claude.ai/artifact/Y6AmowkXBB8HND5EP9osHX | `ccr-1b79a73c-q3y30y` | main より 32 コミット先（キャンプ・犬・遺品・評価など） |
-| `racing/` | APEX LINE（GT・ラリー・ロードバイク） | https://claude.ai/artifact/UB1cbzTRiNqA9dTLkbRodb | `ccr-4a7da7a1-rd8ajk` | main より先（ラリー・バイク・ガレージ・ドリフト・性能パーツ・金メダル基準の難易度・ジャンプ着地のカメラなど） |
-| `dive/` | BLUE DEPTHS（ダイビング図鑑） | https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk | `ccr-2bee8574-gjeaau` | main より先（ナイトダイブのリスク・水中ライト・夜専用種と光景・ウミガメ追従・1 ダイブ 1 種 1 回の売上・海面の見え方） |
+| `climb/` | DEATH ZONE 8000（高所登山） | https://claude.ai/artifact/Y6AmowkXBB8HND5EP9osHX | `main` | main に統合済み（2026-11-22、PR #11。キャンプ・犬・遺品・評価・コジオスコのチュートリアルなど） |
+| `racing/` | APEX LINE（GT・ラリー・ロードバイク） | https://claude.ai/artifact/UB1cbzTRiNqA9dTLkbRodb | `main` | main に統合済み（2026-11-22、PR #10・#12。ラリー・バイク・ガレージ・ドリフト・性能パーツ・金メダル基準の難易度・ジャンプ着地のカメラ・CPUコーナー最終調整など） |
+| `dive/` | BLUE DEPTHS（ダイビング図鑑） | https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk | `main` | main に統合済み（2026-11-22、PR #10。ナイトダイブのリスク・水中ライト・夜専用種と光景・ウミガメ追従・1ダイブ1種1回の売上・海面の見え方など） |
 | `kanken/` | 漢検ランダム漢字 | （未公開） | `main` | 同じ |
-| このドキュメント | README.md / CLAUDE.md / scripts/ | — | `ccr-084c01d7-stoku4` | main より先（未マージ） |
+| このドキュメント | README.md / CLAUDE.md / scripts/ | — | `main` | 統合済み |
 
 **この表は古くなる**。実際の最新は次のコマンドで確かめる（フォルダごとに、最新コミットを含むリモートブランチを表示）：
 
@@ -77,7 +77,7 @@ bash scripts/latest-branches.sh climb      # 1 つだけ
 ### climb/ — DEATH ZONE 8000（Three.js + TypeScript + Vite、port 5188）
 
 一人称でエベレスト南東稜・K2 アブルッツィ稜を登る。酸素流量と SpO₂、体温・凍傷、HACE、フィックスロープのクリップ／付け替え、滑落停止、天候、セラック崩落、キャンプ（食事・報奨金）、犬、遺品と記録帳、区間評価と自己ベスト、チェックポイント再開。
-説明: `climb/README.md`、設計と桜井流レビュー: `climb/DESIGN.md`。以下は最新ブランチ `ccr-1b79a73c-q3y30y` の構成。
+説明: `climb/README.md`、設計と桜井流レビュー: `climb/DESIGN.md`。以下は `main` の構成。
 
 | ファイル | 役割 |
 | --- | --- |
@@ -96,7 +96,7 @@ bash scripts/latest-branches.sh climb      # 1 つだけ
 | `src/ui/CampScreen.ts` / `CampScene3D.ts` | キャンプ画面（到着演出・食事・犬・記録帳・C4 の酸素選択）と 3D の夜のキャンプ |
 | `src/ui/MapView.ts` | ルート地図と標高プロファイル |
 | `src/ui/Radio.ts` | BC 無線のセリフ |
-| `src/ui/Tutorial.ts` | HUD のコーチマーク |
+| `src/game/Coach.ts` | コジオスコ練習ステージのレッスン（12 個）とカード。`Mountains.ts` の `TUTORIAL_STAGE` が地形 |
 | `src/world/Terrain.ts` / `TerrainTextures.ts` / `NearGround.ts` | 山の高さ場（尾根＋ノイズ＋クレバス）、地形テクスチャ、足元の細かい起伏 |
 | `src/world/Route.ts` | 歩くライン・フィックスロープ・アンカー・ランドマーク位置 |
 | `src/world/Props.ts` | 岩・セラック・テント・ハシゴ・ボンベなどの配置とハザード |
@@ -109,12 +109,12 @@ bash scripts/latest-branches.sh climb      # 1 つだけ
 | `tests/visual.spec.ts` | Playwright の見た目確認。`bot-playtest.template.ts` は自動プレイのひな形 |
 | `scripts/make-artifact.mjs` | ビルドを 1 ファイルの HTML にまとめる |
 
-テスト用フック: `window.__THREE_GAME_TEST_HOOKS__.setState(name)` で `title` / `night-start` / `active-play` / `ridge` / `k2-bottleneck` / `storm` / `fail` / `summit` に直接移動できる。
+テスト用フック: `window.__THREE_GAME_TEST_HOOKS__.setState(name)` で `title` / `night-start` / `active-play` / `ridge` / `k2-bottleneck` / `storm` / `fail` / `summit`、チュートリアルの `tutorial` / `tutorial-summit` に直接移動できる。
 
 ### racing/ — APEX LINE（Three.js + 素の JS ES モジュール、ビルドなし）
 
 GT サーキット（レース／ゴースト付きタイムアタック）、ラリー（路面とペースノート）、ロードバイク（W' とスリップストリーム）。ドリフトターボ、ショートカット、ジャンプ台、自動復帰、コインとガレージ（見た目のみ）。
-説明: `racing/README.md`。以下は最新ブランチ `ccr-13bfe4f4-cpifvy` の構成（`main` には `js/game/`・ガレージ・ラリー・バイクがまだない）。
+説明: `racing/README.md`。以下は `main` の構成。
 
 | ファイル | 役割 |
 | --- | --- |
