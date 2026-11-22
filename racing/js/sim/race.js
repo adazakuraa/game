@@ -77,21 +77,15 @@ export function calibrate(track) {
   }
   setAIProfile(track, trace, 0, track.N);
   const botLap = crosses.length === 2 ? crosses[1] - crosses[0] : track.profileLapTime * 1.08;
-  const aiLap = measureAI(track, 1.0, 1) ?? track.profileLapTime;
+  const aiLap = measureAI(track, 1.0) ?? track.profileLapTime;
   track.calib = { botLap, aiLap };
   return track.calib;
 }
 
-// CPU の調整値。遅さ（pace < 1）をコーナー速度と加速に振り分ける。
-// cornerShare = 遅さのうちコーナー速度で払う割合（残りは加速の弱さで払う）
-export const AI_PACE = { cornerShare: 0.3, minAccelK: 0.35, maxAccelK: 1.6 };
-
-// 先頭ノイズなしの CPU が 1 周（セクションはスタートライン通過からゴール）にかかる時間を測る
-function measureAI(track, cornerPace, accelK) {
+// 先頭ノイズなしの CPU（pace）が 1 周（セクションはスタートライン通過からゴール）にかかる時間を測る
+function measureAI(track, pace) {
   const dt = 1 / 120;
-  const ai = new AICar(track, cornerPace, 1);
-  ai.cornerPace = cornerPace;
-  ai.accelK = accelK;
+  const ai = new AICar(track, pace, 1, undefined, true); // 最低速度なしで測る（直線のペースを変えないため）
   ai.noise.fill(0);
   ai.lineBias = 0;
   if (track.stageEnd) {
@@ -117,49 +111,6 @@ function measureAI(track, cornerPace, accelK) {
     prev = ai.s;
   }
   return crosses.length === 2 ? crosses[1] - crosses[0] : null;
-}
-
-// pace（一律スケール時の速さ）と同じタイムになる { cornerPace, accelK } を求める
-const paceCache = new WeakMap();
-export function aiPaceParams(track, pace) {
-  let m = paceCache.get(track);
-  if (!m) paceCache.set(track, (m = new Map()));
-  const key = pace.toFixed(4);
-  if (m.has(key)) return m.get(key);
-  const cal = calibrate(track);
-  const target = cal.aiLap / pace;
-  const { cornerShare, minAccelK, maxAccelK } = AI_PACE;
-  const cp0 = Math.min(1, 1 - (1 - pace) * cornerShare);
-  let res;
-  const tHi = measureAI(track, cp0, maxAccelK), tLo = measureAI(track, cp0, minAccelK);
-  if (tHi == null || tLo == null) res = { cornerPace: pace, accelK: 1 };
-  else if (tHi > target) {
-    // 加速を最大にしても遅すぎる（pace > 1 の一部コース）: コーナー速度を pace まで上げて合わせる
-    let lo = cp0, hi = Math.max(cp0, pace);
-    for (let k = 0; k < 8; k++) {
-      const mid = (lo + hi) / 2;
-      if (measureAI(track, mid, maxAccelK) > target) lo = mid; else hi = mid;
-    }
-    res = { cornerPace: (lo + hi) / 2, accelK: maxAccelK };
-  }
-  else if (tLo <= target) {
-    // 加速を最小にしても速すぎる: コーナー速度を下げて合わせる（下限は pace）
-    let lo = Math.min(pace, cp0), hi = cp0;
-    for (let k = 0; k < 8; k++) {
-      const mid = (lo + hi) / 2;
-      if (measureAI(track, mid, minAccelK) > target) lo = mid; else hi = mid; // 遅すぎ → 上げる
-    }
-    res = { cornerPace: (lo + hi) / 2, accelK: minAccelK };
-  } else {
-    let lo = minAccelK, hi = maxAccelK;
-    for (let k = 0; k < 8; k++) {
-      const mid = (lo + hi) / 2;
-      if (measureAI(track, cp0, mid) > target) lo = mid; else hi = mid; // 遅すぎ → 加速を上げる
-    }
-    res = { cornerPace: cp0, accelK: (lo + hi) / 2 };
-  }
-  m.set(key, res);
-  return res;
 }
 
 export { STAGE_START };
@@ -209,7 +160,7 @@ function calibrateSection(track) {
   }
   setAIProfile(track, trace, Math.round(S0 / track.ds), track.stageN);
   const botLap = t - (t0 ?? 0);
-  const aiLap = measureAI(track, 1.0, 1) ?? botLap;
+  const aiLap = measureAI(track, 1.0) ?? botLap;
   return { botLap, aiLap };
 }
 
@@ -399,12 +350,6 @@ export class Race extends RaceBase {
       // グリッド: 先頭から AI、プレイヤーは最後尾
       const paces = DRIVERS.map((_, i) => top - i * diff.spread);
       // 速い順に並べずに少し混ぜる
-      // CPU の遅さはコーナー速度ではなく加速に多く割り当てる（先頭と最後尾だけ解いて間は線形補間）
-      const pTop = aiPaceParams(track, paces[0]), pLast = aiPaceParams(track, paces[n - 1]);
-      const paramsOf = (i) => {
-        const f = n > 1 ? i / (n - 1) : 0;
-        return { cornerPace: pTop.cornerPace + (pLast.cornerPace - pTop.cornerPace) * f, accelK: pTop.accelK + (pLast.accelK - pTop.accelK) * f };
-      };
       const order = [0, 2, 1, 3, 5, 4, 6];
       // セクションコースは1本勝負なので、プレイヤーは中団（5番手）から
       const pSlot = this.stage ? 4 : n;
@@ -412,9 +357,6 @@ export class Race extends RaceBase {
       for (let g = 0; g < n; g++) {
         const di = order[g];
         const ai = new AICar(track, paces[di], 1000 + di * 77);
-        const pp = paramsOf(di);
-        ai.cornerPace = pp.cornerPace;
-        ai.accelK = pp.accelK;
         ai.driftSkill = diff.drift ?? 0;
         ai.scChance = diff.shortcut ?? 0;
         const slot = g < pSlot ? g : g + 1;
