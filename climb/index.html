@@ -23,6 +23,7 @@
             <span id="clock-value">03:00</span>
             <span class="sep"></span>
             <span id="turn-value">折返 14:00</span>
+            <span id="pace-value"></span>
           </div>
           <div id="next-mark"><span class="arrow">▲</span> <span id="next-name">バルコニー</span> <b id="next-dist">320m</b></div>
           <div id="progress"><div id="progress-fill"></div><div id="progress-marks"></div></div>
@@ -60,11 +61,23 @@
           </div>
         </div>
 
+        <button id="map-btn" class="icon-btn" type="button" aria-label="地図を開く">
+          <svg viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z" fill="none" stroke-width="2"/><path d="M9 4v14M15 6v14" fill="none" stroke-width="2"/></svg>
+        </button>
         <button id="pause-btn" class="icon-btn" type="button" aria-label="一時停止">
           <svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
         </button>
 
+        <div id="coach" class="hidden" aria-live="polite">
+          <div class="coach-head"><span id="coach-count">1 / 12</span><b id="coach-title"></b><i class="coach-check">✓</i></div>
+          <p id="coach-body"></p>
+          <div id="coach-bar"><i></i></div>
+        </div>
         <div id="banner"></div>
+        <div id="radio" class="hidden" role="status">
+          <svg viewBox="0 0 24 24" class="radio-ico"><rect x="5" y="8" width="14" height="13" rx="2"/><path d="M8 8l8-5M9 13h6M9 17h6"/></svg>
+          <div><b id="radio-from">BC</b><span id="radio-text"></span></div>
+        </div>
         <div id="prompt"></div>
         <div id="clip-status"><span class="dot"></span><span id="clip-text">未確保</span></div>
 
@@ -92,16 +105,11 @@
           </header>
           <div id="mountain-cards"></div>
           <div class="options">
-            <label>予備ボンベ
-              <select id="opt-bottles">
-                <option value="0">0本</option>
-                <option value="1" selected>1本</option>
-                <option value="2">2本</option>
-              </select>
-            </label>
             <label class="check"><input type="checkbox" id="opt-sound" checked /> サウンド</label>
           </div>
-          <button id="start-btn" class="primary" type="button">サミットプッシュ開始</button>
+          <button id="tutorial-btn" class="primary" type="button">コジオスコで練習（チュートリアル・約5分）</button>
+          <button id="continue-btn" class="primary hidden" type="button">続きから</button>
+          <button id="start-btn" class="primary" type="button">ベースキャンプから遠征開始</button>
           <details class="controls">
             <summary>操作方法</summary>
             <div class="ctl-grid">
@@ -117,8 +125,39 @@
         <div class="panel">
           <h2>一時停止</h2>
           <button id="resume-btn" class="primary" type="button">再開</button>
-          <button id="restart-btn" type="button">C4からやり直す</button>
+          <button id="restart-btn" type="button">この区間をやり直す</button>
           <button id="quit-btn" type="button">山を選び直す</button>
+        </div>
+      </section>
+
+      <section id="arrive" class="hidden" aria-live="polite">
+        <div class="arrive-glow"></div>
+        <div id="arrive-flags"></div>
+        <div class="arrive-inner">
+          <p id="arrive-kicker" class="kicker"></p>
+          <h2 id="arrive-title"></h2>
+          <p id="arrive-sub"></p>
+          <div id="arrive-stamp"></div>
+          <div id="arrive-money"></div>
+          <div id="arrive-dog" class="hidden"></div>
+        </div>
+        <p class="tapnote">タップで続ける</p>
+      </section>
+
+      <section id="camp" class="screen hidden">
+        <div class="camp-wrap">
+          <div id="camp-scene" class="camp-scene"></div>
+          <div id="camp-side" class="camp-side"></div>
+        </div>
+      </section>
+
+      <section id="lore" class="screen hidden">
+        <div class="panel lore-panel">
+          <p class="kicker" id="lore-item"></p>
+          <h2 id="lore-title"></h2>
+          <p id="lore-body"></p>
+          <p id="lore-note" class="lore-note"></p>
+          <button id="lore-close" class="primary" type="button">しまって先へ進む</button>
         </div>
       </section>
 
@@ -128,8 +167,26 @@
           <h2 id="result-title"></h2>
           <p id="result-desc"></p>
           <dl id="result-stats"></dl>
+          <div id="result-extra" class="hidden"></div>
           <button id="result-primary" class="primary" type="button">再挑戦</button>
+          <button id="result-camp" class="hidden" type="button"></button>
+          <button id="result-rest" class="hidden" type="button">休養して高度順応（+1日）</button>
           <button id="result-secondary" type="button">山を選び直す</button>
+        </div>
+      </section>
+
+      <section id="map-overlay" class="hidden" aria-label="地図">
+        <div class="map-panel">
+          <header class="map-head">
+            <h2 id="map-title">地図</h2>
+            <button id="map-close" type="button" aria-label="地図を閉じる">閉じる</button>
+          </header>
+          <canvas id="map-canvas" width="512" height="512"></canvas>
+          <div class="map-legend">
+            <span><i class="lg route"></i>ルート</span><span><i class="lg rope"></i>フィックスロープ</span>
+            <span><i class="lg ladder"></i>ハシゴ</span><span><i class="lg hazard"></i>落下物の危険帯</span>
+          </div>
+          <canvas id="profile-canvas" width="600" height="120"></canvas>
         </div>
       </section>
 

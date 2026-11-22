@@ -10,12 +10,13 @@ export interface Intents {
   o2Up: boolean;
   o2Down: boolean;
   pausePressed: boolean;
+  mapPressed: boolean;
 }
 
 export class Input {
   readonly intents: Intents = {
     moveX: 0, moveY: 0, lookX: 0, lookY: 0, rest: false,
-    clipPressed: false, interactPressed: false, o2Up: false, o2Down: false, pausePressed: false,
+    clipPressed: false, interactPressed: false, o2Up: false, o2Down: false, pausePressed: false, mapPressed: false,
   };
   private keys = new Set<string>();
   private stickId: number | null = null;
@@ -58,7 +59,7 @@ export class Input {
   }
 
   /** Bind a DOM button to an intent (press edge or hold). */
-  bindButton(el: HTMLElement, kind: 'clip' | 'interact' | 'rest' | 'o2Up' | 'o2Down' | 'pause'): void {
+  bindButton(el: HTMLElement, kind: 'clip' | 'interact' | 'rest' | 'o2Up' | 'o2Down' | 'pause' | 'map'): void {
     const down = (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
@@ -69,6 +70,7 @@ export class Input {
       else if (kind === 'o2Up') this.intents.o2Up = true;
       else if (kind === 'o2Down') this.intents.o2Down = true;
       else if (kind === 'pause') this.intents.pausePressed = true;
+      else if (kind === 'map') this.intents.mapPressed = true;
       try { (el as HTMLElement).setPointerCapture((e as PointerEvent).pointerId); } catch { /* ignore */ }
     };
     const up = (e: Event) => {
@@ -97,6 +99,7 @@ export class Input {
         if (code === 'KeyX' || code === 'Equal') this.intents.o2Up = true;
         if (code === 'KeyZ' || code === 'Minus') this.intents.o2Down = true;
         if (code === 'Escape' || code === 'KeyP') this.intents.pausePressed = true;
+        if (code === 'KeyM') this.intents.mapPressed = true;
       }
       this.keys.add(code);
       if (code === 'Space' || code.startsWith('Arrow')) e.preventDefault();
@@ -109,7 +112,14 @@ export class Input {
     if (!this.enabled) return;
     if (e.pointerType === 'mouse') {
       if (document.pointerLockElement !== this.canvas) {
-        this.canvas.requestPointerLock?.();
+        try {
+          const r = this.canvas.requestPointerLock?.() as unknown;
+          if (r && typeof (r as Promise<void>).catch === 'function') (r as Promise<void>).catch(() => undefined);
+        } catch { /* pointer lock unavailable: drag-to-look below */ }
+        // Drag-to-look fallback while unlocked.
+        this.lookId = e.pointerId;
+        this.lookLast = { x: e.clientX, y: e.clientY };
+        try { this.surface.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       }
       return;
     }
@@ -194,6 +204,7 @@ export class Input {
     i.o2Up = false;
     i.o2Down = false;
     i.pausePressed = false;
+    i.mapPressed = false;
     i.lookX = 0;
     i.lookY = 0;
   }

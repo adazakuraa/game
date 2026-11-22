@@ -10,6 +10,8 @@ export interface HudData {
   altitude: number;
   hours: number;
   turnaround: number;
+  turnLabel: string;
+  hasO2: boolean;
   nextName: string;
   nextDist: number;
   progress: number;
@@ -31,18 +33,23 @@ export interface HudData {
   restAxe: boolean;
   interact: string | null;
   prompt: string;
+  /** Pace against the guide standard (empty = hidden). */
+  paceText: string;
+  paceTone: '' | 'ahead' | 'behind';
 }
 
 export function formatClock(hours: number): string {
-  const h = Math.floor(hours) % 24;
-  const m = Math.floor((hours - Math.floor(hours)) * 60);
+  // Hours may be negative (the night before, e.g. -1 = 23:00) or run past midnight.
+  const wrapped = ((hours % 24) + 24) % 24;
+  const h = Math.floor(wrapped);
+  const m = Math.floor((wrapped - h) * 60);
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 export class Hud {
   readonly root = $('hud');
   private readonly el = {
-    alt: $('alt-value'), clock: $('clock-value'), turn: $('turn-value'), nextName: $('next-name'),
+    alt: $('alt-value'), clock: $('clock-value'), turn: $('turn-value'), pace: $('pace-value'), nextName: $('next-name'),
     nextDist: $('next-dist'), progFill: $('progress-fill'), progMarks: $('progress-marks'),
     spo2: $('spo2-value'), hr: $('hr-value'), stam: $('stam-fill'), temp: $('temp-value'), frost: $('frost-value'),
     o2: $('o2-fill'), spare: $('spare-value'), flow: $('flow-value'), wind: $('wind-value'), amb: $('temp-amb'),
@@ -79,8 +86,11 @@ export class Hud {
     this.set('alt', e.alt, Math.round(d.altitude).toLocaleString('en-US'));
     this.set('clock', e.clock, formatClock(d.hours));
     const late = d.hours >= d.turnaround;
-    this.set('turn', e.turn, late ? '折返時刻超過' : `折返 ${formatClock(d.turnaround)}`);
+    this.set('turn', e.turn, late ? `${d.turnLabel}を過ぎた` : `${d.turnLabel} ${formatClock(d.turnaround)}`);
+    this.cls('o2vis', this.root, d.hasO2 ? '' : 'no-o2', ['no-o2']);
     this.cls('turnc', e.turn, late ? 'late' : '', ['late']);
+    this.set('pace', e.pace, d.paceText);
+    this.cls('pacec', e.pace, d.paceTone, ['ahead', 'behind']);
     this.set('nextName', e.nextName, d.nextName);
     this.set('nextDist', e.nextDist, `${Math.max(0, Math.round(d.nextDist))}m`);
     e.progFill.style.width = `${(d.progress * 100).toFixed(1)}%`;

@@ -9,7 +9,6 @@ export class Audio {
   private windHighFilter!: BiquadFilterNode;
   private hissGain!: GainNode;
   private droneGain!: GainNode;
-  private lastBreath = 0;
   private lastHeart = 0;
   muted = false;
 
@@ -157,17 +156,7 @@ export class Audio {
     this.hissGain.gain.setTargetAtTime(p.flow > 0 ? 0.004 + p.flow * 0.0015 : 0, now, 0.2);
     this.droneGain.gain.setTargetAtTime(p.drone * 0.18, now, 2.0);
 
-    // Breathing through the mask: inhale at phase 0, exhale at 0.45.
-    const ph = p.breathPhase;
-    if (ph < this.lastBreath) {
-      const len = Math.min(1.2, 60 / p.breathRate * 0.42);
-      this.burst({ dur: len, freq: 1400 + p.effort * 400, q: 0.8, gain: 0.05 + p.effort * 0.09, attack: len * 0.5, rate: 0.8 });
-    }
-    if (this.lastBreath < 0.45 && ph >= 0.45) {
-      const len = Math.min(1.3, 60 / p.breathRate * 0.5);
-      this.burst({ dur: len, freq: 650 + p.effort * 200, q: 0.7, gain: 0.06 + p.effort * 0.11, attack: 0.05, rate: 0.7 });
-    }
-    this.lastBreath = ph;
+    // Breathing sounds were removed at the player's request; heartbeat stays.
 
     if (p.heartLoud > 0.02 && p.heartPhase < this.lastHeart) {
       this.tone(58, 0.16, 0.25 * p.heartLoud, 'sine', now, 40);
@@ -219,6 +208,43 @@ export class Audio {
     this.burst({ t: t + 0.3, dur: 3.5, freq: 120, q: 0.5, gain: 0.7, attack: 0.4, type: 'lowpass', rate: 0.5 });
   }
 
+  /** Radio squelch + beep before a base-camp call. */
+  radio(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst({ t, dur: 0.25, freq: 2200, q: 0.6, gain: 0.08, attack: 0.005 });
+    this.tone(1250, 0.09, 0.05, 'square', t + 0.05);
+    this.tone(1650, 0.09, 0.04, 'square', t + 0.16);
+    this.burst({ t: t + 0.3, dur: 2.4, freq: 1800, q: 0.4, gain: 0.012, attack: 0.1 });
+  }
+
+  /** Far-off avalanche roar; quieter the farther away. */
+  avalanche(distance: number): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const g = Math.max(0.12, 0.6 - distance / 1500);
+    this.burst({ t, dur: 7, freq: 90, q: 0.5, gain: g, attack: 1.2, type: 'lowpass', rate: 0.4 });
+    this.burst({ t: t + 0.4, dur: 6, freq: 350, q: 0.5, gain: g * 0.4, attack: 1.5, type: 'lowpass', rate: 0.6 });
+  }
+
+  /** Glacier ice settling: a sharp crack and a low boom. */
+  iceCrack(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst({ t, dur: 0.09, freq: 2600, q: 3, gain: 0.3, attack: 0.001 });
+    this.tone(60, 0.6, 0.25, 'sine', t + 0.02, 30);
+    this.burst({ t: t + 0.05, dur: 0.8, freq: 180, q: 0.7, gain: 0.25, attack: 0.01, type: 'lowpass' });
+  }
+
+  rockfall(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < 9; i++) {
+      this.burst({ t: t + i * 0.13 + Math.random() * 0.08, dur: 0.07, freq: 700 + Math.random() * 1500, q: 4, gain: 0.3, attack: 0.002 });
+    }
+    this.burst({ t: t + 0.2, dur: 1.8, freq: 300, q: 0.6, gain: 0.25, attack: 0.1, type: 'lowpass' });
+  }
+
   valve(): void {
     this.burst({ dur: 0.6, freq: 6000, q: 0.8, gain: 0.08, attack: 0.02, type: 'highpass' });
     this.tone(900, 0.08, 0.04, 'square');
@@ -227,6 +253,65 @@ export class Audio {
   alarm(): void {
     this.tone(880, 0.12, 0.05, 'triangle');
     this.tone(660, 0.12, 0.05, 'triangle', (this.ctx?.currentTime ?? 0) + 0.15);
+  }
+
+  /** Short rising chime: a tense moment is over (praise). */
+  cleared(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(587.3, 0.35, 0.07, 'triangle', t);
+    this.tone(880, 0.6, 0.07, 'triangle', t + 0.12);
+  }
+
+  /** "Wan!" — a short bark from the dog (pitch slides down, a little throaty noise). */
+  bark(near = 1): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (const [dt, f] of [[0, 620], [0.2, 560]] as const) {
+      this.tone(f, 0.13, 0.09 * near, 'sawtooth', t + dt, f * 0.55);
+      this.burst({ t: t + dt, dur: 0.12, freq: 900, q: 1.2, gain: 0.08 * near, attack: 0.005 });
+    }
+  }
+
+  /** Noodle slurp: a rising airy whoosh. */
+  slurp(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst({ t, dur: 0.55, freq: 1800, q: 2.5, gain: 0.09, attack: 0.08, rate: 1.4 });
+    this.burst({ t: t + 0.15, dur: 0.4, freq: 2600, q: 3, gain: 0.06, attack: 0.05, rate: 1.7 });
+  }
+
+  /** Crunch / chew. */
+  munch(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst({ t, dur: 0.08, freq: 2400, q: 0.8, gain: 0.1, attack: 0.003 });
+    this.burst({ t: t + 0.11, dur: 0.07, freq: 2000, q: 0.8, gain: 0.08, attack: 0.003 });
+  }
+
+  /** Warm gulp of tea. */
+  gulp(): void {
+    this.tone(180, 0.18, 0.08, 'sine', undefined, 120);
+  }
+
+  /** Coin counter tick. */
+  coin(): void {
+    this.tone(1568, 0.08, 0.035, 'square');
+    this.tone(2093, 0.12, 0.03, 'triangle');
+  }
+
+  /** Camp arrival: a short bright fanfare. */
+  fanfare(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    [[523.3, 0], [659.3, 0.12], [784, 0.24], [1046.5, 0.4]].forEach(([f, d]) => this.tone(f, d === 0.4 ? 1.4 : 0.3, 0.07, 'triangle', t + d));
+    [261.6, 329.6, 392].forEach((f) => this.tone(f, 1.8, 0.035, 'sine', t + 0.4));
+  }
+
+  /** The grade stamp hitting the paper. */
+  stamp(): void {
+    this.burst({ dur: 0.18, freq: 220, q: 0.7, gain: 0.35, attack: 0.002, type: 'lowpass' });
+    this.tone(90, 0.2, 0.15, 'sine', undefined, 55);
   }
 
   summit(): void {

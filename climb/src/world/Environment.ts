@@ -16,6 +16,7 @@ uniform vec3 uSunDir;
 uniform vec3 uMoonDir;
 uniform float uTime;
 uniform float uStorm;
+uniform float uCirrus;
 float h31(vec3 p){ p = fract(p*vec3(443.897,441.423,437.195)); p += dot(p, p.yzx+19.19); return fract((p.x+p.y)*p.z); }
 float vnoise(vec3 p){ vec3 i=floor(p); vec3 f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(mix(h31(i),h31(i+vec3(1,0,0)),f.x),mix(h31(i+vec3(0,1,0)),h31(i+vec3(1,1,0)),f.x),f.y),
@@ -27,7 +28,7 @@ void main() {
   float up = max(d.y, 0.0);
   float hz = pow(1.0 - up, 5.0);
   // Thin, dark high-altitude sky.
-  vec3 zenithDay = vec3(0.035, 0.11, 0.34);
+  vec3 zenithDay = vec3(0.012, 0.06, 0.30); // thin air: deep, almost navy zenith
   vec3 horizonDay = vec3(0.42, 0.56, 0.74);
   vec3 zenithNight = vec3(0.0025, 0.004, 0.012);
   vec3 horizonNight = vec3(0.012, 0.018, 0.035);
@@ -43,22 +44,11 @@ void main() {
   float sunVis = smoothstep(-0.03, 0.01, sy);
   col += vec3(1.0, 0.9, 0.75) * smoothstep(0.99965, 0.99985, cs) * 60.0 * sunVis;
   col += vec3(1.0, 0.8, 0.6) * (pow(max(cs,0.0), 600.0) * 4.0 + pow(max(cs,0.0), 24.0) * 0.35) * sunVis;
-  // Stars and Milky Way at night.
+  // Moon (stars are drawn as real points, see Environment.stars).
   float night = 1.0 - smoothstep(-0.18, 0.02, sy);
   if (night > 0.001 && d.y > -0.05) {
-    vec3 sp = d * 260.0;
-    vec3 cell = floor(sp);
-    float h = h31(cell);
-    vec3 fp = fract(sp) - 0.5;
-    float star = smoothstep(0.08, 0.0, length(fp)) * step(0.985, h) * (h - 0.985) * 70.0;
-    float tw2 = 0.6 + 0.4 * sin(uTime * 3.0 + h * 400.0);
-    vec3 mwAxis = normalize(vec3(0.4, 0.3, 0.86));
-    float band = exp(-pow(dot(d, mwAxis) * 3.2, 2.0));
-    float mw = band * (0.5 * vnoise(d * 9.0) + 0.3 * vnoise(d * 23.0) + 0.2);
-    col += night * (vec3(0.85, 0.9, 1.0) * star * tw2 * smoothstep(-0.05, 0.15, d.y) + vec3(0.03, 0.035, 0.05) * mw);
-    // Moon
     float cm = dot(d, uMoonDir);
-    col += night * vec3(0.9, 0.92, 1.0) * (smoothstep(0.99975, 0.9999, cm) * 6.0 + pow(max(cm,0.0), 80.0) * 0.08);
+    col += night * vec3(0.9, 0.92, 1.0) * (smoothstep(0.99975, 0.9999, cm) * 6.0 + pow(max(cm, 0.0), 80.0) * 0.06);
   }
   // Storm: flat grey overcast.
   vec3 stormCol = mix(vec3(0.02,0.025,0.03), vec3(0.42,0.45,0.5), day);
@@ -138,12 +128,20 @@ export class Environment {
   };
   private readonly skyMat: THREE.ShaderMaterial;
   private readonly cloudMat: THREE.ShaderMaterial;
+  private readonly stars: THREE.Points;
+  private readonly starMat: THREE.ShaderMaterial;
   private readonly moonDir = new THREE.Vector3(-0.55, 0.45, 0.35).normalize();
   private readonly lightDir = new THREE.Vector3();
-  readonly cloudY: number;
+  cloudY: number;
+  /** cirrus cover 0..1, varies by day */
+  cirrus = 0.6;
+  private readonly baseCloudY: number;
+  private cloudMesh!: THREE.Mesh;
+  private distant!: THREE.Mesh;
 
   constructor(cloudY: number, seed: number, mobile: boolean) {
     this.cloudY = cloudY;
+    this.baseCloudY = cloudY;
     this.group.name = 'environment';
     this.skyMat = new THREE.ShaderMaterial({
       vertexShader: SKY_VERT,
@@ -153,6 +151,7 @@ export class Environment {
         uMoonDir: { value: this.moonDir },
         uTime: { value: 0 },
         uStorm: { value: 0 },
+        uCirrus: { value: 0.6 },
       },
       side: THREE.BackSide,
       depthWrite: false,
@@ -163,6 +162,53 @@ export class Environment {
     sky.frustumCulled = false;
     sky.renderOrder = -10;
     this.group.add(sky);
+
+    // Stars as points: crisp on every GPU (no noise-hash precision issues).
+    const n = mobile ? 1800 : 2600;
+    const sp = new Float32Array(n * 3);
+    const sz = new Float32Array(n);
+    let k = 0;
+    let seedS = 12345;
+    const rnd = () => { seedS = (seedS * 16807) % 2147483647; return seedS / 2147483647; };
+    while (k < n) {
+      const u = rnd() * 2 - 1, a = rnd() * Math.PI * 2;
+      const r = Math.sqrt(1 - u * u);
+      const y = u;
+      if (y < -0.05) continue;
+      sp[k * 3] = r * Math.cos(a); sp[k * 3 + 1] = y; sp[k * 3 + 2] = r * Math.sin(a);
+      // brightness: many faint stars, few bright ones
+      sz[k] = Math.pow(rnd(), 6) * 2.6 + 0.6;
+      k++;
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    sg.setAttribute('aSize', new THREE.BufferAttribute(sz, 1));
+    this.starMat = new THREE.ShaderMaterial({
+      uniforms: { uNight: { value: 0 }, uTime: { value: 0 } },
+      vertexShader: `attribute float aSize; uniform float uTime; varying float vB;
+        void main(){
+          vec4 p = projectionMatrix * viewMatrix * vec4((modelMatrix * vec4(position, 1.0)).xyz, 1.0);
+          gl_Position = p.xyww;
+          float tw = 0.75 + 0.25 * sin(uTime * 2.3 + position.x * 91.0 + position.z * 57.0);
+          vB = aSize * tw * smoothstep(-0.02, 0.15, position.y);
+          gl_PointSize = 1.2 + aSize * 1.1;
+        }`,
+      fragmentShader: `uniform float uNight; varying float vB;
+        void main(){
+          vec2 c = gl_PointCoord - 0.5;
+          float a = smoothstep(0.5, 0.0, length(c));
+          gl_FragColor = vec4(vec3(0.85, 0.9, 1.0) * vB * 0.9, a * uNight);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.stars = new THREE.Points(sg, this.starMat);
+    this.stars.scale.setScalar(19000);
+    this.stars.frustumCulled = false;
+    this.stars.renderOrder = -9;
+    this.stars.name = 'stars';
+    this.group.add(this.stars);
 
     this.cloudMat = new THREE.ShaderMaterial({
       vertexShader: CLOUD_VERT,
@@ -182,8 +228,10 @@ export class Environment {
     clouds.name = 'cloudSea';
     clouds.position.y = cloudY;
     this.group.add(clouds);
+    this.cloudMesh = clouds;
 
-    this.group.add(this.buildDistantRange(seed, mobile));
+    this.distant = this.buildDistantRange(seed, mobile);
+    this.group.add(this.distant);
 
     this.sun.castShadow = true;
     const sm = mobile ? 1024 : 2048;
@@ -260,10 +308,25 @@ export class Environment {
       col[k * 3 + 2] = rock * 1.05 + (0.96 - rock * 1.05) * snow;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    // Attributes the shared terrain shader expects (no cavities or crevasses this far away).
+    geo.setAttribute('aAO', new THREE.BufferAttribute(new Float32Array(nrm.count).fill(1), 1));
+    geo.setAttribute('aCrev', new THREE.BufferAttribute(new Float32Array(nrm.count), 1));
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.name = 'distantRange';
     return mesh;
+  }
+
+  /** Share the stage's rock/snow terrain material with the distant skyline. */
+  setDistantMaterial(m: THREE.Material): void {
+    this.distant.material = m;
+  }
+
+  /** Move the cloud sea (and the distant skyline that rises out of it) for a new stage. */
+  setCloudY(y: number): void {
+    this.cloudY = y;
+    this.cloudMesh.position.y = y;
+    this.distant.position.y = y - this.baseCloudY;
   }
 
   /** hours: 0-24 local time. storm 0-1. */
@@ -315,6 +378,9 @@ export class Environment {
     su.uSunDir.value.copy(s);
     su.uTime.value = elapsed;
     su.uStorm.value = storm;
+    this.stars.position.copy(camera.position);
+    this.starMat.uniforms.uNight.value = (1 - smoothstep(-0.18, 0.02, s.y)) * (1 - storm);
+    this.starMat.uniforms.uTime.value = elapsed;
     const cu = this.cloudMat.uniforms;
     cu.uSunDir.value.copy(s);
     (cu.uSunCol.value as THREE.Color).copy(this.state.sunColor).multiplyScalar(sunUp * (1 - storm * 0.7));

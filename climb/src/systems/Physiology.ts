@@ -32,17 +32,26 @@ export class Physiology {
   heartPhase = 0;
   heatBalance = 0;
   regulatorFrozen = 0;
+  /** Altitude (m) the body is adapted to; climbing far above it lowers SpO2. */
+  acclim = 5600;
+  hasO2 = true;
+  /** Tonight's meal at camp, felt on the next leg. */
+  mods = { heat: 0, recover: 1, drain: 1, frost: 1 };
+  /** Extra warmth this frame (the dog curled up beside you while resting). */
+  extraHeat = 0;
 
-  reset(spares: number): void {
+  reset(spares: number, opts: { o2?: boolean; acclim?: number; frost?: number } = {}): void {
+    this.acclim = opts.acclim ?? this.acclim;
+    this.hasO2 = opts.o2 ?? true;
     this.spo2 = 80;
     this.heartRate = 96;
     this.stamina = 100;
     this.coreTemp = 36.9;
-    this.frostbite = 0;
+    this.frostbite = opts.frost ?? 0;
     this.hace = 0;
-    this.bottle = BOTTLE_LITERS;
-    this.spares = spares;
-    this.flow = 2;
+    this.bottle = this.hasO2 ? BOTTLE_LITERS : 0;
+    this.spares = this.hasO2 ? spares : 0;
+    this.flow = this.hasO2 ? 2 : 0;
     this.collapsed = false;
   }
 
@@ -69,7 +78,7 @@ export class Physiology {
     // Oxygen: each L/min roughly "lowers" the felt altitude.
     const flow = this.effectiveFlow;
     this.bottle = Math.max(0, this.bottle - flow * c.gameMinutes);
-    const effAlt = c.altitude - flow * 620;
+    const effAlt = c.altitude - flow * 620 + Math.max(0, c.altitude - this.acclim - 400) * 0.5;
     const target = Physiology.spo2ForAltitude(effAlt) - c.exertion * 7 + (c.resting ? 2 : 0);
     this.spo2 += (target - this.spo2) * Math.min(1, dt / 5);
 
@@ -85,9 +94,9 @@ export class Physiology {
 
     // Stamina.
     if (c.exertion > 0.05) {
-      this.stamina -= dt * (0.6 + 1.6 * c.exertion) * (1 + hypoxia * 1.0) * (this.coreTemp < 35 ? 1.4 : 1);
+      this.stamina -= dt * (0.6 + 1.6 * c.exertion) * (1 + hypoxia * 1.0) * (this.coreTemp < 35 ? 1.4 : 1) * this.mods.drain;
     } else {
-      const rec = (c.resting ? 10 : 6) * Math.pow(clamp(this.spo2 / 88, 0.3, 1.1), 3);
+      const rec = (c.resting ? 10 : 6) * Math.pow(clamp(this.spo2 / 88, 0.3, 1.1), 3) * this.mods.recover;
       this.stamina += dt * rec;
     }
     this.stamina = clamp(this.stamina, 0, 100);
@@ -95,14 +104,15 @@ export class Physiology {
     if (this.collapsed && this.stamina > 30) this.collapsed = false;
 
     // Heat balance: moving warms you, wind and stillness strip heat.
-    const produce = 0.45 + c.exertion * 0.8;
+    // a down suit plus moving keeps you warm; standing still in strong wind does not
+    const produce = 0.55 + c.exertion * 0.8 + this.mods.heat + this.extraHeat;
     const chill = 0.25 + Math.max(0, -c.ambientC - 25) * 0.01 + Math.pow(c.windKmh / 50, 1.3) * 0.45;
     this.heatBalance = produce - chill;
     const dT = this.heatBalance * 0.018 * dt;
     if (dT < 0 || this.coreTemp < 37) this.coreTemp = Math.min(37.0, this.coreTemp + dT);
 
     // Frostbite: extreme wind chill and exposed hands.
-    const frostRate = Math.max(0, chill - 0.9) * 0.3 + (c.handsExposed ? 1.2 : 0) + (this.coreTemp < 35 ? 0.4 : 0);
+    const frostRate = (Math.max(0, chill - 0.9) * 0.3 + (c.handsExposed ? 1.2 : 0) + (this.coreTemp < 35 ? 0.4 : 0)) * this.mods.frost;
     this.frostbite = clamp(this.frostbite + frostRate * dt, 0, 100);
 
     // HACE accumulates under sustained severe hypoxaemia.
@@ -142,6 +152,10 @@ export class Weather {
   private gustPeak = 0;
   private stormTarget = 0;
   private stormChecked = false;
+  /** Tutorial: no random gusts (they are scripted with triggerGust). */
+  calm = false;
+  /** Chance that the afternoon brings a storm (rises as the season wears on). */
+  stormChance = 0.55;
 
   constructor(private rng: () => number, private readonly baseWind: number) {}
 
@@ -152,6 +166,34 @@ export class Weather {
     this.state.storm = 0;
     this.stormTarget = 0;
     this.stormChecked = false;
+    this.state.gust = 0;
+    this.state.gustWarning = -1;
+    // Decide today's weather up front so base camp can forecast it.
+    this.willStorm = this.rng() < this.stormChance;
+    this.stormAt = 11.3 + this.rng() * 2.4;
+  }
+
+  /** Today's forecast: whether a storm comes and roughly when (local hours). */
+  willStorm = false;
+  stormAt = 12;
+
+  /** Back to an earlier moment of the same day (checkpoint retry). */
+  rewind(hours: number, storm: number): void {
+    this.stormChecked = hours > this.stormAt;
+    this.stormTarget = this.stormChecked && this.willStorm ? 0.85 : 0;
+    if (hours > 14.5) this.stormTarget = Math.max(this.stormTarget, 0.9);
+    this.state.storm = storm;
+    this.gustT = -1;
+    this.state.gust = 0;
+    this.state.gustWarning = -1;
+    this.nextGust = 15 + this.rng() * 10;
+  }
+
+  /** Start a gust now (telegraphed ~2 s ahead, like a natural one). */
+  triggerGust(peak = 0.8): void {
+    if (this.gustT >= 0) return;
+    this.gustT = 0;
+    this.gustPeak = peak;
   }
 
   forceStorm(v: number): void {
@@ -162,19 +204,20 @@ export class Weather {
   update(dt: number, hours: number, altitude: number, elapsed: number): void {
     const s = this.state;
     // Afternoon storms are a real Himalayan pattern.
-    if (!this.stormChecked && hours > 11.5) {
+    if (!this.stormChecked && hours > this.stormAt) {
       this.stormChecked = true;
-      if (this.rng() < 0.55) this.stormTarget = 0.85;
+      if (this.willStorm) this.stormTarget = 0.85;
     }
-    if (hours > 14.5) this.stormTarget = Math.max(this.stormTarget, 0.9);
+    if (hours > 14.5 && !this.calm) this.stormTarget = Math.max(this.stormTarget, 0.9);
     s.storm += (this.stormTarget - s.storm) * Math.min(1, dt / 40);
 
-    const diurnal = hours < 6 ? 6 : hours > 12 ? (hours - 12) * 4 : 0;
+    const diurnal = this.calm ? 0 : hours < 6 ? 6 : hours > 12 ? (hours - 12) * 4 : 0;
     const altK = 1 + Math.max(0, altitude - 8000) / 1500;
     const base = (this.baseWind + diurnal + Math.sin(elapsed * 0.07) * 5) * altK + s.storm * 45;
 
     // Gust cycle: warning -> gust -> calm
     this.nextGust -= dt;
+    if (this.calm) this.nextGust = Math.max(this.nextGust, 1);
     if (this.nextGust <= 0 && this.gustT < 0) {
       this.gustT = 0;
       this.gustPeak = 0.5 + this.rng() * 0.5 + s.storm * 0.3;
@@ -189,7 +232,7 @@ export class Weather {
       if (this.gustT > warn + 2.6) { this.gustT = -1; s.gust = 0; s.gustWarning = -1; }
     }
     s.windKmh = base * (1 + s.gust * 1.4);
-    const night = hours < 6 || hours > 18 ? 1 : 0;
+    const night = !this.calm && (hours < 6 || hours > 18) ? 1 : 0;
     s.ambientC = -24 - (altitude - 8000) * 0.0065 - night * 8 - s.storm * 7 - s.gust * 2;
     s.snowfall = Math.min(1, s.storm * 1.1 + s.gust * 0.5 + 0.08);
   }
