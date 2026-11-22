@@ -22,12 +22,52 @@ export const CAR_AI = {
   wheelR: 0.335,
 };
 
+// CPU の調整値
+export const AI_DRIVE = {
+  cornerGain: 1.0, // コーナーでの遅さの取り戻し（1 = コーナーは理想速度そのまま、0 = 一律ペース）
+  loFrac: 0.55, // 理想速度がコース最高速のこの割合以下 = コーナー扱い（ペースを掛けない）
+  brakeG: 1.4, // CPU の目標速度の最大減速（G）。早めにじわっとブレーキ
+  minCornerKmh: 80, // CPU のコーナーの最低速度（km/h）。物理の限界より速くても曲がれる
+};
+
+// 目標速度の配列。直線（最高速付近）は pace 倍、コーナーは理想速度に近づけ、
+// 最後に後ろ向きに減速を制限して、急ブレーキにならないようにする
+const targetCache = new WeakMap();
+export function aiTargets(tr, pace, noMin = false) {
+  let m = targetCache.get(tr);
+  if (!m) targetCache.set(tr, (m = new Map()));
+  const key = pace.toFixed(5) + (tr.aiProfile ? 'a' : 'p') + (noMin ? 'n' : '');
+  if (m.has(key)) return m.get(key);
+  const N = tr.N, base = tr.aiProfile || tr.profile, n = tr.stageEnd ? tr.stageN : N;
+  let vHi = 0;
+  for (let i = 0; i < n; i++) vHi = Math.max(vHi, base[i]);
+  const vLo = AI_DRIVE.loFrac * vHi;
+  const pc = pace < 1 ? pace + (1 - pace) * AI_DRIVE.cornerGain : pace; // pace>1 はコーナーも従来どおり pace 倍
+  const T = Float32Array.from(base);
+  for (let i = 0; i < n; i++) {
+    const w = Math.max(0, Math.min(1, (base[i] - vLo) / Math.max(vHi - vLo, 1e-6)));
+    T[i] = base[i] * (pc + (pace - pc) * w);
+  }
+  // コーナーの最低速度（直線より速くならないよう、最高速の 0.9 倍までに抑える）
+  // （noMin: ペースの較正用。最低速度なしで測り、直線の速さを以前のままにする）
+  const vMin = noMin ? 0 : Math.min(AI_DRIVE.minCornerKmh / 3.6, vHi * 0.9);
+  for (let i = 0; i < n; i++) if (T[i] < vMin) T[i] = vMin;
+  // 減速制限（グリップ gripArr は track.grip を含む）
+  const aB = (i) => AI_DRIVE.brakeG * 9.81 * (tr.gripArr ? tr.gripArr[i] : tr.grip);
+  const lim = (a, b) => { const v = Math.sqrt(T[b] * T[b] + 2 * aB(a) * tr.lineDs[a]); if (v < T[a]) T[a] = v; };
+  if (tr.stageEnd) for (let a = n - 2; a >= 0; a--) lim(a, a + 1);
+  else for (let pass = 0; pass < 2; pass++) for (let a = N - 1; a >= 0; a--) lim(a, (a + 1) % N);
+  m.set(key, T);
+  return T;
+}
+
 export class AICar {
-  constructor(track, pace, seed, spec = CAR_AI) {
+  constructor(track, pace, seed, spec = CAR_AI, noMin = false) {
     this.spec = spec;
     this.track = track;
     this.pace = pace;
     this.rng = mulberry32(seed);
+    this.T = aiTargets(track, pace, noMin); // 目標速度の配列（速度で変わるペース＋なめらかなブレーキ）
     this.s = 0;
     this.d = 0;
     this.v = 0;
@@ -85,8 +125,11 @@ export class AICar {
 
   targetSpeed(s) {
     const tr = this.track;
-    const seg = Math.floor((((s % tr.length) + tr.length) % tr.length) / (tr.length / 64));
-    return tr.sampleArr(tr.aiProfile || tr.profile, s) * this.pace * (1 + this.noise[seg]);
+    // ペースのばらつきは区間の中心どうしを線形補間（区間の境目で目標速度が段差にならないように）
+    const f = (((s % tr.length) + tr.length) % tr.length) / (tr.length / 64) - 0.5;
+    const i0 = Math.floor(f), t = f - i0;
+    const nz = this.noise[(i0 + 64) % 64] * (1 - t) + this.noise[(i0 + 65) % 64] * t;
+    return tr.sampleArr(this.T, s) * (1 + nz);
   }
 
   // others: 他車の配列（{progress, d, v, x, z}）
@@ -210,7 +253,10 @@ export class AICar {
   updateShortcut(dt) {
     const sc = this.sc, main = this.track;
     const prof = sc.aiProfile || sc.profile;
-    const vt = Math.min(sc.sampleArr(prof, this.scS + 2), sc.sampleArr(prof, this.scS + 2 + this.v * 0.05)) * this.pace;
+    let vt = Math.min(sc.sampleArr(prof, this.scS + 2), sc.sampleArr(prof, this.scS + 2 + this.v * 0.05)) * this.pace;
+    // コーナーの最低速度（その道の最高速の 0.9 倍まで）
+    if (sc.scVMin === undefined) { let hi = 0; for (let i = 0; i < sc.N; i++) hi = Math.max(hi, prof[i]); sc.scVMin = Math.min(AI_DRIVE.minCornerKmh / 3.6, hi * 0.9); }
+    vt = Math.max(vt, sc.scVMin);
     if (this.v < vt) { this.v = Math.min(vt, this.v + Math.max(0, this.spec.accel(this.v, sc.grip * 0.85)) * dt); this.throttle = 1; this.braking = 0; }
     else { this.v = Math.max(vt, this.v - this.spec.brake(sc.grip) * dt); this.throttle = 0; this.braking = 1; }
     if (this.boostT > 0) this.boostT -= dt;

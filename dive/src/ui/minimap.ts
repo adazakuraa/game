@@ -1,7 +1,8 @@
 import { ARCH, DIVE_POINTS, heightAt, rockyWeight, VENT, WORLD, WRECK, zoneAt } from '../world/layout';
 
 const RES = 2.5; // meters per map pixel
-const LANDMARKS = [
+// landmarks are not drawn on the chart (the player finds them); kept for reference
+export const LANDMARKS = [
   { x: WRECK.x, z: WRECK.z, label: '沈没船', id: 'dropoff' },
   { x: ARCH.x, z: ARCH.z, label: '岩のアーチ', id: 'rocky' },
   { x: VENT.x, z: VENT.z, label: '熱水噴出孔', id: 'deep' },
@@ -126,8 +127,23 @@ export class Minimap {
     return Math.atan2(Math.sin(yaw), -Math.cos(yaw));
   }
 
-  /** fish-finder blips, set by the game when the sonar is owned */
-  blips: { x: number; z: number; rare: boolean }[] = [];
+  /** fish-finder blips and request marks; with `r` (m) a mark is an area (the goal is somewhere inside), not a point */
+  blips: { x: number; z: number; rare: boolean; r?: number }[] = [];
+
+  /** a request area: soft fill, dashed rim, so it reads as "somewhere in here" */
+  private area(g: CanvasRenderingContext2D, sx: number, sy: number, rad: number, lw: number, t: number): void {
+    g.save();
+    g.fillStyle = 'rgba(255,200,60,0.16)';
+    g.strokeStyle = 'rgba(255,205,80,0.9)';
+    g.lineWidth = lw;
+    g.setLineDash([lw * 3, lw * 2.2]);
+    g.lineDashOffset = -t * lw * 4;
+    g.beginPath();
+    g.arc(sx, sy, rad, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.restore();
+  }
 
   update(x: number, z: number, yaw: number, boat: { x: number; z: number } | null, force = false): void {
     if (!force && this.frame++ % 4 !== 0) return;
@@ -157,21 +173,22 @@ export class Minimap {
       g.arc(sx, sy, size * 0.035, 0, Math.PI * 2);
       g.fill();
     }
+    // request areas under everything else
+    const t = performance.now() / 1000;
+    for (const b of this.blips) {
+      if (!b.r) continue;
+      const [lx, ly] = this.px(b.x, b.z);
+      this.area(g, (lx - px) * sc + size / 2, (ly - py) * sc + size / 2, Math.max(size * 0.07, (b.r / RES) * sc), 1.6 * dpr, t);
+    }
     // fish-finder blips (sonar gear): unphotographed species nearby
     for (const b of this.blips) {
+      if (b.r) continue;
       const [lx, ly] = this.px(b.x, b.z);
       const sx = (lx - px) * sc + size / 2, sy = (ly - py) * sc + size / 2;
       g.fillStyle = b.rare ? 'rgba(255,200,60,0.95)' : 'rgba(120,255,170,0.85)';
       g.beginPath();
       g.arc(sx, sy, size * (b.rare ? 0.03 : 0.022), 0, Math.PI * 2);
       g.fill();
-    }
-    for (const l of LANDMARKS) {
-      const [lx, ly] = this.px(l.x, l.z);
-      const sx = (lx - px) * sc + size / 2, sy = (ly - py) * sc + size / 2;
-      g.strokeStyle = 'rgba(255,255,255,0.8)';
-      g.lineWidth = dpr;
-      g.strokeRect(sx - size * 0.025, sy - size * 0.025, size * 0.05, size * 0.05);
     }
     g.restore();
     this.arrow(g, size / 2, size / 2, Minimap.angle(yaw), size * 0.075);
@@ -209,16 +226,6 @@ export class Minimap {
       g.fillStyle = 'rgba(235,250,255,0.9)';
       g.fillText(l.label, sx, sy);
     }
-    g.font = `500 ${Math.max(10, sc * 4.6)}px "Zen Kaku Gothic New", sans-serif`;
-    for (const l of LANDMARKS) {
-      if (!this.known.has(l.id)) continue;
-      const [sx, sy] = P(l.x, l.z);
-      g.strokeStyle = '#fff';
-      g.lineWidth = 1.5;
-      g.strokeRect(sx - 4, sy - 4, 8, 8);
-      g.fillStyle = 'rgba(255,255,255,0.85)';
-      g.fillText(l.label, sx, sy + 13);
-    }
     for (const dp of DIVE_POINTS) {
       if (!this.known.has(dp.id)) continue;
       const [sx, sy] = P(dp.x, dp.z);
@@ -236,6 +243,11 @@ export class Minimap {
       g.arc(sx, sy, 6, 0, Math.PI * 2);
       g.fill();
       g.stroke();
+    }
+    for (const b of this.blips) {
+      if (!b.r) continue;
+      const [ax, ay] = P(b.x, b.z);
+      this.area(g, ax, ay, Math.max(7, (b.r / RES) * sc), 1.5, performance.now() / 1000);
     }
     const [sx, sy] = P(x, z);
     this.arrow(g, sx, sy, Minimap.angle(yaw), 9);

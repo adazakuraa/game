@@ -337,3 +337,25 @@ export const DIVE_POINTS: DivePoint[] = [
   { id: 'kelp', name: '海藻の森', sub: '水深 9–20m・水面まで伸びるジャイアントケルプの森', x: 330, z: 120 },
   { id: 'deep', name: '深海', sub: '水深 170–430m・大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },
 ];
+
+// ---- fast seabed height for the many creatures: a lazily filled 1 m grid, bilinear between samples
+const HF_RES = 1;
+const HF_X0 = WORLD.minX - 20, HF_Z0 = WORLD.minZ - 20;
+const HF_W = Math.ceil((WORLD.maxX - WORLD.minX + 40) / HF_RES) + 2;
+const HF_H = Math.ceil((WORLD.maxZ - WORLD.minZ + 40) / HF_RES) + 2;
+const hfGrid = new Float32Array(HF_W * HF_H).fill(NaN);
+const hfAt = (ix: number, iz: number) => {
+  const k = iz * HF_W + ix;
+  let v = hfGrid[k];
+  if (v !== v) v = hfGrid[k] = heightAt(HF_X0 + ix * HF_RES, HF_Z0 + iz * HF_RES);
+  return v;
+};
+/** heightAt for things that only need the floor within a few centimetres (creatures); much cheaper. */
+export function heightFast(x: number, z: number): number {
+  const fx = (x - HF_X0) / HF_RES, fz = (z - HF_Z0) / HF_RES;
+  const ix = Math.floor(fx), iz = Math.floor(fz);
+  if (ix < 0 || iz < 0 || ix >= HF_W - 1 || iz >= HF_H - 1) return heightAt(x, z);
+  const tx = fx - ix, tz = fz - iz;
+  const a = hfAt(ix, iz), b = hfAt(ix + 1, iz), c = hfAt(ix, iz + 1), d = hfAt(ix + 1, iz + 1);
+  return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+}

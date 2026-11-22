@@ -77,21 +77,40 @@ export function calibrate(track) {
   }
   setAIProfile(track, trace, 0, track.N);
   const botLap = crosses.length === 2 ? crosses[1] - crosses[0] : track.profileLapTime * 1.08;
-  const ai = new AICar(track, 1.0, 1);
+  const aiLap = measureAI(track, 1.0) ?? track.profileLapTime;
+  track.calib = { botLap, aiLap };
+  return track.calib;
+}
+
+// 先頭ノイズなしの CPU（pace）が 1 周（セクションはスタートライン通過からゴール）にかかる時間を測る
+function measureAI(track, pace) {
+  const dt = 1 / 120;
+  const ai = new AICar(track, pace, 1, undefined, true); // 最低速度なしで測る（直線のペースを変えないため）
   ai.noise.fill(0);
   ai.lineBias = 0;
+  if (track.stageEnd) {
+    const S0 = STAGE_START, end = track.stageEnd;
+    ai.place(10, 0);
+    let t = 0, t0 = null;
+    while (t < 900 && ai.s < end) {
+      ai.update(dt, [], 0, true);
+      t += dt;
+      if (t0 == null && ai.s >= S0) t0 = t;
+    }
+    return t - (t0 ?? 0);
+  }
+  const L = track.length;
   ai.place(L - 300, 0);
   ai.v = 30;
-  prev = ai.s; t = 0; crosses = [];
+  let prev = ai.s, t = 0;
+  const crosses = [];
   while (t < 600 && crosses.length < 2) {
     ai.update(dt, [], 0, true);
     t += dt;
     if (prev > L * 0.75 && ai.s < L * 0.25) crosses.push(t);
     prev = ai.s;
   }
-  const aiLap = crosses.length === 2 ? crosses[1] - crosses[0] : track.profileLapTime;
-  track.calib = { botLap, aiLap };
-  return track.calib;
+  return crosses.length === 2 ? crosses[1] - crosses[0] : null;
 }
 
 export { STAGE_START };
@@ -141,17 +160,7 @@ function calibrateSection(track) {
   }
   setAIProfile(track, trace, Math.round(S0 / track.ds), track.stageN);
   const botLap = t - (t0 ?? 0);
-  const ai = new AICar(track, 1.0, 1);
-  ai.noise.fill(0);
-  ai.lineBias = 0;
-  ai.place(10, 0);
-  t = 0; t0 = null;
-  while (t < 900 && ai.s < end) {
-    ai.update(dt, [], 0, true);
-    t += dt;
-    if (t0 == null && ai.s >= S0) t0 = t;
-  }
-  const aiLap = t - (t0 ?? 0);
+  const aiLap = measureAI(track, 1.0) ?? botLap;
   return { botLap, aiLap };
 }
 
