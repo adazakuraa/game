@@ -118,6 +118,9 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   const glow = new THREE.Color(m.glow ?? 0x000000);
   if (def.fish?.bendY) mat.defines = { BEND_Y: '' };
   if (def.id === 'atolla') mat.defines = { ...(mat.defines ?? {}), GLOW_SPIN: '' };
+  // flashlight fish blink their light organ on and off, each on its own phase (see GLOW_BLINK below)
+  const blink = def.id === 'hikarikinme' || def.id === 'hikarikinme2';
+  if (blink) mat.defines = { ...(mat.defines ?? {}), GLOW_BLINK: '' };
   if (def.rainbow) mat.defines = { ...(mat.defines ?? {}), RAINBOW: '' };
   const scaly = !photo && (def.kind === 'fish' || def.kind === 'gardenEel');
   if (photo) {
@@ -132,7 +135,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
     mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
   }
   return underwaterMaterial(mat, {
-    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : ''),
+    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : ''),
     caustic: 0.9,
     uniforms: {
       uSwim: { value: new THREE.Vector3(...swim) },
@@ -144,12 +147,13 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       uFishSize: { value: def.size },
     },
     vertexHead: `attribute float aBend; attribute float aFlap; attribute float aPulse; attribute float aGlow; attribute float aFin;
-      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin;`,
+      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin; varying float vPh;`,
     vertexBody: `
       float ph = 0.0;
       #ifdef USE_INSTANCING
         ph = instanceMatrix[3].x * 0.71 + instanceMatrix[3].z * 0.53 + instanceMatrix[3].y * 0.37;
       #endif
+      vPh = ph;
       float wave = sin( uTime * uSwim.x + ph - position.z * uSwim.z );
       #ifdef BEND_Y
         transformed.y += wave * uSwim.y * aBend;
@@ -166,7 +170,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       #ifdef GLOW_SPIN
         vGlow *= 0.15 + pow( 0.5 + 0.5 * sin( atan( position.z, position.x ) * 2.0 - uTime * 4.0 ), 3.0 ) * 1.6;
       #endif`,
-    fragHead: 'uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; uniform float uUvAspect; uniform float uFishSize;',
+    fragHead: 'uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; uniform float uUvAspect; uniform float uFishSize;',
     fragFuncs: `
       #if defined( FISH_SCALES ) && defined( USE_MAP )
       float fishScale( vec2 uv ) {
@@ -219,6 +223,11 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       #ifdef RAINBOW
         vec3 hue = 0.5 + 0.5 * cos( 6.2831 * ( vUwPos.y * 4.0 - uTime * 0.9 + vec3( 0.0, 0.33, 0.67 ) ) );
         totalEmissiveRadiance += hue * vGlow * 1.4;
+      #elif defined( GLOW_BLINK )
+        // per-instance blink: phase from the instance position, so the school winks on and off
+        // one fish at a time and each light drops to fully dark for part of the cycle
+        float blk = smoothstep( -0.3, 0.4, sin( uTime * 1.9 + vPh * 6.2831 ) );
+        totalEmissiveRadiance += uGlowCol * vGlow * uGlowAmt * blk * 2.6;
       #else
         totalEmissiveRadiance += uGlowCol * vGlow * uGlowAmt * ( 2.2 + 0.6 * sin( uTime * 2.7 ) );
       #endif`,
