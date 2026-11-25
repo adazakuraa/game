@@ -85,7 +85,7 @@ export class Props {
     const practice = def.id === 'kosciuszko';
     const base = def.campAltitude < 5600 && !practice;
     if (!practice) this.buildCamp(0, base ? 14 : 6, base);
-    if (practice) this.buildPracticeSummit();
+    if (practice) { this.buildPracticeCamp(); this.buildPracticeSummit(); }
     else if (def.goal === 'camp') this.buildCamp(route.length, 6, false);
     else this.buildSummit();
     if (base) this.buildChorten();
@@ -434,18 +434,7 @@ export class Props {
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4, metalness: 0.6 });
     const snowMat = new THREE.MeshStandardMaterial({ color: 0xf1f4f8, roughness: 0.9 });
     const lineMat = new THREE.LineBasicMaterial({ color: 0xd0d0d0 });
-    const tentGeo = new THREE.SphereGeometry(1.25, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-    // Fabric sag between poles
-    const pos = tentGeo.getAttribute('position');
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i); const y = pos.getY(i); const z = pos.getZ(i);
-      const a = Math.atan2(z, x);
-      const sag = 1 - 0.07 * Math.abs(Math.sin(a * 2)) * Math.sin((y / 1.25) * Math.PI);
-      pos.setXYZ(i, x * sag * 1.25, y * 0.82, z * sag);
-    }
-    tentGeo.computeVertexNormals();
-    const poleGeo = mergeGeometries([0, 1].map((p) =>
-      new THREE.TorusGeometry(1.26, 0.018, 4, 24, Math.PI).scale(1.25, 0.82, 1).rotateY(Math.PI / 4 + p * Math.PI / 2)));
+    const { tentGeo, poleGeo } = this.tentGeometry();
     const spread = wide ? 2.2 : 1;
     for (let i = 0; i < count; i++) {
       // Tents line both sides of the track, ahead of and behind the start point.
@@ -483,6 +472,23 @@ export class Props {
     }
   }
 
+  /** Dome tent shell and its crossing poles, shared by the expedition camps and the practice camp. */
+  private tentGeometry(): { tentGeo: THREE.BufferGeometry; poleGeo: THREE.BufferGeometry } {
+    const tentGeo = new THREE.SphereGeometry(1.25, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    // Fabric sag between poles
+    const pos = tentGeo.getAttribute('position');
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i); const y = pos.getY(i); const z = pos.getZ(i);
+      const a = Math.atan2(z, x);
+      const sag = 1 - 0.07 * Math.abs(Math.sin(a * 2)) * Math.sin((y / 1.25) * Math.PI);
+      pos.setXYZ(i, x * sag * 1.25, y * 0.82, z * sag);
+    }
+    tentGeo.computeVertexNormals();
+    const poleGeo = mergeGeometries([0, 1].map((p) =>
+      new THREE.TorusGeometry(1.26, 0.018, 4, 24, Math.PI).scale(1.25, 0.82, 1).rotateY(Math.PI / 4 + p * Math.PI / 2)));
+    return { tentGeo, poleGeo };
+  }
+
   private buildSummit(): void {
     const top = this.route.pointAt(this.route.length);
     this.buildFlags(new THREE.Vector3(top.x, top.y + 1.3, top.z), 7, 14, 4, 7);
@@ -495,20 +501,174 @@ export class Props {
     this.group.add(pole);
   }
 
+  /** Practice stage: a small winter ski-touring camp at Lawson Pass (no prayer flags), beside and behind the start. */
+  private buildPracticeCamp(): void {
+    const rnd = createSeededRandom(this.def.seed + 77);
+    const { tentGeo, poleGeo } = this.tentGeometry();
+    const dir = this.route.directionAt(0);
+    const side = new THREE.Vector3(-dir.z, 0, dir.x);
+    const p0 = this.route.pointAt(0);
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4, metalness: 0.6 });
+    const snowMat = new THREE.MeshStandardMaterial({ color: 0xf1f4f8, roughness: 0.9 });
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xd0d0d0 });
+    const driftGeo = new THREE.SphereGeometry(1.6, 16, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    // [metres along the route (negative = behind the start), metres sideways (at least 4 m off the line), colour]
+    const spots: [number, number, number][] = [[-3, 7.5, 0xe8531d], [-8, -7, 0x2f8f4e], [-13, 10.5, 0xf2c014]];
+    const blockGeo = new THREE.BoxGeometry(0.62, 0.3, 0.36);
+    const blocks = new THREE.InstancedMesh(blockGeo, new THREE.MeshStandardMaterial({ color: 0xf1f4f8, roughness: 0.9, emissive: 0x6d7a8c, emissiveIntensity: 0.55 }), spots.length * 18);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+    let nb = 0;
+    spots.forEach(([along, lat, color], t) => {
+      const x = p0.x + dir.x * along + side.x * lat;
+      const z = p0.z + dir.z * along + side.z * lat;
+      const y = this.ground(x, z);
+      const tent = new THREE.Group();
+      tent.name = 'practiceTent';
+      const mat = flapMaterial(new THREE.MeshStandardMaterial({ color, roughness: 0.65 }), this.wind, 'tent');
+      const body = new THREE.Mesh(tentGeo, mat);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      tent.add(body, new THREE.Mesh(poleGeo, poleMat));
+      const drift = new THREE.Mesh(driftGeo, snowMat);
+      drift.scale.set(1.25, 0.12, 1.1);
+      drift.position.y = -0.05;
+      drift.receiveShadow = true;
+      tent.add(drift);
+      const pts: THREE.Vector3[] = [];
+      for (let g = 0; g < 4; g++) {
+        const a = g * Math.PI / 2 + 0.6;
+        pts.push(new THREE.Vector3(Math.cos(a) * 1.1, 0.75, Math.sin(a) * 1.0), new THREE.Vector3(Math.cos(a) * 2.6, 0.0, Math.sin(a) * 2.4));
+      }
+      tent.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+      tent.position.set(x, y - 0.05, z);
+      tent.rotation.y = rnd() * Math.PI;
+      const n = this.field.normal(x, z);
+      tent.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n.lerp(new THREE.Vector3(0, 1, 0), 0.6).normalize()));
+      this.group.add(tent);
+      // wind wall: a half ring of snow blocks on the west (windward) side, two courses
+      for (let c = 0; c < 2; c++) {
+        for (let k = 0; k < 9; k++) {
+          const ang = Math.PI / 2 + ((k + 0.5 * c + 0.25) / 9) * Math.PI; // faces -x
+          const rr = 2.7 + (rnd() - 0.5) * 0.15;
+          const bx = x + Math.cos(ang) * rr, bz = z + Math.sin(ang) * rr;
+          e.set(0, -ang + Math.PI / 2 + (rnd() - 0.5) * 0.2, 0);
+          q.setFromEuler(e);
+          m4.compose(new THREE.Vector3(bx, this.ground(bx, bz) + 0.08 + c * 0.25, bz), q, new THREE.Vector3(1, 1, 1));
+          blocks.setMatrixAt(nb++, m4);
+        }
+      }
+      if (t === 0) {
+        // skis and poles planted in the snow beside the first tent
+        const skiMat = new THREE.MeshStandardMaterial({ color: 0x2a2f3a, roughness: 0.5 });
+        const stickMat = new THREE.MeshStandardMaterial({ color: 0xc9ccd0, roughness: 0.4, metalness: 0.5 });
+        const gx = x + side.x * 2.6 + dir.x * 0.6, gz = z + side.z * 2.6 + dir.z * 0.6;
+        const gy = this.ground(gx, gz);
+        const rig = new THREE.Group();
+        for (const k of [-1, 1]) {
+          const ski = new THREE.Mesh(new THREE.BoxGeometry(0.09, 1.7, 0.016), skiMat);
+          ski.position.set(k * 0.12, 0.6, 0);
+          ski.rotation.x = 0.07 * k;
+          const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.3, 5), stickMat);
+          pole.position.set(k * 0.3, 0.55, 0.12);
+          pole.rotation.z = 0.08 * k;
+          ski.castShadow = pole.castShadow = true;
+          rig.add(ski, pole);
+        }
+        rig.position.set(gx, gy, gz);
+        rig.rotation.y = Math.atan2(dir.x, dir.z) + Math.PI / 2;
+        this.group.add(rig);
+      }
+    });
+    blocks.count = nb;
+    blocks.instanceMatrix.needsUpdate = true;
+    blocks.castShadow = true;
+    blocks.receiveShadow = true;
+    this.group.add(blocks);
+  }
+
+  /**
+   * The summit cairn of Kosciuszko: a dry-stone drum of flat granite courses with a flat cap, a short survey
+   * mark and a blank plate. Set 2-3 m off the end of the route so a walker arriving at the top never overlaps it.
+   */
+  private buildCairn(): void {
+    const rnd = createSeededRandom(this.def.seed + 91);
+    const end = this.route.pointAt(this.route.length);
+    const d = this.route.directionAt(this.route.length);
+    const cx = end.x + d.x * 1.4 + d.z * 2.4;
+    const cz = end.z + d.z * 1.4 - d.x * 2.4;
+    const cy = this.ground(cx, cz);
+    const g = new THREE.Group();
+    g.name = 'summitCairn';
+    // dark core so the gaps between stones read as shadowed joints
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.5, 1.5, 12), new THREE.MeshStandardMaterial({ color: 0x23211f, roughness: 1 }));
+    core.position.y = 0.72;
+    g.add(core);
+    const courses = 7, per = 9;
+    const stones = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 }), courses * per);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), col = new THREE.Color();
+    let n = 0;
+    for (let c = 0; c < courses; c++) {
+      const r = 0.6 - c * 0.032;
+      const off = (c % 2) * 0.5;
+      for (let k = 0; k < per; k++) {
+        const a = ((k + off) / per) * Math.PI * 2 + (rnd() - 0.5) * 0.08;
+        const rr = r + (rnd() - 0.5) * 0.05;
+        const sx = 0.34 + rnd() * 0.12, sy = 0.19 + rnd() * 0.04, sz = 0.24 + rnd() * 0.08;
+        e.set((rnd() - 0.5) * 0.06, -a - Math.PI / 2 + (rnd() - 0.5) * 0.15, (rnd() - 0.5) * 0.06);
+        q.setFromEuler(e);
+        m4.compose(new THREE.Vector3(Math.cos(a) * rr, 0.115 + c * 0.215, Math.sin(a) * rr), q, new THREE.Vector3(sx, sy, sz));
+        stones.setMatrixAt(n, m4);
+        const t = 0.27 + rnd() * 0.16;
+        stones.setColorAt(n, col.setRGB(t * 1.02, t, t * 0.95));
+        n++;
+      }
+    }
+    stones.castShadow = true;
+    stones.receiveShadow = true;
+    g.add(stones);
+    const capY = courses * 0.215 + 0.05;
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.12, 0.95), new THREE.MeshStandardMaterial({ color: 0x77736e, roughness: 0.95 }));
+    cap.position.y = capY;
+    cap.rotation.y = 0.4;
+    cap.castShadow = true;
+    const metal = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.75, roughness: 0.4 });
+    const mark = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.03, 0.55, 8), metal);
+    mark.position.y = capY + 0.33;
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.016, 12), metal);
+    disc.position.y = capY + 0.61;
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.11, 0.012), metal);
+    const pa = Math.atan2(-d.z, -d.x); // the plate faces the walker arriving along the route
+    plate.position.set(Math.cos(pa) * 0.5, 0.78, Math.sin(pa) * 0.5);
+    plate.rotation.y = -pa + Math.PI / 2;
+    mark.castShadow = true;
+    g.add(cap, mark, disc, plate);
+    // wind-packed snow against the west (windward) foot
+    const drift = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xf1f4f8, roughness: 0.9 }));
+    drift.scale.set(1.0, 0.35, 0.8);
+    drift.position.set(-0.55, 0, 0.1);
+    drift.receiveShadow = true;
+    g.add(drift);
+    g.position.set(cx, cy - 0.04, cz);
+    this.group.add(g);
+    // a few weathered granite boulders around the base
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x8b8680, roughness: 0.95 });
+    for (let k = 0; k < 5; k++) {
+      const a = k * 1.3 + rnd();
+      const dist = 1.2 + rnd() * 1.1;
+      const rx = cx + Math.cos(a) * dist, rz = cz + Math.sin(a) * dist;
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.22 + rnd() * 0.2, 0), rockMat);
+      rock.scale.set(1.3, 0.6, 0.9);
+      rock.position.set(rx, this.ground(rx, rz) + 0.05, rz);
+      rock.rotation.y = rnd() * 3;
+      rock.castShadow = true;
+      this.group.add(rock);
+    }
+  }
+
   /** Practice stage: a stone cairn on top and a signpost just below it (no prayer flags). */
   readonly signpost = new THREE.Vector3();
   private buildPracticeSummit(): void {
-    const stone = new THREE.MeshStandardMaterial({ color: 0x8b8680, roughness: 0.95 });
-    const top = this.route.pointAt(this.route.length);
-    for (let k = 0; k < 9; k++) {
-      const r = 0.55 - k * 0.04;
-      const m = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), stone);
-      const a = k * 2.1;
-      m.position.set(top.x + Math.cos(a) * (k < 6 ? 0.55 : 0.15), top.y + 0.2 + Math.floor(k / 3) * 0.45, top.z + Math.sin(a) * (k < 6 ? 0.55 : 0.15));
-      m.rotation.set(k, k * 1.3, 0);
-      m.castShadow = true;
-      this.group.add(m);
-    }
+    this.buildCairn();
     // signpost beside the track
     const s = this.route.length - 28;
     const p = this.route.pointAt(s);

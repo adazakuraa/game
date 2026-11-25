@@ -537,6 +537,7 @@ export class Game {
     this.player.reset(0);
     this.weather = new Weather(this.rng, def.baseWind);
     this.env.setCloudY(altitudeToWorldY(def, def.cloudAlt));
+    this.env.setDistantStyle(practice ? 'kosciuszko' : 'himalaya', (alt) => altitudeToWorldY(def, alt));
     this.plume.setStage(def);
     this.env.setDistantMaterial(material);
     if (!this.near) {
