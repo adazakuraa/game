@@ -515,7 +515,7 @@ export class Props {
     // [metres along the route (negative = behind the start), metres sideways (at least 4 m off the line), colour]
     const spots: [number, number, number][] = [[-3, 7.5, 0xe8531d], [-8, -7, 0x2f8f4e], [-13, 10.5, 0xf2c014]];
     const blockGeo = new THREE.BoxGeometry(0.62, 0.3, 0.36);
-    const blocks = new THREE.InstancedMesh(blockGeo, new THREE.MeshStandardMaterial({ color: 0xf1f4f8, roughness: 0.9, emissive: 0x6d7a8c, emissiveIntensity: 0.55 }), spots.length * 18);
+    const blocks = new THREE.InstancedMesh(blockGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, emissive: 0xe4eaf1, emissiveIntensity: 0.5 }), spots.length * 18);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
     let nb = 0;
     spots.forEach(([along, lat, color], t) => {
@@ -549,11 +549,11 @@ export class Props {
       for (let c = 0; c < 2; c++) {
         for (let k = 0; k < 9; k++) {
           const ang = Math.PI / 2 + ((k + 0.5 * c + 0.25) / 9) * Math.PI; // faces -x
-          const rr = 2.7 + (rnd() - 0.5) * 0.15;
+          const rr = 2.35 + (rnd() - 0.5) * 0.12;
           const bx = x + Math.cos(ang) * rr, bz = z + Math.sin(ang) * rr;
           e.set(0, -ang + Math.PI / 2 + (rnd() - 0.5) * 0.2, 0);
           q.setFromEuler(e);
-          m4.compose(new THREE.Vector3(bx, this.ground(bx, bz) + 0.08 + c * 0.25, bz), q, new THREE.Vector3(1, 1, 1));
+          m4.compose(new THREE.Vector3(bx, this.ground(bx, bz) + 0.06 + c * 0.27, bz), q, new THREE.Vector3(1, 1, 1));
           blocks.setMatrixAt(nb++, m4);
         }
       }
