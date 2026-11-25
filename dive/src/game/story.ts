@@ -54,10 +54,21 @@ export type Chapter = {
   map?: string;
   /** the chapter needs a light (night sea): until one is in stock, the boat says so (Phase 2) */
   needsLight?: boolean;
+  /** how to get an S, shown on the chapter card while the goal needs one (Phase 3) */
+  tips?: string[];
   /** a special sight that is staged while this chapter is the current one */
   scene?: SceneId;
   title2: string;
 };
+
+/** The editor's tips for an S, matching evaluateShot (size 0.36, side 0.26, centre 0.16, clarity 0.22, whole body in frame). */
+export const S_TIPS = [
+  '<b>近づいて大きく</b>：体が枠の高さの3分の1くらいに。近すぎてはみ出すと逆に下がる',
+  '<b>真横から</b>：頭やしっぽを向けているときは、横に回り込んでから撮る',
+  '<b>真ん中に</b>：照準の中心に体を入れる',
+  '<b>全身を枠に</b>：ひれやしっぽが少しでも切れるとSにならない',
+  '<b>近いほどくっきり</b>：濁りや暗い所では特に近くで（暗い所はライトで照らす）',
+];
 
 export const CHAPTERS: Chapter[] = [
   {
@@ -75,13 +86,13 @@ export const CHAPTERS: Chapter[] = [
   {
     title: 'S評価の一枚', title2: '期待の新人',
     intro: '編集長「誌面に載せるなら一枚の質だ。近くで、真横から、全身が入るように。評価Sの写真を見せてほしい」',
-    goal: 'S評価の写真を1枚撮る', done: (s) => s.sCount >= 1, reward: 5000,
+    goal: 'S評価の写真を1枚撮る', done: (s) => s.sCount >= 1, reward: 5000, tips: S_TIPS,
     praise: '編集長「これだよ、これ。誌面で映える一枚だ」',
   },
   {
     title: '夜の海', title2: '夜を知る写真家',
-    intro: '編集長「夜の海は別の世界だよ。ライトを頼りに、夜にしか会えない生き物を撮ってきて」',
-    goal: '夜行性の生き物を撮る（夜の海で）', done: (s) => s.nightFound >= 1, reward: 6000, map: 'cave', needsLight: true,
+    intro: '編集長「夜の海は別の世界だよ。ライトを頼りに、夜にしか会えない魚を撮ってきて」',
+    goal: '夜の魚を撮る（夜の海で）', done: (s) => s.nightFound >= 1, reward: 6000, map: 'cave', needsLight: true,
     praise: '編集長「夜の海でも落ち着いて撮れている。さすがだ。お礼に、漁師さんから聞いた洞窟の場所を教えるよ」',
   },
   {
@@ -99,7 +110,7 @@ export const CHAPTERS: Chapter[] = [
   {
     title: '表紙を飾れ', title2: '表紙の写真家',
     intro: '編集長「いよいよ表紙だ。めったに会えない★3の生き物を、S評価で。あなたにしか撮れない一枚を」',
-    goal: '★3の生き物をS評価で撮る', done: (s) => s.rare3S >= 1, reward: 30000,
+    goal: '★3の生き物をS評価で撮る', done: (s) => s.rare3S >= 1, reward: 30000, tips: S_TIPS,
   },
 ];
 

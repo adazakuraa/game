@@ -128,13 +128,14 @@ export class Minimap {
   }
 
   /** fish-finder blips and request marks; with `r` (m) a mark is an area (the goal is somewhere inside), not a point */
-  blips: { x: number; z: number; rare: boolean; r?: number }[] = [];
+  blips: { x: number; z: number; rare: boolean; r?: number; spot?: boolean }[] = [];
 
   /** a request area: soft fill, dashed rim, so it reads as "somewhere in here" */
-  private area(g: CanvasRenderingContext2D, sx: number, sy: number, rad: number, lw: number, t: number): void {
+  private area(g: CanvasRenderingContext2D, sx: number, sy: number, rad: number, lw: number, t: number, spot = false): void {
     g.save();
-    g.fillStyle = 'rgba(255,200,60,0.16)';
-    g.strokeStyle = 'rgba(255,205,80,0.9)';
+    // photo spots (Phase 3) are aqua so they never read as a request
+    g.fillStyle = spot ? 'rgba(90,230,255,0.13)' : 'rgba(255,200,60,0.16)';
+    g.strokeStyle = spot ? 'rgba(120,235,255,0.9)' : 'rgba(255,205,80,0.9)';
     g.lineWidth = lw;
     g.setLineDash([lw * 3, lw * 2.2]);
     g.lineDashOffset = -t * lw * 4;
@@ -178,7 +179,7 @@ export class Minimap {
     for (const b of this.blips) {
       if (!b.r) continue;
       const [lx, ly] = this.px(b.x, b.z);
-      this.area(g, (lx - px) * sc + size / 2, (ly - py) * sc + size / 2, Math.max(size * 0.07, (b.r / RES) * sc), 1.6 * dpr, t);
+      this.area(g, (lx - px) * sc + size / 2, (ly - py) * sc + size / 2, Math.max(size * 0.07, (b.r / RES) * sc), 1.6 * dpr, t, b.spot);
     }
     // fish-finder blips (sonar gear): unphotographed species nearby
     for (const b of this.blips) {
@@ -247,7 +248,7 @@ export class Minimap {
     for (const b of this.blips) {
       if (!b.r) continue;
       const [ax, ay] = P(b.x, b.z);
-      this.area(g, ax, ay, Math.max(7, (b.r / RES) * sc), 1.5, performance.now() / 1000);
+      this.area(g, ax, ay, Math.max(7, (b.r / RES) * sc), 1.5, performance.now() / 1000, b.spot);
     }
     const [sx, sy] = P(x, z);
     this.arrow(g, sx, sy, Minimap.angle(yaw), 9);

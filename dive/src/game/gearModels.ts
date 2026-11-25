@@ -107,3 +107,27 @@ export function buildBar(): THREE.Group {
   g.add(grip);
   return g;
 }
+
+/** A diver's knife (Phase 3: cutting the ghost net off a turtle): steel blade with a serrated back, black grip, guard. */
+export function buildKnife(): THREE.Group {
+  const g = new THREE.Group();
+  const st = new THREE.MeshStandardMaterial({ color: 0xc8d0d8, metalness: 0.9, roughness: 0.25, emissive: 0x101418 });
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.026, 0.16), st);
+  blade.position.z = -0.12;
+  g.add(blade);
+  const tip = new THREE.Mesh(new THREE.CylinderGeometry(0, 0.018, 0.04, 3).rotateX(-Math.PI / 2).scale(0.22, 1, 1), st);
+  tip.position.set(0, -0.004, -0.218);
+  g.add(tip);
+  for (let i = 0; i < 6; i++) {
+    const t = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.006, 0.006).rotateX(Math.PI / 4), st);
+    t.position.set(0, 0.014, -0.07 - i * 0.016);
+    g.add(t);
+  }
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.05, 0.01), new THREE.MeshStandardMaterial({ color: 0x30343a, metalness: 0.6, roughness: 0.4 }));
+  guard.position.z = -0.035;
+  g.add(guard);
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.015, 0.1, 10).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.8 }));
+  grip.position.z = 0.02;
+  g.add(grip);
+  return g;
+}
