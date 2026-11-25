@@ -103,21 +103,21 @@ svg { fill: currentColor; }
 .lg-area { border: 1.5px dashed rgba(255,205,80,0.9); background: rgba(255,200,60,0.16); border-radius: 50%; }
 
 /* reticle */
-#reticle { position: absolute; left: 50%; top: 50%; width: 120px; height: 90px; transform: translate(-50%, -50%); transition: width 0.2s, height 0.2s; }
-#reticle .c { position: absolute; width: 16px; height: 16px; border: 2px solid rgba(230,250,255,0.55); }
+#reticle { position: absolute; left: 50%; top: 50%; width: 168px; height: 126px; transform: translate(-50%, -50%); transition: width 0.2s, height 0.2s; }
+#reticle .c { position: absolute; width: 22px; height: 22px; border: 2.5px solid rgba(230,250,255,0.55); }
 #reticle .tl { left: 0; top: 0; border-right: 0; border-bottom: 0; }
 #reticle .tr { right: 0; top: 0; border-left: 0; border-bottom: 0; }
 #reticle .bl { left: 0; bottom: 0; border-right: 0; border-top: 0; }
 #reticle .br { right: 0; bottom: 0; border-left: 0; border-top: 0; }
 #reticle.lock .c { border-color: var(--ok); }
 #reticle.far .c { border-color: var(--warn); }
-#reticle.lock { width: 104px; height: 78px; }
-#ret-label { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 13px; font-weight: 700;
+#reticle.lock { width: 146px; height: 110px; }
+#ret-label { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 14.5px; font-weight: 700;
   text-shadow: 0 1px 4px rgba(0,0,0,0.8); color: var(--ink); }
-#ret-label small { display: block; text-align: center; font-weight: 500; font-size: 11px; color: var(--ink-dim); }
+#ret-label small { display: block; text-align: center; font-weight: 500; font-size: 12px; color: var(--ink-dim); }
 
 #toast { position: absolute; left: 50%; top: calc(14px + var(--safe-t)); transform: translateX(-50%); padding: 7px 14px; border-radius: 10px; background: var(--panel);
-  border: 1px solid var(--glass-brd); font-size: 13.5px; font-weight: 700; opacity: 0; transition: opacity 0.3s; max-width: min(560px, calc(100vw - 280px)); line-height: 1.5; text-align: center; z-index: 6; pointer-events: none; }
+  border: 1px solid var(--glass-brd); font-size: 14.5px; font-weight: 700; opacity: 0; transition: opacity 0.3s; max-width: min(560px, calc(100vw - 280px)); line-height: 1.5; text-align: center; z-index: 6; pointer-events: none; }
 @media (max-width: 520px) { #toast { max-width: calc(100vw - 32px); } }
 #toast.show { opacity: 1; }
 #toast.warn { border-color: var(--warn); color: var(--warn); }
@@ -130,17 +130,17 @@ svg { fill: currentColor; }
 
 /* controls */
 #controls { position: absolute; right: calc(14px + var(--safe-r)); bottom: calc(16px + var(--safe-b)); display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; gap: 12px; align-items: end; }
-.ctl { width: 52px; height: 52px; border-radius: 14px; border: 1px solid var(--glass-brd); background: var(--glass); color: var(--ink); display: grid; place-items: center; padding: 0; cursor: pointer;
+.ctl { width: 58px; height: 58px; border-radius: 14px; border: 1px solid var(--glass-brd); background: var(--glass); color: var(--ink); display: grid; place-items: center; padding: 0; cursor: pointer;
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); touch-action: none; }
-.ctl svg { width: 24px; height: 24px; }
+.ctl svg { width: 27px; height: 27px; }
 .ctl.pressed, .ctl.on { background: rgba(95, 227, 240, 0.32); border-color: var(--cyan); }
 .ctl.dim { opacity: 0.4; }
 #btn-light { grid-column: 1; grid-row: 1; }
 #btn-boost { grid-column: 2; grid-row: 1; justify-self: end; }
 .updown { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; gap: 10px; }
-#btn-shutter { grid-column: 2; grid-row: 2; width: 84px; height: 84px; border-radius: 50%; border: 3px solid rgba(230,250,255,0.85); background: radial-gradient(circle at 45% 40%, #8ff3fb, #22a9c4 70%);
+#btn-shutter { grid-column: 2; grid-row: 2; width: 98px; height: 98px; border-radius: 50%; border: 3px solid rgba(230,250,255,0.85); background: radial-gradient(circle at 45% 40%, #8ff3fb, #22a9c4 70%);
   display: grid; place-items: center; color: #e9fbff; cursor: pointer; padding: 0; touch-action: none; box-shadow: 0 6px 22px rgba(0,0,0,0.35); }
-#btn-shutter svg { width: 38px; height: 38px; }
+#btn-shutter svg { width: 46px; height: 46px; }
 #btn-shutter.pressed { transform: scale(0.93); }
 #btn-shutter.ready { box-shadow: 0 0 0 4px rgba(124,240,168,0.55), 0 6px 22px rgba(0,0,0,0.35); }
 
@@ -154,7 +154,7 @@ svg { fill: currentColor; }
 .disc-sci { font-size: 11px; color: var(--ink-dim); font-style: italic; font-family: var(--num); }
 @keyframes pop { from { transform: translateX(-50%) scale(0.7); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
 
-#help { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); text-align: center; font-size: 13px; line-height: 1.8; padding: 10px 16px; border-radius: 12px; background: rgba(2,18,28,0.6); color: var(--ink); white-space: nowrap; }
+#help { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); text-align: center; font-size: 14px; line-height: 1.8; padding: 10px 16px; border-radius: 12px; background: rgba(2,18,28,0.6); color: var(--ink); white-space: nowrap; }
 #help b { color: var(--cyan); }
 
 /* screens */
@@ -317,9 +317,9 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 
 /* spearfishing */
 #btn-tool { position: absolute; right: 100%; bottom: 0; margin-right: 12px; flex-direction: column; gap: 0; }
-#btn-bait { position: absolute; right: 100%; bottom: 64px; margin-right: 12px; color: #f0a080; }
+#btn-bait { position: absolute; right: 100%; bottom: 70px; margin-right: 12px; color: #f0a080; }
 #btn-bait small { font-size: 10px; font-weight: 900; line-height: 1; margin-top: -2px; }
-#btn-bait-kind { position: absolute; right: calc(100% + 12px); bottom: 128px; width: 34px; height: 34px; }
+#btn-bait-kind { position: absolute; right: calc(100% + 12px); bottom: 140px; width: 34px; height: 34px; }
 #btn-bait-kind svg { width: 16px; height: 16px; }
 #btn-tool small { font-size: 10px; font-weight: 900; line-height: 1; margin-top: -2px; }
 #btn-tool .i-cam, #btn-shutter .i-spear { display: none; }
@@ -407,14 +407,14 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 #cook-pop.bad { border-color: var(--danger); }
 #cook-pop.bad .cp-dish { color: var(--danger); }
 /* tutorial coach */
-#coach { position: absolute; left: 50%; top: calc(10px + var(--safe-t)); transform: translateX(-50%); width: min(440px, calc(100vw - 360px)); padding: 7px 12px 9px; border-radius: 12px; background: rgba(4,22,32,0.88); border: 1px solid var(--cyan); pointer-events: none; z-index: 3; }
+#coach { position: absolute; left: 50%; top: calc(10px + var(--safe-t)); transform: translateX(-50%); width: min(460px, calc(100vw - 360px)); padding: 9px 14px 11px; border-radius: 12px; background: rgba(4,22,32,0.88); border: 1px solid var(--cyan); pointer-events: none; z-index: 3; }
 #coach-skip { pointer-events: auto; }
-#coach .coach-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; color: var(--cyan); font-weight: 900; }
-#coach-skip { background: transparent; border: 0; color: var(--ink-dim); font-size: 11px; text-decoration: underline; cursor: pointer; padding: 4px; font-family: var(--jp); }
-#coach-text { font-size: 13.5px; font-weight: 700; line-height: 1.5; margin-top: 2px; }
+#coach .coach-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; color: var(--cyan); font-weight: 900; }
+#coach-skip { background: transparent; border: 0; color: var(--ink-dim); font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 4px; font-family: var(--jp); }
+#coach-text { font-size: 16px; font-weight: 700; line-height: 1.55; margin-top: 2px; }
 #coach.praise { border-color: var(--ok); }
-#coach.praise #coach-text { color: var(--ok); font-size: 17px; }
-@media (max-width: 760px) { #coach { width: calc(100vw - 340px); min-width: 200px; } #coach-text { font-size: 12.5px; } }
+#coach.praise #coach-text { color: var(--ok); font-size: 19px; }
+@media (max-width: 760px) { #coach { width: calc(100vw - 340px); min-width: 200px; } #coach-text { font-size: 15px; } }
 @media (max-width: 560px) { #coach { width: calc(100vw - 24px); top: calc(206px + var(--safe-t)); } }
 .hl-air #air { box-shadow: 0 0 0 3px var(--warn), 0 0 22px var(--warn); border-radius: 50%; }
 .hl-surface #surface-btn { box-shadow: 0 0 0 3px var(--ok); }
