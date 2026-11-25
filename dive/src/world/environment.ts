@@ -40,6 +40,9 @@ export class Environment {
   private smoothedZone = new THREE.Vector4(0.04, 0.27, 0.4, 46);
   lightOn = false;
   lightPower = 1;
+  /** the day's weather (Phase 4): sunlight multiplier and haze multiplier, set by the game */
+  weatherLight = 1;
+  weatherFog = 1;
   /** night dive (0/1) and cave-roof shade target (0/1); both darken sun, sky fill and water */
   night = 0;
   shade = 0;
@@ -317,11 +320,12 @@ export class Environment {
     let vis = this.smoothedZone.w;
     if (depth > 120) vis = lerp(vis, 40, clamp((depth - 120) / 150, 0, 1));
     vis *= 1 - this.narcosis * 0.3;
+    vis /= this.weatherFog;
     this.fog.density = 1.75 / vis;
 
     // daylight
     const day = Math.exp(-depth / 24);
-    this.sun.intensity = 3.0 * day * (1 - D);
+    this.sun.intensity = 3.0 * day * (1 - D) * this.weatherLight;
     // sun shadows: crisp in the shallows, softer and weaker with depth, off in the deep
     const sh = this.sun.shadow;
     sh.intensity = clamp(Math.exp(-depth / 22) * 1.05, 0, 0.92) * (1 - D);
@@ -342,7 +346,7 @@ export class Environment {
     this.sun.color.copy(this.tmpCol);
     UW.uSunCol.value.copy(this.tmpCol);
     // ambient fill is low in the shallows so sunlit vs. shaded reads clearly; it takes over with depth
-    this.hemi.intensity = ((0.38 + 0.25 * clamp(depth / 25, 0, 1)) * Math.exp(-depth / 40)) * (1 - D * 0.96) + 0.015 * (1 - D * 0.6);
+    this.hemi.intensity = (((0.38 + 0.25 * clamp(depth / 25, 0, 1)) * Math.exp(-depth / 40)) * (1 - D * 0.96) + 0.015 * (1 - D * 0.6)) * (0.6 + 0.4 * this.weatherLight);
     this.hemi.color.setRGB(0.42 + 0.3 * attR, 0.78, 0.95);
     this.hemi.groundColor.setRGB(0.16 * attR + 0.03, 0.14 * att + 0.03, 0.1 * att + 0.04);
     UW.uCaustic.value = clamp(Math.exp(-depth / 18) * 1.1, 0, 1.0) * (1 - D);

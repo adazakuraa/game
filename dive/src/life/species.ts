@@ -453,5 +453,32 @@ import { MORE_600 } from './species11';
 import { FUGU_SPECIES } from './species12';
 SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES, ...WILD_SPECIES, ...SITE_SPECIES, ...KELP_SPECIES, ...MORE_600, ...FUGU_SPECIES);
 
+/**
+ * Phase 4 balance pass (runs once, before any Creatures are built):
+ * - coral-dwelling species keep their head count but split into more, smaller groups,
+ *   so fish sit on many corals instead of piling onto a few (under-table species excluded:
+ *   there are only ~140 tables, more groups there just crowd them).
+ * - non-reef zones get more individuals/groups of their common fish, so the reef's species
+ *   richness stops dominating the whole sea. Counts and draw calls grow only via instances.
+ */
+export const SPREAD_DATA = {
+  coralGroupSize: 4,
+  zoneBoost: { lagoon: 1.5, kelp: 1.5, rocky: 1.3, cold: 1.3, dropoff: 1.2 } as Partial<Record<ZoneId, number>>,
+};
+function balanceZones() {
+  for (const d of SPECIES) {
+    const coralHab = d.hab === 'coralHover' || d.hab === 'coralPick' || d.hab === 'under' || d.hab === 'cleaner';
+    const coralReg = d.region === 'coralTops' || d.region === 'bommieSpots'; // underTables excluded
+    if (coralHab && coralReg && !['anemone', 'static', 'buried'].includes(d.behavior))
+      d.groups = Math.max(d.groups, Math.ceil(d.count / SPREAD_DATA.coralGroupSize));
+    const k = SPREAD_DATA.zoneBoost[d.zone];
+    if (k && d.kind === 'fish' && d.rarity <= 2 && ['school', 'solo', 'bottom'].includes(d.behavior) && !d.aggro) {
+      d.count = Math.round(d.count * k);
+      d.groups = Math.min(d.count, Math.ceil(d.groups * k));
+    }
+  }
+}
+balanceZones();
+
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
 export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];

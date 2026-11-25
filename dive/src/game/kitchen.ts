@@ -1,4 +1,6 @@
 import { SPECIES, SPECIES_BY_ID, type SpeciesDef } from '../life/species';
+import { BAIT, type BaitId } from './bait';
+import { WEATHER, weatherOf } from './weather';
 import { runFuguExam } from './kitchenGames';
 import { CAT_NAME, DISH, FISHING, FUGU_EXAM, PENALTY, STORY, nightOf, dishFor, edibleInfo, fits, isFugu, isGoodCatch, poisonFor, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
 import { yen } from './photoScore';
@@ -23,6 +25,8 @@ export type LandSave = {
   uniDay?: number;
   /** the landlady: how far her talk about the island has got, and what just happened (back from a dive / a new morning) */
   okami?: { lore: number; ev?: 'back' | 'morning' };
+  /** bait in stock, in uses (Phase 4) */
+  bait?: Partial<Record<BaitId, number>>;
   /** the notice board has been mentioned by the landlady */
   boardOn?: boolean;
 };
@@ -85,16 +89,28 @@ export class Kitchen {
     const s = this.host.save;
     const o = (s.okami ??= { lore: 0 });
     const p = this.host.progress();
-    if (ev === 'morning' && !s.boardOn) { s.boardOn = true; this.line = LINES.board[0]; this.host.write(); return; }
+    if (ev === 'morning') {
+      // Phase 4: the morning word is the day's weather (the island talk waits for the next visit);
+      // on the morning the notice board is introduced, the two are told together
+      const w = WEATHER[weatherOf(s.day ?? 1)];
+      if (!s.boardOn) {
+        s.boardOn = true;
+        this.line = w.morning + LINES.board[0].replace(/^おはよう。/, ' ');
+        this.host.write();
+        return;
+      }
+      this.line = w.morning;
+      return;
+    }
     const L = LORE[o.lore];
-    if (L && L.ok(p) && (o.lore === 0 || ev === 'back' || ev === 'morning')) {
+    if (L && L.ok(p) && (o.lore === 0 || ev === 'back')) {
       this.line = L.text;
       o.lore++;
       this.host.write();
       return;
     }
     const night = nightOf(s.clock ?? 0) >= 0.5;
-    this.line = pick(ev === 'toNight' ? LINES.toNight : ev === 'back' ? (this.newToday ? LINES.backNew : LINES.back) : ev === 'morning' ? LINES.morning : night && !this.host.hasTorch() ? LINES.nightDark : LINES.day);
+    this.line = pick(ev === 'toNight' ? LINES.toNight : ev === 'back' ? (this.newToday ? LINES.backNew : LINES.back) : night && !this.host.hasTorch() ? LINES.nightDark : LINES.day);
   }
 
   /** set by the game after a dive that found something new */
@@ -172,7 +188,8 @@ export class Kitchen {
     const inn = !this.host.progress().spear;
     $('kitchen').classList.toggle('inn', inn);
     $('k-okami').innerHTML = `<b>女将のハルさん</b>「${this.line}」`;
-    $('k-status').innerHTML = inn ? `<span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` : `<span>評判 <span class="stars">${stars}</span> Lv<b>${lv}</b></span><span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` +
+    const wToday = WEATHER[weatherOf(s.day ?? 1)];
+    $('k-status').innerHTML = inn ? `<span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>天気 ${wToday.icon} <b>${wToday.name}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` : `<span>評判 <span class="stars">${stars}</span> Lv<b>${lv}</b></span><span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>天気 ${wToday.icon} <b>${wToday.name}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` +
       (next !== undefined ? `<span>次のLvまで評判 <b>${next - rep}</b></span><div class="k-bar"><i style="width:${((rep - prev) / (next - prev)) * 100}%"></i></div>` : '<span>評判 最高！</span>');
 
     // story: one chapter per reputation level, shown until read
@@ -228,9 +245,30 @@ export class Kitchen {
     $('k-sleep').classList.toggle('hidden', !night && !this.host.hasTorch());
     $('k-sleep').innerHTML = night ? `☾→☀ 朝にする<small>${inn ? '部屋で寝る' : '店を閉めて寝る'}（${(s.day ?? 1) + 1}日目の朝へ）</small>` : '☀→☾ 夜にする<small>夜の海に潜れるようにする</small>';
 
+    // Phase 4: the tackle shelf — bait for luring fish, sold in packs of BAIT.pack uses
+    $('k-bait').innerHTML = BAIT.kinds.map((k) => {
+      const have = s.bait?.[k.id] ?? 0;
+      const afford = (s.money ?? 0) >= k.price;
+      return `<div class="k-item"><div><div class="what">${k.name}　<span class="who">手持ち ${have}回分</span></div><div class="who">${k.desc}（${BAIT.pack}回分）</div></div>
+        <div class="acts"><button type="button" class="btn sec" data-bait="${k.id}" ${afford ? '' : 'disabled'}>買う ${yen(k.price)}</button></div></div>`;
+    }).join('');
+
     $('k-orders').querySelectorAll<HTMLButtonElement>('[data-serve]').forEach((b) => b.addEventListener('click', () => this.serve(b.dataset.serve!)));
     $('k-cooler').querySelectorAll<HTMLButtonElement>('[data-eat]').forEach((b) => b.addEventListener('click', () => this.eat(+b.dataset.eat!)));
     $('k-cooler').querySelectorAll<HTMLButtonElement>('[data-sell]').forEach((b) => b.addEventListener('click', () => this.sell(+b.dataset.sell!)));
+    $('k-bait').querySelectorAll<HTMLButtonElement>('[data-bait]').forEach((b) => b.addEventListener('click', () => this.buyBait(b.dataset.bait as BaitId)));
+  }
+
+  /** Buy a pack of bait at the tackle shelf. */
+  buyBait(id: BaitId): void {
+    const s = this.host.save;
+    const k = BAIT.kinds.find((x) => x.id === id)!;
+    if ((s.money ?? 0) < k.price) { this.host.toast(`所持金が足りない（${yen(k.price)}）`, 'warn'); return; }
+    s.money = (s.money ?? 0) - k.price;
+    (s.bait ??= {})[id] = (s.bait?.[id] ?? 0) + BAIT.pack;
+    this.host.write();
+    this.host.toast(`「${k.name}」を買った（${BAIT.pack}回分）。海中で餌ボタンからまける`, '', 3);
+    this.render();
   }
 
   private mgOpen(): HTMLElement {
