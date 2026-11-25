@@ -24,4 +24,5 @@
 - Phase 3（PHASE3-DESIGN §8）：K 円の外では時間も止める／L 島民の依頼は食堂へ移さない／M 写真スポットの場所・額は仮／N 光景の初回 1/3／O 夜の魚＝魚の仲間だけ／P ウミガメの頻度は仮。
 
 ## アーティファクト
+- Version 25 に更新済み（Phase 3）。
 - https://claude.ai/artifact/WFpZNDxWq6nFYMsetBYKjk
