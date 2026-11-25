@@ -1462,10 +1462,12 @@ export class Game {
     let edgePushed = false, edgeShore = false;
     if (edgeD < 12) {
       const k = Math.max(0.05, edgeD / 12);
-      if (p.x - WORLD.minX < 12 && this.vel.x < 0) { this.vel.x *= k; edgePushed = true; }
-      if (WORLD.maxX - p.x < 12 && this.vel.x > 0) { this.vel.x *= k; edgePushed = true; }
-      if (p.z - WORLD.minZ < 12 && this.vel.z < 0) { this.vel.z *= k; edgePushed = true; edgeShore = true; }
-      if (WORLD.maxZ - p.z < 12 && this.vel.z > 0) { this.vel.z *= k; edgePushed = true; }
+      // the message follows the closest wall the player is actually pushing on
+      let best = Infinity;
+      if (p.x - WORLD.minX < 12 && this.vel.x < 0) { this.vel.x *= k; edgePushed = true; if (p.x - WORLD.minX < best) { best = p.x - WORLD.minX; edgeShore = false; } }
+      if (WORLD.maxX - p.x < 12 && this.vel.x > 0) { this.vel.x *= k; edgePushed = true; if (WORLD.maxX - p.x < best) { best = WORLD.maxX - p.x; edgeShore = false; } }
+      if (p.z - WORLD.minZ < 12 && this.vel.z < 0) { this.vel.z *= k; edgePushed = true; if (p.z - WORLD.minZ < best) { best = p.z - WORLD.minZ; edgeShore = true; } }
+      if (WORLD.maxZ - p.z < 12 && this.vel.z > 0) { this.vel.z *= k; edgePushed = true; if (WORLD.maxZ - p.z < best) { edgeShore = false; } }
     }
     const preX = p.x, preZ = p.z;
     p.x = clamp(p.x, WORLD.minX, WORLD.maxX);
@@ -2056,7 +2058,7 @@ export class Game {
         ?? unshot.find((x) => !hinted.has(x))
         ?? unshot[0];
       if (pick) {
-        this.save.sceneHints = [...hinted, pick];
+        this.save.sceneHints = [...new Set([...hinted, pick])];
         this.chestCard('古い手記の切れはし', SCENES[pick].name, SCENES[pick].note, '');
       } else {
         this.save.money = (this.save.money ?? 0) + CHEST.silver;
@@ -2087,7 +2089,7 @@ export class Game {
     el.style.animation = 'none';
     void el.offsetWidth;
     el.style.animation = '';
-    $<HTMLImageElement>('disc-photo').src = photo;
+    const dp2 = $<HTMLImageElement>('disc-photo'); dp2.style.display = ''; dp2.src = photo;
     $('disc-tag').textContent = isNew ? (s.rarity >= 4 ? '◆ 伝説の生き物を発見！！' : s.rarity >= 3 ? '★ 激レア発見！' : '新種発見！') : record ? '自己ベスト更新！' : '撮影成功（登録済み）';
     const gEl = $('disc-grade');
     if (ev) {

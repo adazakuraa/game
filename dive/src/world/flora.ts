@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ARCH, bommieAt, BLUEHOLE, KELP, kelpWeight, CAVE_PATH, caveDist, caveRoofAt, CENOTE, heightAt, reefEdgeZ, rockyWeight, RUINS, VENT, WRECK, WRECKS_WEST, zoneAt, DIVE_POINTS } from './layout';
+import { ARCH, bommieAt, BLUEHOLE, KELP, kelpWeight, CAVE_PATH, caveDist, caveRoofAt, caveTopAt, CENOTE, heightAt, reefEdgeZ, rockyWeight, RUINS, VENT, WRECK, WRECKS_WEST, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
 import { addSurfaceItem } from './surface';
 import { addCollider, addSphere, resolveCapsule } from './colliders';
@@ -1113,7 +1113,7 @@ export class Flora {
       const steps: ScatterItem[] = [];
       const slopeY = (dz: number) => heightAt(RUINS.x, RUINS.z + dz);
       for (let k = 0; k < 27; k++) {
-        const dz = 29.6 - k * (21 / 27);
+        const dz = 29.6 - k * (21.7 / 27);
         steps.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(RUINS.x, slopeY(dz) + 0.18, RUINS.z + dz), new THREE.Quaternion(), new THREE.Vector3(7, 0.6, 0.95)), c: color(0.1, 0.16, 0.5) });
       }
       add(blockG, rockMat, steps, 110, 60);
@@ -1257,8 +1257,8 @@ export class Flora {
       }
       add(stalG, rockMat, st, 60, 40);
       pts.forEach((p, i) => { if (i % 3 === 0 && caveRoofAt(p.x, p.z) !== null) this.homes.caveSpots.push(new THREE.Vector3(p.x, heightAt(p.x, p.z) + 1.4, p.z)); });
-      for (const [x, z] of sample(40, [-425, -240, 795, 1000], (x, z) => zoneAt(x, z) === 'cave' && caveRoofAt(x, z) === null && Math.hypot(x - CENOTE.x, z - CENOTE.z) >= CENOTE.r + 4, 10)) {
-        this.homes.caveTopSpots.push(new THREE.Vector3(x, heightAt(x, z), z));
+      for (const [x, z] of sample(40, [-425, -240, 795, 1000], (x, z) => zoneAt(x, z) === 'cave' && Math.hypot(x - CENOTE.x, z - CENOTE.z) >= CENOTE.r + 4, 10)) {
+        this.homes.caveTopSpots.push(new THREE.Vector3(x, caveTopAt(x, z) ?? heightAt(x, z), z));
       }
       // yellow guide line along the passage floor
       const linePts = pts.filter((_, i) => i % 3 === 0).map((p) => new THREE.Vector3(p.x + p.nx * 1.2, heightAt(p.x + p.nx * 1.2, p.z + p.nz * 1.2) + 0.45, p.z + p.nz * 1.2));

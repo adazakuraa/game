@@ -139,10 +139,10 @@ const PYR_H = [4.5, 8.5, 11.5, 14, 16]; // cumulative height at the top of each 
 function pyramidAt(dx: number, dz: number): number {
   const r = Math.max(Math.abs(dx), Math.abs(dz));
   // grand staircase: a straight ramp on the north face, cutting through the tiers
-  if (Math.abs(dx) < 3.5 && dz >= 9 && dz <= 30) return PYR_H[4] * (30 - dz) / 21;
+  if (Math.abs(dx) < 3.5 && dz >= 7.5 && dz <= 30) return PYR_H[4] * (30 - dz) / 22.5;
   if (r >= PYR_W[0]) return 0;
   for (let i = 0; i < 5; i++) {
-    const wTop = i === 4 ? PYR_W[4] - 0.8 : PYR_W[i] - 1.5; // wall leans in by 1.5 m (top tier nearly vertical)
+    const wTop = PYR_W[i] - 1.5; // every wall leans in by 1.5 m (design §2.1)
     const hPrev = i === 0 ? 0 : PYR_H[i - 1];
     if (r > PYR_W[i]) return hPrev; // terrace of the tier below (or the base plain)
     if (r >= wTop) {

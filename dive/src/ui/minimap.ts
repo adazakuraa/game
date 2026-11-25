@@ -128,7 +128,7 @@ export class Minimap {
             [r, gg, b] = water(Math.max(0.5, d));
           }
         } else {
-          const ii = Math.round((WORLD.maxX - x) / RES), jj = Math.round((WORLD.maxZ - z) / RES);
+          const ii = Math.min(WW - 1, Math.round((WORLD.maxX - x) / RES)), jj = Math.min(WH - 1, Math.round((WORLD.maxZ - z) / RES));
           const h = hts[jj * WW + ii];
           const d = -h;
           const wc = water(d);
