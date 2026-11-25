@@ -45,7 +45,7 @@ export function coldWeight(x: number, z: number): number {
 // Three special dive sites west of the drop-off (x < -220, z > 400): underwater ruins + ship graveyard,
 // a blue hole, and a cenote-style cave. They replace the open-ocean profile there.
 export const RUINS = { x: -330, z: 505 };
-export const BLUEHOLE = { x: -330, z: 690, r: 27, depth: 55 };
+export const BLUEHOLE = { x: 300, z: 600, r: 27, depth: 55 };
 export const CENOTE = { x: -330, z: 850, r: 9, depth: 22 };
 /** Cave passage: from the cenote pit through a winding tunnel to a chamber. [x, z, half-width] */
 export const CAVE_PATH: [number, number, number][] = [
@@ -73,7 +73,35 @@ function kelpHeight(x: number, z: number): number {
 }
 
 export function westWeight(x: number, z: number): number {
-  return (1 - smoothstep(-238, -212, x)) * smoothstep(388, 412, z);
+  const xw = 1 - smoothstep(-238, -212, x);
+  const ruinsBand = smoothstep(388, 412, z) * (1 - smoothstep(640, 665, z));
+  const caveBand = smoothstep(765, 790, z);
+  return xw * Math.max(ruinsBand, caveBand);
+}
+
+/** Blue-hole plateau weight (Phase 5: the hole moved east onto a seamount). */
+export function blueWeight(x: number, z: number): number {
+  const dist = Math.hypot(x - BLUEHOLE.x, z - BLUEHOLE.z);
+  const wob = 8 * simplex2(Math.atan2(z - BLUEHOLE.z, x - BLUEHOLE.x) * 2.5, 3.3);
+  return 1 - smoothstep(70, 105, dist + wob);
+}
+
+function blueHeight(x: number, z: number): number {
+  // shallow white-sand plateau with a sheer circular hole
+  let hb = -7 + 0.8 * fbm2(x * 0.05, z * 0.05, 3);
+  const rr = Math.hypot(x - BLUEHOLE.x, z - BLUEHOLE.z) + 1.5 * simplex2(Math.atan2(z - BLUEHOLE.z, x - BLUEHOLE.x) * 3, 1);
+  const wall = smoothstep(BLUEHOLE.r + 2, BLUEHOLE.r - 2, rr);
+  const bowl = (1 - clamp(rr / BLUEHOLE.r, 0, 1)) ** 2 * 4;
+  hb = lerp(hb, -BLUEHOLE.depth - bowl + 1.5 * fbm2(x * 0.1, z * 0.1, 2), wall);
+  // rim ledge where the stalactites hang
+  hb -= smoothstep(BLUEHOLE.r + 6, BLUEHOLE.r + 2, rr) * (1 - wall) * 3;
+  return hb;
+}
+
+/** Plateau height above the cave roof (the sand divers and sand fish stand on), or null where there is no roof. */
+export function caveTopAt(x: number, z: number): number | null {
+  if (caveRoofAt(x, z) === null) return null;
+  return -2.6 + 0.6 * ridged2(x * 0.06, z * 0.06, 3);
 }
 
 /** distance from (x,z) to the cave path, and the interpolated half-width there */
@@ -102,35 +130,45 @@ export function caveRoofAt(x: number, z: number): number | null {
   return floor + tall + 0.7 * simplex2(x * 0.35, z * 0.35) - 0.8 * Math.max(0, simplex2(x * 1.1 + 4, z * 1.1)) ** 2 * 2;
 }
 
+// Phase 5: the ruins become a square five-tier "pyramid of the sun" (Teotihuacan-like):
+// square base, sloping walls (talud) with flat terraces, a straight grand staircase on the
+// north face and a flat top platform. H(r) is the height above the -22 m base as a function
+// of the square radius r = max(|dx|, |dz|).
+const PYR_W = [30, 24, 18.5, 13.5, 9]; // half-width at the foot of each tier's wall
+const PYR_H = [4.5, 8.5, 11.5, 14, 16]; // cumulative height at the top of each tier
+function pyramidAt(dx: number, dz: number): number {
+  const r = Math.max(Math.abs(dx), Math.abs(dz));
+  // grand staircase: a straight ramp on the north face, cutting through the tiers
+  if (Math.abs(dx) < 3.5 && dz >= 7.5 && dz <= 30) return PYR_H[4] * (30 - dz) / 22.5;
+  if (r >= PYR_W[0]) return 0;
+  for (let i = 0; i < 5; i++) {
+    const wTop = PYR_W[i] - 1.5; // every wall leans in by 1.5 m (design §2.1)
+    const hPrev = i === 0 ? 0 : PYR_H[i - 1];
+    if (r > PYR_W[i]) return hPrev; // terrace of the tier below (or the base plain)
+    if (r >= wTop) {
+      const t = (PYR_W[i] - r) / (PYR_W[i] - wTop);
+      return hPrev + (PYR_H[i] - hPrev) * smoothstep(0, 1, t); // the sloping wall
+    }
+    if (i === 4) return PYR_H[4]; // top platform
+  }
+  return PYR_H[4];
+}
+
 function westHeight(x: number, z: number): number {
-  // --- ruins + ship graveyard (z 410..605)
-  const ruinsW = 1 - smoothstep(595, 620, z);
-  const blueW = smoothstep(595, 620, z) * (1 - smoothstep(770, 795, z));
-  const caveW = smoothstep(770, 795, z);
+  // --- ruins + ship graveyard (z 410..665) and cave plateau (z 765..)
+  const ruinsW = 1 - smoothstep(640, 665, z);
+  const caveW = smoothstep(765, 790, z);
   let h = 0;
   if (ruinsW > 0) {
     let hr = -22 + 1.2 * fbm2(x * 0.04, z * 0.04, 3);
-    // stepped monument (Yonaguni-like terraces with sharp risers)
-    const dx = Math.abs(x - RUINS.x), dz = Math.abs(z - RUINS.z);
-    const r = Math.max(dx / 1.3, dz);
-    const e = clamp(17 - r * 0.42, 0, 17);
-    const stepH = 2.2;
-    const stepped = Math.floor(e / stepH) * stepH + smoothstep(0.86, 1, (e / stepH) % 1) * stepH;
-    hr += stepped + 0.15 * simplex2(x * 0.8, z * 0.8);
-    // a straight "road" trench and plaza to the north of the monument
-    if (Math.abs(x - RUINS.x) < 4 && z > RUINS.z + 28 && z < RUINS.z + 70) hr -= 1.2;
+    if (MODE !== 2) {
+      // the pyramid, its staircase slope and the road trench are man-made: the chart
+      // (MODE 2) must not show them (PHASE5-DESIGN §1.3)
+      hr += pyramidAt(x - RUINS.x, z - RUINS.z) + 0.15 * simplex2(x * 0.8, z * 0.8);
+      // a straight "road" trench and plaza to the north of the monument
+      if (Math.abs(x - RUINS.x) < 4 && z > RUINS.z + 31 && z < RUINS.z + 70) hr -= 1.2;
+    }
     h += ruinsW * hr;
-  }
-  if (blueW > 0) {
-    // shallow white-sand plateau with a sheer circular hole
-    let hb = -7 + 0.8 * fbm2(x * 0.05, z * 0.05, 3);
-    const rr = Math.hypot(x - BLUEHOLE.x, z - BLUEHOLE.z) + 1.5 * simplex2(Math.atan2(z - BLUEHOLE.z, x - BLUEHOLE.x) * 3, 1);
-    const wall = smoothstep(BLUEHOLE.r + 2, BLUEHOLE.r - 2, rr);
-    const bowl = (1 - clamp(rr / BLUEHOLE.r, 0, 1)) ** 2 * 4;
-    hb = lerp(hb, -BLUEHOLE.depth - bowl + 1.5 * fbm2(x * 0.1, z * 0.1, 2), wall);
-    // rim ledge where the stalactites hang
-    hb -= smoothstep(BLUEHOLE.r + 6, BLUEHOLE.r + 2, rr) * (1 - wall) * 3;
-    h += blueW * hb;
   }
   if (caveW > 0) {
     // rock plateau just under the surface; cenote pit and the cave trench (roofed separately)
@@ -139,14 +177,44 @@ function westHeight(x: number, z: number): number {
     hc = lerp(hc, -CENOTE.depth - 1.5 * fbm2(x * 0.2, z * 0.2, 2), smoothstep(CENOTE.r + 3, CENOTE.r - 1, rc));
     const c = caveDist(x, z);
     const floor = -(CENOTE.depth + c.t * 6) + 0.6 * fbm2(x * 0.3, z * 0.3, 2);
-    hc = Math.min(hc, lerp(floor, hc, smoothstep(c.w - 0.5, c.w + 2.5, c.d)));
+    // the trench is carved only for the real floor (MODE 0); the visible surface
+    // (MODE 1) and the chart (MODE 2) keep the plateau whole, except at the cenote
+    // shaft and its mouth, where the opening is real (PHASE5-DESIGN §2.3)
+    if (MODE === 0 || rc < CENOTE.r + 2) {
+      hc = Math.min(hc, lerp(floor, hc, smoothstep(c.w - 0.5, c.w + 2.5, c.d)));
+    }
     h += caveW * hc;
   }
   return h;
 }
 
+/** Which "truth" heightCore reports: 0 = the real floor (collision, creatures),
+ * 1 = the visible surface (terrain mesh: the cave trench is roofed over),
+ * 2 = the chart's natural terrain (no ruins, no trench, no wreck pit). */
+let MODE: 0 | 1 | 2 = 0;
+
 /** Bottom height (negative = below surface). */
 export function heightAt(x: number, z: number): number {
+  return heightCore(x, z);
+}
+
+/** The height of the ground as seen from above (terrain mesh). */
+export function surfaceTopAt(x: number, z: number): number {
+  const m = MODE; MODE = 1;
+  const h = heightCore(x, z);
+  MODE = m;
+  return h;
+}
+
+/** Natural terrain only, for the sea chart: man-made shapes are not drawn. */
+export function chartHeightAt(x: number, z: number): number {
+  const m = MODE; MODE = 2;
+  const h = heightCore(x, z);
+  MODE = m;
+  return h;
+}
+
+function heightCore(x: number, z: number): number {
   const edge = reefEdgeZ(x);
   // --- base profile (depth, positive)
   let d: number;
@@ -211,13 +279,15 @@ export function heightAt(x: number, z: number): number {
     const vd = Math.hypot(x - VENT.x, z - VENT.z);
     h += Math.max(0, 1 - vd / 45) ** 2 * 18;
   }
-  // wreck scour pit
+  // wreck scour pit (a man-made hollow: the chart does not show it)
   const wd = Math.hypot(x - WRECK.x, z - WRECK.z);
-  if (wd < 30) h -= (1 - wd / 30) ** 2 * 1.5;
+  if (wd < 30 && MODE !== 2) h -= (1 - wd / 30) ** 2 * 1.5;
   const ww = westWeight(x, z);
   if (ww > 0) h = lerp(h, westHeight(x, z), ww);
   const kw = kelpWeight(x, z);
   if (kw > 0) h = lerp(h, kelpHeight(x, z), kw);
+  const bw = blueWeight(x, z);
+  if (bw > 0) h = lerp(h, blueHeight(x, z), bw);
   const cw = coldWeight(x, z);
   if (cw > 0) {
     // cold cove: boulder field sloping from a cobble shore (west) and the bay mouth (north) to ~26 m
@@ -242,7 +312,8 @@ export function bommieAt(x: number, z: number): number {
 export function zoneAt(x: number, z: number): ZoneId {
   if (coldWeight(x, z) > 0.5) return 'cold';
   if (kelpWeight(x, z) > 0.5) return 'kelp';
-  if (westWeight(x, z) > 0.5) return z < 607 ? 'ruins' : z < 782 ? 'bluehole' : 'cave';
+  if (blueWeight(x, z) > 0.5) return 'bluehole';
+  if (westWeight(x, z) > 0.5) return z < 700 ? 'ruins' : 'cave';
   const edge = reefEdgeZ(x);
   if (z > 720) return 'deep';
   if (z > 480) return 'offshore';
@@ -332,7 +403,7 @@ export const DIVE_POINTS: DivePoint[] = [
   { id: 'dropoff', name: 'ドロップオフ／沖', sub: '水深 15m〜・大物と出会う', x: 0, z: 470 },
   { id: 'cold', name: '流氷の入り江', sub: '水温2℃・ドライスーツが無いとエアがすぐ尽きる', x: -300, z: 130 },
   { id: 'ruins', name: '海底遺跡', sub: '水深 6–24m・石の階段と沈船の墓場', x: -330, z: 440 },
-  { id: 'bluehole', name: 'ブルーホール', sub: '水深 7→55m・浅瀬に開いた底なしの青い穴', x: -330, z: 640 },
+  { id: 'bluehole', name: 'ブルーホール', sub: '水深 7→55m・浅瀬に開いた底なしの青い穴', x: 300, z: 545 },
   { id: 'cave', name: '水中洞窟', sub: '水深 22–28m・セノーテから暗い洞窟へ（ライト必須）', x: -330, z: 850 },
   { id: 'kelp', name: '海藻の森', sub: '水深 9–20m・水面まで伸びるジャイアントケルプの森', x: 330, z: 120 },
   { id: 'deep', name: '深海', sub: '水深 170–430m・大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },

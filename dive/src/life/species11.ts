@@ -3,7 +3,7 @@ import type { Paint } from './paint';
 import { paintLook, type Look } from './paint';
 import type { Habitat, Region, SpeciesDef } from './species';
 import { F, sh, type FishSpec } from './species2';
-import type { ZoneId } from '../world/layout';
+import { BLUEHOLE, type ZoneId } from '../world/layout';
 
 // Species 453-600 (generated from a data table by scripts kept outside the repo; edit here directly).
 // Spawn region follows zone + habitat so each animal lives where it belongs.
@@ -11,7 +11,7 @@ import type { ZoneId } from '../world/layout';
 const ZR: Record<ZoneId, Region> = {
   lagoon: [-180, 180, -50, 115], reef: [-190, 190, 135, 335], rocky: [60, 200, 60, 330], dropoff: [-170, 170, 335, 470],
   offshore: [-150, 150, 380, 700], deep: [-150, 150, 730, 1060], cold: [-415, -232, -20, 320], ruins: [-400, -262, 430, 598],
-  bluehole: [-372, -288, 650, 730], cave: [-372, -292, 860, 975], kelp: [236, 422, 50, 390],
+  bluehole: [BLUEHOLE.x - 42, BLUEHOLE.x + 42, BLUEHOLE.z - 40, BLUEHOLE.z + 40], cave: [-372, -292, 860, 975], kelp: [236, 422, 50, 390],
 };
 const RECT_HABS: Habitat[] = ['reefRoam', 'rockyRoam', 'midwater', 'surface'];
 

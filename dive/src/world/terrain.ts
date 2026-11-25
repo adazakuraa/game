@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bottomMaterial, heightAt, WORLD } from './layout';
+import { bottomMaterial, surfaceTopAt, WORLD } from './layout';
 import { PBR_FUNCS, underwaterMaterial } from '../render/underwater';
 import { baked, pbr } from '../render/baked';
 
@@ -122,13 +122,13 @@ export class Terrain {
       for (let i = 0; i < n; i++) {
         const x = x0 + i * step;
         const z = z0 + j * step;
-        const h = heightAt(x, z);
+        const h = surfaceTopAt(x, z);
         const k = j * n + i;
         pos[k * 3] = x;
         pos[k * 3 + 1] = h;
         pos[k * 3 + 2] = z;
-        const hx = heightAt(x + e, z) - heightAt(x - e, z);
-        const hz = heightAt(x, z + e) - heightAt(x, z - e);
+        const hx = surfaceTopAt(x + e, z) - surfaceTopAt(x - e, z);
+        const hz = surfaceTopAt(x, z + e) - surfaceTopAt(x, z - e);
         const nx = -hx, ny = 2 * e, nz = -hz;
         const l = Math.hypot(nx, ny, nz);
         nor[k * 3] = nx / l;
@@ -137,7 +137,7 @@ export class Terrain {
         const slope = 1 - ny / l;
         bottomMaterial(x, z, slope * 2.2, m);
         // baked cavity darkening: concave spots darker
-        const lap = heightAt(x + 2, z) + heightAt(x - 2, z) + heightAt(x, z + 2) + heightAt(x, z - 2) - 4 * h;
+        const lap = surfaceTopAt(x + 2, z) + surfaceTopAt(x - 2, z) + surfaceTopAt(x, z + 2) + surfaceTopAt(x, z - 2) - 4 * h;
         const ao = Math.max(0.55, Math.min(1.08, 1 - lap * 0.08));
         col[k * 3] = m[0] * ao;
         col[k * 3 + 1] = m[1] * ao;
@@ -199,8 +199,8 @@ export class Terrain {
     const want: [number, string, number, number][] = [];
     for (let cz = c0z; cz <= c1z; cz++) {
       for (let cx = c0x; cx <= c1x; cx++) {
-        if ((cx + 1) * CHUNK < WORLD.minX - 60 || cx * CHUNK > WORLD.maxX + 60) continue;
-        if ((cz + 1) * CHUNK < WORLD.minZ - 60 || cz * CHUNK > WORLD.maxZ + 60) continue;
+        if ((cx + 1) * CHUNK < WORLD.minX - (this.radius + CHUNK) || cx * CHUNK > WORLD.maxX + (this.radius + CHUNK)) continue;
+        if ((cz + 1) * CHUNK < WORLD.minZ - (this.radius + CHUNK) || cz * CHUNK > WORLD.maxZ + (this.radius + CHUNK)) continue;
         const k = this.key(cx, cz);
         const dx = (cx + 0.5) * CHUNK - x;
         const dz = (cz + 0.5) * CHUNK - z;

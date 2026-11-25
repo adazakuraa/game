@@ -1,6 +1,10 @@
-import { ARCH, DIVE_POINTS, heightAt, rockyWeight, VENT, WORLD, WRECK, zoneAt } from '../world/layout';
+import { ARCH, bottomMaterial, chartHeightAt, DIVE_POINTS, kelpWeight, VENT, WORLD, WRECK, zoneAt } from '../world/layout';
+import { simplex2 } from '../utils/noise';
 
 const RES = 2.5; // meters per map pixel
+/** chart margin (m) around the world: the sea (and the island to the south) continues,
+ * so the map never shows a black edge (PHASE5-DESIGN §1.5) */
+const M = 120;
 // landmarks are not drawn on the chart (the player finds them); kept for reference
 export const LANDMARKS = [
   { x: WRECK.x, z: WRECK.z, label: '沈没船', id: 'dropoff' },
@@ -17,7 +21,7 @@ const ZONE_LABELS = [
   { x: 0, z: 840, label: '深海', id: 'deep' },
   { x: -320, z: 180, label: '流氷の入り江', id: 'cold' },
   { x: -330, z: 520, label: '海底遺跡', id: 'ruins' },
-  { x: -330, z: 700, label: 'ブルーホール', id: 'bluehole' },
+  { x: 300, z: 610, label: 'ブルーホール', id: 'bluehole' },
   { x: -330, z: 900, label: '水中洞窟', id: 'cave' },
   { x: 330, z: 220, label: '海藻の森', id: 'kelp' },
 ];
@@ -40,8 +44,8 @@ export class Minimap {
   constructor(mini: HTMLCanvasElement, big: HTMLCanvasElement) {
     this.mini = mini;
     this.big = big;
-    this.W = Math.ceil((WORLD.maxX - WORLD.minX) / RES);
-    this.H = Math.ceil((WORLD.maxZ - WORLD.minZ) / RES);
+    this.W = Math.ceil((WORLD.maxX - WORLD.minX + 2 * M) / RES);
+    this.H = Math.ceil((WORLD.maxZ - WORLD.minZ + 2 * M) / RES);
     this.chart = document.createElement('canvas');
     this.chart.width = this.W;
     this.chart.height = this.H;
@@ -50,52 +54,119 @@ export class Minimap {
 
   /** map pixel for a world point */
   px(x: number, z: number): [number, number] {
-    return [(WORLD.maxX - x) / RES, (WORLD.maxZ - z) / RES];
+    return [(WORLD.maxX + M - x) / RES, (WORLD.maxZ + M - z) / RES];
   }
 
   private buildChart(): void {
+    const t0 = performance.now();
     const { W, H } = this;
-    const hts = new Float32Array(W * H);
-    for (let j = 0; j < H; j++) {
+    // world-only height grid (natural terrain: no ruins, no cave trench, no wreck pit)
+    const WW = Math.ceil((WORLD.maxX - WORLD.minX) / RES);
+    const WH = Math.ceil((WORLD.maxZ - WORLD.minZ) / RES);
+    const hts = new Float32Array(WW * WH);
+    for (let j = 0; j < WH; j++) {
       const z = WORLD.maxZ - j * RES;
-      for (let i = 0; i < W; i++) hts[j * W + i] = heightAt(WORLD.maxX - i * RES, z);
+      for (let i = 0; i < WW; i++) hts[j * WW + i] = chartHeightAt(WORLD.maxX - i * RES, z);
     }
+    // water colour by depth (aerial photo: the deeper, the more the water hides the bottom)
+    const STOPS: [number, [number, number, number]][] = [
+      [0, [0xa8, 0xea, 0xdf]], [6, [0x4f, 0xc6, 0xcf]], [15, [0x1f, 0x97, 0xc2]],
+      [40, [0x0f, 0x62, 0xa8]], [120, [0x0a, 0x3f, 0x86]], [400, [0x08, 0x2c, 0x6a]],
+    ];
+    const water = (d: number): [number, number, number] => {
+      for (let k = 1; k < STOPS.length; k++) {
+        if (d <= STOPS[k][0]) {
+          const [d0, c0] = STOPS[k - 1], [d1, c1] = STOPS[k];
+          const t = (d - d0) / (d1 - d0);
+          return [c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t, c0[2] + (c1[2] - c0[2]) * t];
+        }
+      }
+      return STOPS[STOPS.length - 1][1];
+    };
+    const bm = [0, 0, 0, 0, 0, 0];
+    // bottom colours are sampled every 2 px (5 m) and shared with the neighbour
+    // pixel: bottomMaterial is the expensive part of the build (design §1.6)
+    const BW = Math.ceil(W / 2), BH = Math.ceil(H / 2);
+    const bmGrid = new Float32Array(BW * BH * 3).fill(-1);
+    const bottomRGB = (i: number, j: number, x: number, z: number, h: number): [number, number, number] => {
+      const bi = Math.min(BW - 1, Math.round(i / 2)), bj = Math.min(BH - 1, Math.round(j / 2));
+      const o = (bj * BW + bi) * 3;
+      if (bmGrid[o] < 0) {
+        const ii = Math.round((WORLD.maxX - x) / RES), jj = Math.round((WORLD.maxZ - z) / RES);
+        const hl = hts[jj * WW + Math.max(0, ii - 1)];
+        const hd = hts[Math.min(WH - 1, jj + 1) * WW + ii];
+        const slope = Math.min(1, (Math.abs(h - hl) + Math.abs(h - hd)) / RES * 0.5);
+        bottomMaterial(x, z, slope, bm);
+        bmGrid[o] = (bm[0] * 0.9 + 0.1) * 255;
+        bmGrid[o + 1] = (bm[1] * 0.9 + 0.1) * 255;
+        bmGrid[o + 2] = (bm[2] * 0.9 + 0.1) * 255;
+      }
+      return [bmGrid[o], bmGrid[o + 1], bmGrid[o + 2]];
+    };
     const g = this.chart.getContext('2d')!;
     const img = g.createImageData(W, H);
     for (let j = 0; j < H; j++) {
       for (let i = 0; i < W; i++) {
-        const h = hts[j * W + i];
-        const d = -h;
-        // depth tint: turquoise shallows -> blue -> navy -> near black
-        const t = Math.min(1, Math.log(1 + d) / Math.log(440));
-        let r = 120 * (1 - t) ** 2 + 6;
-        let gg = 215 * (1 - t) ** 1.3 + 14;
-        let b = 205 * (1 - t * 0.75) + 20;
-        const x = WORLD.maxX - i * RES;
-        const z = WORLD.maxZ - j * RES;
-        if (d < 8) { r += 60 * (1 - d / 8); gg += 30 * (1 - d / 8); b += 10 * (1 - d / 8); } // sand
-        const rw = rockyWeight(x, z);
-        if (rw > 0.4) { r -= 20; gg -= 25; b -= 35; }
-        if (zoneAt(x, z) === 'reef') { r += 8; gg += 6; b -= 18; }
-        // hillshade from neighbors (light from upper-left)
-        const hl = hts[j * W + Math.max(0, i - 1)];
-        const hu = hts[Math.max(0, j - 1) * W + i];
-        const shade = Math.max(-0.5, Math.min(0.5, (h - hl + h - hu) * 0.18));
-        const k = 1 + shade;
-        // contour every 10 m (50 m in deep water)
-        const step = d > 60 ? 50 : 10;
-        const c0 = Math.floor(d / step);
-        const cr = Math.floor(-hts[j * W + Math.min(W - 1, i + 1)] / step);
-        const cd = Math.floor(-hts[Math.min(H - 1, j + 1) * W + i] / step);
-        const line = c0 !== cr || c0 !== cd ? 0.78 : 1;
+        const x = WORLD.maxX + M - i * RES;
+        const z = WORLD.maxZ + M - j * RES;
         const o = (j * W + i) * 4;
-        img.data[o] = Math.max(0, Math.min(255, r * k * line));
-        img.data[o + 1] = Math.max(0, Math.min(255, gg * k * line));
-        img.data[o + 2] = Math.max(0, Math.min(255, b * k * line));
+        let r: number, gg: number, b: number;
+        if (x < WORLD.minX || x > WORLD.maxX || z < WORLD.minZ || z > WORLD.maxZ) {
+          // --- margin: the world goes on. South is the island (beach -> green),
+          // elsewhere the sea deepens slowly away from the edge.
+          const dxOut = Math.max(WORLD.minX - x, x - WORLD.maxX, 0);
+          const dzOut = Math.max(WORLD.minZ - z, z - WORLD.maxZ, 0);
+          if (z < WORLD.minZ && dzOut >= dxOut) {
+            const t = Math.min(1, Math.max(0, (dzOut - 8) / 62)) + 0.05 * simplex2(x * 0.05, z * 0.05);
+            r = 0xe8 + (0x5f - 0xe8) * t; gg = 0xdc + (0x8a - 0xdc) * t; b = 0xc0 + (0x4a - 0xc0) * t;
+          } else {
+            const cx = Math.max(WORLD.minX, Math.min(WORLD.maxX, x));
+            const cz = Math.max(WORLD.minZ, Math.min(WORLD.maxZ, z));
+            const ei = Math.round((WORLD.maxX - cx) / RES), ej = Math.round((WORLD.maxZ - cz) / RES);
+            const edgeD = -hts[Math.max(0, Math.min(WH - 1, ej)) * WW + Math.max(0, Math.min(WW - 1, ei))];
+            const d = Math.min(425, edgeD + 0.3 * Math.hypot(dxOut, dzOut) + 6 * simplex2(x * 0.02, z * 0.02));
+            [r, gg, b] = water(Math.max(0.5, d));
+          }
+        } else {
+          const ii = Math.min(WW - 1, Math.round((WORLD.maxX - x) / RES)), jj = Math.min(WH - 1, Math.round((WORLD.maxZ - z) / RES));
+          const h = hts[jj * WW + ii];
+          const d = -h;
+          const wc = water(d);
+          const detail = Math.exp(-d / 9);
+          if (detail > 0.02) {
+            const bc = bottomRGB(i, j, x, z, h);
+            r = wc[0] + (bc[0] - wc[0]) * detail;
+            gg = wc[1] + (bc[1] - wc[1]) * detail;
+            b = wc[2] + (bc[2] - wc[2]) * detail;
+          } else {
+            [r, gg, b] = wc;
+          }
+          // kelp canopy seen from above: dark gold-brown patches
+          const kw = kelpWeight(x, z);
+          if (kw > 0.15) {
+            const a = 0.45 * kw * kw * (0.6 + 0.4 * simplex2(x * 0.05 + 9, z * 0.05));
+            r = r + (0x5a - r) * a; gg = gg + (0x5a - gg) * a; b = b + (0x30 - b) * a;
+          }
+          // drift ice in the cold cove: irregular white fragments
+          if (zoneAt(x, z) === 'cold' && simplex2(x * 0.11 + 4, z * 0.11) > 0.25) {
+            r = r + (0xe8 - r) * 0.8; gg = gg + (0xf4 - gg) * 0.8; b = b + (0xf8 - b) * 0.8;
+          }
+          const rip = 1 + 0.06 * simplex2(x * 0.03 + 2, z * 0.03);
+          r *= rip; gg *= rip; b *= rip;
+        }
+        img.data[o] = Math.max(0, Math.min(255, r));
+        img.data[o + 1] = Math.max(0, Math.min(255, gg));
+        img.data[o + 2] = Math.max(0, Math.min(255, b));
         img.data[o + 3] = 255;
       }
     }
     g.putImageData(img, 0, 0);
+    try {
+      g.filter = 'blur(0.6px)';
+      g.drawImage(this.chart, 0, 0);
+      g.filter = 'none';
+    } catch { /* filter unsupported: keep the sharp chart */ }
+    console.info(`[minimap] chart built in ${Math.round(performance.now() - t0)} ms`);
   }
 
   private arrow(g: CanvasRenderingContext2D, x: number, y: number, ang: number, s: number) {
@@ -146,7 +217,7 @@ export class Minimap {
     g.restore();
   }
 
-  update(x: number, z: number, yaw: number, boat: { x: number; z: number } | null, force = false): void {
+  update(x: number, z: number, yaw: number, boat: { x: number; z: number } | null, force = false, compass = false): void {
     if (!force && this.frame++ % 4 !== 0) return;
     const c = this.mini;
     const dpr = Math.min(2, devicePixelRatio || 1);
@@ -161,7 +232,7 @@ export class Minimap {
     g.beginPath();
     g.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
     g.clip();
-    g.fillStyle = '#020c14';
+    g.fillStyle = '#0b3a78';
     g.fillRect(0, 0, size, size);
     g.imageSmoothingEnabled = true;
     const sc = size / span;
@@ -169,10 +240,28 @@ export class Minimap {
     if (boat) {
       const [bx, by] = this.px(boat.x, boat.z);
       const sx = (bx - px) * sc + size / 2, sy = (by - py) * sc + size / 2;
-      g.fillStyle = '#ff9a3c';
-      g.beginPath();
-      g.arc(sx, sy, size * 0.035, 0, Math.PI * 2);
-      g.fill();
+      const dc = Math.hypot(sx - size / 2, sy - size / 2);
+      if (dc <= size / 2) {
+        g.fillStyle = '#ff9a3c';
+        g.beginPath();
+        g.arc(sx, sy, size * 0.035, 0, Math.PI * 2);
+        g.fill();
+      } else if (compass) {
+        // explorer's compass (treasure gear): an orange triangle on the rim points to the boat
+        const ang = Math.atan2(sy - size / 2, sx - size / 2);
+        const rx = size / 2 + Math.cos(ang) * (size / 2 - size * 0.055), ry = size / 2 + Math.sin(ang) * (size / 2 - size * 0.055);
+        g.save();
+        g.translate(rx, ry);
+        g.rotate(ang + Math.PI / 2);
+        g.fillStyle = '#ff9a3c';
+        g.beginPath();
+        g.moveTo(0, -size * 0.05);
+        g.lineTo(size * 0.034, size * 0.04);
+        g.lineTo(-size * 0.034, size * 0.04);
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
     }
     // request areas under everything else
     const t = performance.now() / 1000;
@@ -208,14 +297,22 @@ export class Minimap {
     c.height = Math.round(ch * dpr);
     const g = c.getContext('2d')!;
     g.scale(dpr, dpr);
-    const sc = Math.min(cw / this.W, ch / this.H);
-    const ox = (cw - this.W * sc) / 2, oy = (ch - this.H * sc) / 2;
+    const WW = (WORLD.maxX - WORLD.minX) / RES, WH = (WORLD.maxZ - WORLD.minZ) / RES;
+    const sc = Math.min(cw / WW, ch / WH);
+    const ox = (cw - WW * sc) / 2, oy = (ch - WH * sc) / 2;
+    // backdrop in the margin colours (deep navy above, island green below)
+    const grad = g.createLinearGradient(0, 0, 0, ch);
+    grad.addColorStop(0, '#082c6a');
+    grad.addColorStop(0.85, '#0a3f86');
+    grad.addColorStop(1, '#5f8a4a');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, cw, ch);
     const P = (wx: number, wz: number): [number, number] => {
       const [mx, my] = this.px(wx, wz);
       return [ox + mx * sc, oy + my * sc];
     };
     g.imageSmoothingEnabled = true;
-    g.drawImage(this.chart, ox, oy, this.W * sc, this.H * sc);
+    g.drawImage(this.chart, ox - (M / RES) * sc, oy - (M / RES) * sc, this.W * sc, this.H * sc);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.font = `700 ${Math.max(11, sc * 6)}px "Zen Kaku Gothic New", sans-serif`;
@@ -256,6 +353,6 @@ export class Minimap {
     g.font = `700 12px "Zen Kaku Gothic New", sans-serif`;
     g.fillStyle = 'rgba(220,240,248,0.75)';
     g.fillText('▲ 沖', cw / 2, oy + 12);
-    g.fillText('岸 ▼', cw / 2, oy + this.H * sc - 12);
+    g.fillText('岸 ▼', cw / 2, oy + WH * sc - 12);
   }
 }

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { chestModel } from './gearModels';
 import { buildUrchin } from '../life/models';
 import type { SpeciesDef } from '../life/species';
 import type { ZoneId } from '../world/layout';
@@ -156,15 +157,8 @@ export class Missions {
     for (let i = 0; i < MISSION.trash.spawn; i++) this.trashMesh.setColorAt(i, new THREE.Color().setHSL([0.55, 0.1, 0.0, 0.33][i % 4], 0.6, 0.6));
     const cg = new THREE.BoxGeometry(0.22, 0.14, 0.11);
     this.camMesh = new THREE.Mesh(cg, new THREE.MeshStandardMaterial({ color: 0xf2c400, roughness: 0.4, emissive: 0x2a2000 }));
-    // treasure chest: dark wooden box with gold bands
-    this.chestMesh = new THREE.Group();
-    const wood = new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.8, emissive: 0x120804 });
-    const gold = new THREE.MeshStandardMaterial({ color: 0xe8b830, roughness: 0.3, metalness: 0.8, emissive: 0x3a2800 });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.45), wood);
-    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.225, 0.225, 0.7, 10, 1, false, 0, Math.PI), wood);
-    lid.rotation.z = Math.PI / 2; lid.position.y = 0.2;
-    this.chestMesh.add(box, lid);
-    for (const x of [-0.25, 0.25]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.66, 0.47), gold); b.position.set(x, 0.12, 0); this.chestMesh.add(b); }
+    // treasure chest: the shared model (Phase 5: chests.ts uses the same one)
+    this.chestMesh = chestModel().group;
     // ghost net: a tangle of torn mesh draped over a turtle
     const np: number[] = [];
     const nr = (k: number) => Math.sin(k * 12.9898) * 43758.5453 % 1;

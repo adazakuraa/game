@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ARCH, bommieAt, BLUEHOLE, KELP, kelpWeight, CAVE_PATH, caveDist, caveRoofAt, CENOTE, heightAt, reefEdgeZ, rockyWeight, RUINS, VENT, WRECK, WRECKS_WEST, zoneAt, DIVE_POINTS } from './layout';
+import { ARCH, bommieAt, BLUEHOLE, KELP, kelpWeight, CAVE_PATH, caveDist, caveRoofAt, caveTopAt, CENOTE, heightAt, reefEdgeZ, rockyWeight, RUINS, VENT, WRECK, WRECKS_WEST, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
 import { addSurfaceItem } from './surface';
 import { addCollider, addSphere, resolveCapsule } from './colliders';
@@ -521,6 +521,8 @@ export type Homes = {
   coldSpots: THREE.Vector3[];
   /** points along the cave passage floor */
   caveSpots: THREE.Vector3[];
+  /** sand points on the plateau above the cave (sand fish live here, not in the trench) */
+  caveTopSpots: THREE.Vector3[];
   /** mid-water points on giant kelp stipes (seahorses, kelpfish) */
   kelpSpots: THREE.Vector3[];
 };
@@ -531,7 +533,7 @@ export class Flora {
   private mats: THREE.Material[] = [];
   /** rock ledges a diver can swim under (for tests and hints) */
   ledges: { x: number; z: number; bottom: number }[] = [];
-  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], coralAll: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], kelpSpots: [] };
+  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], coralAll: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], caveTopSpots: [], kelpSpots: [] };
   boat: THREE.Group;
   carpetCount = 0;
   private landmarks: THREE.Object3D[] = [];
@@ -1085,8 +1087,8 @@ export class Flora {
       pillarG.translate(0, 0.5, 0);
       const pillars: ScatterItem[] = [];
       for (let k = 0; k < 26; k++) {
-        const a = (k / 26) * Math.PI * 2, rr = 26 + (k % 3) * 9;
-        const x = RUINS.x + Math.cos(a) * rr * 1.3, z = RUINS.z + Math.sin(a) * rr;
+        const a = (k / 26) * Math.PI * 2, rr = 36 + (k % 3) * 8;
+        const x = RUINS.x + Math.cos(a) * rr, z = RUINS.z + Math.sin(a) * rr;
         const hgt = r() < 0.4 ? 1.5 + r() * 2 : 4 + r() * 3; // some broken
         pillars.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, heightAt(x, z) - 0.3, z), new THREE.Quaternion().setFromEuler(new THREE.Euler((r() - 0.5) * 0.12, r() * 6, (r() - 0.5) * 0.12)), new THREE.Vector3(1, hgt, 1)), c: color(0.1, 0.18, 0.5 + r() * 0.12) });
       }
@@ -1100,11 +1102,41 @@ export class Flora {
       const blocks: ScatterItem[] = [];
       const gx = RUINS.x, gz = RUINS.z + 52;
       blocks.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(gx, heightAt(gx, gz) + 7.6, gz), new THREE.Quaternion(), new THREE.Vector3(12, 1.4, 2)), c: color(0.1, 0.15, 0.55) });
-      for (const [x, z] of sample(70, [RUINS.x - 60, RUINS.x + 60, RUINS.z - 55, RUINS.z + 85], (x, z) => zoneAt(x, z) === 'ruins', 6)) {
+      for (const [x, z] of sample(70, [RUINS.x - 60, RUINS.x + 60, RUINS.z - 55, RUINS.z + 85], (x, z) => zoneAt(x, z) === 'ruins' && Math.max(Math.abs(x - RUINS.x), Math.abs(z - RUINS.z)) >= 31, 6)) {
         const sz = 0.8 + r() * 1.8;
         blocks.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, heightAt(x, z) + sz * 0.3, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(r() * 0.5, r() * 6, r() * 0.5)), new THREE.Vector3(sz * (1 + r()), sz * 0.7, sz)), c: color(0.1, 0.16, 0.45 + r() * 0.15) });
       }
       solid(blockG, rockMat, blocks, 110, 60);
+      // grand staircase on the north face: visual steps laid on the terrain ramp
+      // (the ramp itself is the collider), plus low sleeve walls (solid) and the
+      // summit temple (solid, doorway on the north side) — PHASE5-DESIGN §2.1
+      const steps: ScatterItem[] = [];
+      const slopeY = (dz: number) => heightAt(RUINS.x, RUINS.z + dz);
+      for (let k = 0; k < 27; k++) {
+        const dz = 29.6 - k * (21.7 / 27);
+        steps.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(RUINS.x, slopeY(dz) + 0.18, RUINS.z + dz), new THREE.Quaternion(), new THREE.Vector3(7, 0.6, 0.95)), c: color(0.1, 0.16, 0.5) });
+      }
+      add(blockG, rockMat, steps, 110, 60);
+      const sleeves: ScatterItem[] = [];
+      for (const sx of [-4.1, 4.1]) {
+        for (let k = 0; k < 9; k++) {
+          const dz = 28 - k * 2.4;
+          sleeves.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(RUINS.x + sx, slopeY(dz) + 0.55, RUINS.z + dz), new THREE.Quaternion(), new THREE.Vector3(1.1, 1.7, 2.6)), c: color(0.1, 0.15, 0.52) });
+        }
+      }
+      solid(blockG, rockMat, sleeves, 110, 60);
+      const temple: ScatterItem[] = [];
+      const fy = heightAt(RUINS.x, RUINS.z); // top platform (-6 m)
+      const tbox = (dx: number, dy: number, dz: number, sx: number, sy: number, sz: number) =>
+        temple.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(RUINS.x + dx, fy + dy, RUINS.z + dz), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz)), c: color(0.1, 0.15, 0.53) });
+      tbox(0, 1.55, -3.1, 7, 3.5, 0.8); // south wall
+      tbox(-3.1, 1.55, 0, 0.8, 3.5, 7); // west wall
+      tbox(3.1, 1.55, 0, 0.8, 3.5, 7); // east wall
+      tbox(-2.35, 1.55, 3.1, 2.3, 3.5, 0.8); // north wall, left of the doorway
+      tbox(2.35, 1.55, 3.1, 2.3, 3.5, 0.8); // north wall, right of the doorway
+      tbox(0, 2.95, 3.1, 2.4, 1.1, 0.8); // lintel over the doorway (2.4 m wide, 2.4 m high)
+      tbox(0, 3.65, 0, 8, 0.6, 8); // flat roof
+      solid(blockG, rockMat, temple, 110, 60);
     }
 
     // ---- blue hole: stalactites hanging in a ring on the wall at 28-44 m
@@ -1158,7 +1190,42 @@ export class Flora {
           }
       };
       sheet(false);
-      sheet(true);
+      // the cave interior (floor and walls) as its own ribbon: the terrain mesh
+      // above now runs at surfaceTopAt (plateau height), so without this the
+      // passage would have no floor. The cenote shaft is left to the terrain.
+      {
+        const pos2: number[] = [];
+        const idx2: number[] = [];
+        const J2 = 16;
+        let rows = 0;
+        for (const p of pts) {
+          if (Math.hypot(p.x - CENOTE.x, p.z - CENOTE.z) < CENOTE.r + 1.2) continue;
+          for (let j = 0; j <= J2; j++) {
+            const sl = -1 + (2 * j) / J2;
+            const x = p.x + p.nx * sl * (p.w + 3.0), z = p.z + p.nz * sl * (p.w + 3.0);
+            pos2.push(x, heightAt(x, z), z);
+          }
+          rows++;
+        }
+        for (let i = 0; i < rows - 1; i++)
+          for (let j = 0; j < J2; j++) {
+            const a = i * (J2 + 1) + j, b = a + J2 + 1;
+            idx2.push(a, a + 1, b, a + 1, b + 1, b);
+          }
+        const inG = new THREE.BufferGeometry();
+        inG.setAttribute('position', new THREE.Float32BufferAttribute(pos2, 3));
+        inG.setIndex(idx2);
+        inG.computeVertexNormals();
+        const n2 = inG.attributes.normal as THREE.BufferAttribute;
+        if (n2.getY(0) < 0) {
+          for (let i = 0; i < idx2.length; i += 3) { const t = idx2[i + 1]; idx2[i + 1] = idx2[i + 2]; idx2[i + 2] = t; }
+          inG.setIndex(idx2);
+          inG.computeVertexNormals();
+        }
+        const inner = new THREE.Mesh(inG, rockMat);
+        inner.receiveShadow = true;
+        this.group.add(inner);
+      }
       const roofG = new THREE.BufferGeometry();
       roofG.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       roofG.setIndex(idx);
@@ -1190,6 +1257,9 @@ export class Flora {
       }
       add(stalG, rockMat, st, 60, 40);
       pts.forEach((p, i) => { if (i % 3 === 0 && caveRoofAt(p.x, p.z) !== null) this.homes.caveSpots.push(new THREE.Vector3(p.x, heightAt(p.x, p.z) + 1.4, p.z)); });
+      for (const [x, z] of sample(40, [-425, -240, 795, 1000], (x, z) => zoneAt(x, z) === 'cave' && Math.hypot(x - CENOTE.x, z - CENOTE.z) >= CENOTE.r + 4, 10)) {
+        this.homes.caveTopSpots.push(new THREE.Vector3(x, caveTopAt(x, z) ?? heightAt(x, z), z));
+      }
       // yellow guide line along the passage floor
       const linePts = pts.filter((_, i) => i % 3 === 0).map((p) => new THREE.Vector3(p.x + p.nx * 1.2, heightAt(p.x + p.nx * 1.2, p.z + p.nz * 1.2) + 0.45, p.z + p.nz * 1.2));
       const line = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(linePts), linePts.length * 4, 0.025, 5), new THREE.MeshStandardMaterial({ color: 0xffd23a, emissive: 0x403000, roughness: 0.6 }));

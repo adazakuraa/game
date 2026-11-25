@@ -131,3 +131,21 @@ export function buildKnife(): THREE.Group {
   g.add(grip);
   return g;
 }
+
+/** A treasure chest (dark wood, gold bands) with the lid on a hinge pivot so it can swing open. */
+export function chestModel(): { group: THREE.Group; lid: THREE.Group } {
+  const group = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.8, emissive: 0x120804 });
+  const gold = new THREE.MeshStandardMaterial({ color: 0xe8b830, roughness: 0.3, metalness: 0.8, emissive: 0x3a2800 });
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.45), wood);
+  group.add(box);
+  const pivot = new THREE.Group();
+  pivot.position.set(0, 0.2, -0.225);
+  const lidMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.225, 0.225, 0.7, 10, 1, false, 0, Math.PI), wood);
+  lidMesh.rotation.z = Math.PI / 2;
+  lidMesh.position.set(0, 0, 0.225);
+  pivot.add(lidMesh);
+  group.add(pivot);
+  for (const x of [-0.25, 0.25]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.66, 0.47), gold); b.position.set(x, 0.12, 0); group.add(b); }
+  return { group, lid: pivot };
+}

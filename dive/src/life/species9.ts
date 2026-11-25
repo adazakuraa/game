@@ -2,12 +2,13 @@ import { buildAmmonite, buildCrustacean } from './models';
 import type { Paint } from './paint';
 import type { Region, SpeciesDef } from './species';
 import { F, sh } from './species2';
+import { BLUEHOLE } from '../world/layout';
 
 /** Animals of the western sites (ruins, blue hole, cave) and of night dives. */
 
-const RUINS_R: Region = [-400, -262, 430, 598];
-const HOLE: Region = [-352, -308, 668, 712];
-const RIM: Region = [-372, -288, 650, 730];
+export const RUINS_R: Region = [-400, -262, 430, 598];
+export const HOLE: Region = [BLUEHOLE.x - 22, BLUEHOLE.x + 22, BLUEHOLE.z - 22, BLUEHOLE.z + 22];
+export const RIM: Region = [BLUEHOLE.x - 42, BLUEHOLE.x + 42, BLUEHOLE.z - 40, BLUEHOLE.z + 40];
 
 const dots = (p: Paint, n: number, r0: number, r1: number, col: string) => {
   p.g.fillStyle = col;

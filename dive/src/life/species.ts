@@ -1,10 +1,10 @@
-import type { ZoneId } from '../world/layout';
+import { BLUEHOLE, RUINS, type ZoneId } from '../world/layout';
 import type { FishShape, RayShape } from './models';
 import type { Paint } from './paint';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
 export type Kind = 'fish' | 'ray' | 'jelly' | 'squid' | 'octopus' | 'dumbo' | 'turtle' | 'lobster' | 'isopod' | 'nudi' | 'gardenEel' | 'inv' | 'none';
-export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots' | 'coldSpots' | 'caveSpots' | 'kelpSpots';
+export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots' | 'coldSpots' | 'caveSpots' | 'caveTopSpots' | 'kelpSpots';
 /** Micro-habitat: where in the 3D reef structure a species lives and how it reacts. */
 export type Habitat = 'coralHover' | 'coralPick' | 'reefRoam' | 'midwater' | 'wall' | 'under' | 'perch' | 'burrow' | 'sandForage' | 'seagrass' | 'surface' | 'cleaner' | 'rockyRoam';
 
@@ -478,7 +478,49 @@ function balanceZones() {
     }
   }
 }
+/**
+ * Phase 5: each map needs its own fish (design §6.2). Existing species move to the
+ * ruins / blue hole / cave (no new species — that is Phase 12), so the three sparse
+ * maps reach ten fish each. Ids do not change, so saves and the dex carry over.
+ */
+const MAP_RUINS: Region = [RUINS.x - 70, RUINS.x + 68, RUINS.z - 75, RUINS.z + 93];
+const MAP_HOLE: Region = [BLUEHOLE.x - 22, BLUEHOLE.x + 22, BLUEHOLE.z - 22, BLUEHOLE.z + 22];
+const MAP_RIM: Region = [BLUEHOLE.x - 42, BLUEHOLE.x + 42, BLUEHOLE.z - 40, BLUEHOLE.z + 40];
+const MAP_MOVES: { id: string; zone: ZoneId; region: Region; depth: [number, number]; hint: string }[] = [
+  { id: 'tsubameuo', zone: 'ruins', region: MAP_RUINS, depth: [5, 25], hint: '遺跡の沈没船のまわりを、群れでゆったり漂う' },
+  { id: 'mikazukitsubame', zone: 'ruins', region: MAP_RUINS, depth: [5, 25], hint: '遺跡の柱や沈没船の陰に寄りそう' },
+  { id: 'isomaguro', zone: 'ruins', region: MAP_RUINS, depth: [8, 24], hint: '遺跡の上を、沖から群れで回ってくる' },
+  { id: 'madaratarumi', zone: 'ruins', region: MAP_RUINS, depth: [8, 24], hint: '遺跡の石段や柱のまわりに群れる' },
+  { id: 'yokosimakurodai', zone: 'ruins', region: MAP_RUINS, depth: [8, 24], hint: '遺跡の石の陰に群れて休む' },
+  { id: 'kokuhanara', zone: 'ruins', region: MAP_RUINS, depth: [8, 24], hint: '遺跡の石組みのすき間を住みかにする' },
+  { id: 'azahata', zone: 'ruins', region: MAP_RUINS, depth: [10, 24], hint: '遺跡の崩れた石の下にじっとしている' },
+  { id: 'sumirenaga', zone: 'bluehole', region: MAP_RIM, depth: [15, 50], hint: 'ブルーホールの壁の深いところに群れる' },
+  { id: 'kudagonbe', zone: 'bluehole', region: MAP_RIM, depth: [20, 50], hint: 'ブルーホールの深い壁の、ヤギ（ムチのようなサンゴ）に乗っている' },
+  { id: 'hanagonbe', zone: 'bluehole', region: MAP_RIM, depth: [20, 50], hint: 'ブルーホールの壁のくぼみに隠れている' },
+  { id: 'kinmemodoki2', zone: 'bluehole', region: MAP_HOLE, depth: [25, 50], hint: 'ブルーホールの鍾乳石の陰に群れる' },
+  { id: 'akebonohaze', zone: 'bluehole', region: MAP_HOLE, depth: [40, 55], hint: 'ブルーホールの底の砂地。巣穴の上でホバリングする' },
+  { id: 'akamatsukasa', zone: 'cave', region: 'caveSpots', depth: [20, 28], hint: '水中洞窟の暗い通路に群れる。ライトで照らそう' },
+  { id: 'hatampo', zone: 'cave', region: 'caveSpots', depth: [20, 28], hint: '水中洞窟の奥に、群れで浮かんでいる' },
+  { id: 'sukashitenjiku', zone: 'cave', region: 'caveSpots', depth: [20, 28], hint: '水中洞窟の天井近くに群れる' },
+  { id: 'kinmemodoki', zone: 'cave', region: 'caveSpots', depth: [20, 28], hint: '水中洞窟の入口の暗がりに、群れで渦を巻く' },
+  { id: 'nezumigochi', zone: 'cave', region: 'caveTopSpots', depth: [1, 4], hint: '水中洞窟の上の、浅い白砂の台地' },
+  { id: 'kotohiki', zone: 'cave', region: 'caveTopSpots', depth: [1, 4], hint: '水中洞窟の上の浅い砂地を、群れで走り回る' },
+  { id: 'kusafugu', zone: 'cave', region: 'caveTopSpots', depth: [1, 4], hint: '水中洞窟の上の浅い砂地。砂にもぐって目だけ出すことも' },
+  { id: 'itohikihaze', zone: 'cave', region: 'caveTopSpots', depth: [1, 4], hint: '水中洞窟の上の砂地。巣穴のそばにいる' },
+];
+function applyMapMoves() {
+  const byId = new Map(SPECIES.map((d) => [d.id, d]));
+  for (const m of MAP_MOVES) {
+    const d = byId.get(m.id);
+    if (!d) continue;
+    d.zone = m.zone;
+    d.region = m.region;
+    d.depth = m.depth;
+    d.hint = m.hint;
+  }
+}
+applyMapMoves();
 balanceZones();
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
-export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'deep'];
+export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'kelp', 'cold', 'ruins', 'bluehole', 'cave', 'deep'];
