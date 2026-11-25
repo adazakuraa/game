@@ -9,9 +9,13 @@ import { makeSoftDot } from '../render/textures';
 import { caveRoofAt, heightFast, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
-import { resolveCapsule, resolveSphere } from '../world/colliders';
+import { resolveCapsule, resolveSphere, segmentBlocked } from '../world/colliders';
 
-type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number; absent?: boolean };
+type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number; absent?: boolean;
+  /** 5 m cell key this group is registered under in the crowding map (Phase 4) */
+  cell?: string;
+  /** curious-follow state: 0 idle, 1 following the diver, 2 leaving (Phase 4) */
+  cur?: number; curT?: number; curSide?: number };
 type Agent = {
   p: THREE.Vector3;
   v: THREE.Vector3;
@@ -31,6 +35,10 @@ type Agent = {
   aggro?: boolean; mode?: number; modeT?: number;
   /** speared by the diver: gone for the rest of this dive */
   taken?: boolean;
+  /** drawn to the scattered bait right now (Phase 4) */
+  lured?: boolean;
+  /** octopus: seconds spent inside grab reach / grab cooldown / the arm warning was shown (Phase 4) */
+  octT?: number; octCd?: number; octWarned?: boolean;
   /** cached surface under a crawler: x, z, y */
   gx?: number; gz?: number; gy?: number;
 };
@@ -254,17 +262,20 @@ export type PhotoTarget = {
  * Escape direction from away-vector `away` (player -> fish): a mix of a horizontal tangent (on the side the fish
  * is already moving) and the radial direction weighted by `radialW`. Writes a unit vector into `out`.
  */
-function fleeDir(away: THREE.Vector3, vel: THREE.Vector3, radialW: number, out: THREE.Vector3): THREE.Vector3 {
+function fleeDir(away: THREE.Vector3, vel: THREE.Vector3, radialW: number, out: THREE.Vector3, side = 0): THREE.Vector3 {
   const L = away.length() || 1;
   const rx = away.x / L, ry = away.y / L, rz = away.z / L;
   const h = Math.hypot(rx, rz) || 1;
   let tx = -rz / h, tz = rx / h;
-  if (tx * vel.x + tz * vel.z < 0) { tx = -tx; tz = -tz; }
+  // Phase 4: with a fixed per-individual `side`, half the school veers left and half right,
+  // so a fleeing school no longer piles onto one point beside the diver
+  if (side !== 0) { if (side < 0) { tx = -tx; tz = -tz; } }
+  else if (tx * vel.x + tz * vel.z < 0) { tx = -tx; tz = -tz; }
   out.set(tx + rx * radialW * 1.4, ry * radialW, tz + rz * radialW * 1.4);
   return out.normalize();
 }
 
-export type CreatureEvent = { type: 'warn' | 'charge' | 'hit' | 'repel'; def: SpeciesDef; p: THREE.Vector3 };
+export type CreatureEvent = { type: 'warn' | 'charge' | 'hit' | 'repel' | 'octoWarn' | 'grab'; def: SpeciesDef; p: THREE.Vector3; agent?: Agent };
 
 /** Night dive risk: daytime fish sleep (fewer groups show), and needlefish rush at the diver's light. */
 export const NIGHT = {
@@ -277,6 +288,17 @@ export const NIGHT = {
 };
 /** A rescued animal swimming with the diver. */
 const COMPANION = { ahead: 2.2, side: 1.6, minSpeed: 1.2, warp: 25, warpBack: 4 };
+
+/** Phase 4: how schools spread over habitat points and how residents react to the diver. */
+export const SPREAD = { cell: 5, maxSpecies: 3, hideSpread: 0.7, linger: 0.15, residentFlee: 0.75, leash: 4, leashSize: 3 };
+/** Phase 4: curious species (dolphins, turtles, seals...) follow the diver for a while, then leave. */
+export const CURIOUS = { startR: 25, follow: 30, leaveR: 45, cooldown: 120, side: 5, away: 60 };
+/** Phase 4: octopus grab (air loss, shake free with shutter taps). */
+export const OCTO = { minSize: 0.3, grabR: 0.5, grabRSize: 0.8, dwell: 1.0, fleeSpeed: 0.9, first: 3, perSec: 1.5, big: 1.5, taps: 6, tapsBig: 9, maxHold: 6, cooldown: 20 };
+/** Phase 4: photo targeting only counts animals the diver can actually see in the frame. */
+export const PHOTO_VIS = { fogCut: 1.3, darkSeen: 4, minFit: 0.4, occTests: 8 };
+/** Phase 4: bait lure limits (never too many fish, never more than 2-3 species at once). */
+export const LURE = { radius: 15, maxFish: 10, maxSpecies: 3, refill: 2, fear: 0.3 };
 
 export class Creatures {
   /** encounters for the game layer (warnings, charges, bites); drained every frame */
@@ -296,6 +318,8 @@ export class Creatures {
   companion: { id: string; p: THREE.Vector3; v: THREE.Vector3; yaw: number } | null = null;
   /** the diver's light is on (set by the game each frame); 'light' aggro species react to it at night */
   lightOn = false;
+  /** the diver is in the ADS (deep dive): curious followers turn back (set by the game, Phase 4) */
+  ads = false;
   readonly group = new THREE.Group();
   readonly list: SpeciesRuntime[] = [];
   private rnd = mulberry32(77);
@@ -311,14 +335,68 @@ export class Creatures {
   /** how many groups were sent to each habitat point this dive (spreads species out instead of stacking them) */
   private homeUse = new Map<THREE.Vector3, number>();
 
+  /** Phase 4: presence multiplier from the day's weather, set by the game at dive start (1 = no effect). */
+  weatherMult: (def: SpeciesDef) => number = () => 1;
+  /** Phase 4: the bait cloud in the water right now, if any. */
+  bait: { p: THREE.Vector3; t: number; kind: string; eats: (def: SpeciesDef) => boolean; fish: Set<Agent>; species: Set<string>; refill: number; life: number } | null = null;
+  /** Phase 4: the octopus holding the diver right now, if any (the game drains the air and counts taps). */
+  grab: { rt: SpeciesRuntime; a: Agent; t: number; taps: number; need: number } | null = null;
+
+  /** Phase 4 crowding map: 5 m cell -> species id -> number of groups living there (swimming kinds only). */
+  private spotMix = new Map<string, Map<string, number>>();
+  private coralAllCache: THREE.Vector3[] | null = null;
+
+  private cellKey(x: number, z: number): string {
+    return Math.floor(x / SPREAD.cell) + ',' + Math.floor(z / SPREAD.cell);
+  }
+
+  /** Would one more group of `id` overcrowd this cell (already SPREAD.maxSpecies other swimming species)? */
+  private mixFull(id: string, x: number, z: number): boolean {
+    const m = this.spotMix.get(this.cellKey(x, z));
+    if (!m) return false;
+    let n = 0;
+    for (const k of m.keys()) if (k !== id) n++;
+    return n >= SPREAD.maxSpecies;
+  }
+
+  /** Register a group's home cell (and unregister the old one). Only swimming kinds count toward crowding. */
+  private mixSet(def: SpeciesDef, g: Group, p: THREE.Vector3): void {
+    if (g.cell) {
+      const m = this.spotMix.get(g.cell);
+      if (m) {
+        const n = (m.get(def.id) ?? 1) - 1;
+        if (n <= 0) m.delete(def.id); else m.set(def.id, n);
+        if (!m.size) this.spotMix.delete(g.cell);
+      }
+      g.cell = undefined;
+    }
+    if (!(def.kind === 'fish' || def.kind === 'ray' || def.kind === 'squid' || def.kind === 'turtle')) return;
+    const k = this.cellKey(p.x, p.z);
+    let m = this.spotMix.get(k);
+    if (!m) this.spotMix.set(k, (m = new Map()));
+    m.set(def.id, (m.get(def.id) ?? 0) + 1);
+    g.cell = k;
+  }
+
+  /** Habitat list for a region name; 'coralTops' also draws on every coral colony top (Phase 4). */
+  private homeList(reg: string): THREE.Vector3[] {
+    if (reg === 'coralTops') {
+      if (!this.coralAllCache) this.coralAllCache = [...this.homes.coralTops, ...this.homes.coralAll];
+      return this.coralAllCache;
+    }
+    return (this.homes as unknown as Record<string, THREE.Vector3[]>)[reg];
+  }
+
   /** Of a few random candidates, take the least crowded habitat point. */
-  private pickSpread(arr: THREE.Vector3[], ok: (q: THREE.Vector3) => boolean = () => true, tries = 8): THREE.Vector3 | null {
+  private pickSpread(arr: THREE.Vector3[], ok: (q: THREE.Vector3) => boolean = () => true, tries = 8, id?: string): THREE.Vector3 | null {
+    if (id) tries *= 2; // Phase 4: with a species id, sample more so the crowding check can bite
     let best: THREE.Vector3 | null = null, bestUse = Infinity;
     for (let k = 0, found = 0; k < tries * 5 && found < tries; k++) {
       const q = arr[Math.floor(this.rnd() * arr.length)];
       if (!q || !ok(q)) continue;
       found++;
-      const u = (this.homeUse.get(q) ?? 0) + this.rnd() * 0.5;
+      let u = (this.homeUse.get(q) ?? 0) + this.rnd() * 0.5;
+      if (id && this.mixFull(id, q.x, q.z)) u += 50; // crowded cell: last resort only
       if (u < bestUse) { bestUse = u; best = q; }
     }
     if (best) this.homeUse.set(best, (this.homeUse.get(best) ?? 0) + 1);
@@ -328,7 +406,7 @@ export class Creatures {
   private pickHome(def: SpeciesDef, homes: Homes, i: number): THREE.Vector3 {
     const r = this.rnd;
     const reg = def.region;
-    const fromList = (arr: THREE.Vector3[]) => (this.pickSpread(arr) ?? arr[Math.floor(r() * arr.length) % Math.max(1, arr.length)]).clone();
+    const fromList = (arr: THREE.Vector3[]) => (this.pickSpread(arr, () => true, 8, def.id) ?? arr[Math.floor(r() * arr.length) % Math.max(1, arr.length)]).clone();
     let p: THREE.Vector3;
     if (reg === 'anemones') {
       // each anemonefish species keeps its own host anemones
@@ -338,7 +416,7 @@ export class Creatures {
     else if (reg === 'crevices') p = homes.crevices[(i * 7) % homes.crevices.length].clone();
     else if (reg === 'reefSpots') p = fromList(homes.reefSpots);
     else if (reg === 'rockSpots') p = fromList(homes.rockSpots);
-    else if (reg === 'coralTops') p = fromList(homes.coralTops);
+    else if (reg === 'coralTops') p = fromList(this.homeList('coralTops'));
     else if (reg === 'underTables') p = fromList(homes.underTables);
     else if (reg === 'wallSpots') p = fromList(homes.wallSpots);
     else if (reg === 'sandSpots') p = fromList(homes.sandSpots);
@@ -363,6 +441,7 @@ export class Creatures {
         z = rg[2] + r() * (rg[3] - rg[2]);
         ground = heightFast(x, z);
         y = -(def.depth[0] + r() * (def.depth[1] - def.depth[0]));
+        if (k <= 30 && this.mixFull(def.id, x, z)) continue; // Phase 4: don't stack into a crowded cell
         if (y > ground + 1) break;
       }
       p = new THREE.Vector3(x, Math.max(y, ground + 0.8), z);
@@ -474,7 +553,9 @@ export class Creatures {
         home.y = Math.max(home.y, g0 + this.altitude(def));
       }
       const roam = def.behavior === 'pelagic' ? 60 : def.behavior === 'drift' ? 14 : def.region === 'reefSpots' ? 5 : 20;
-      rt.groups.push({ c: home.clone(), t: home.clone(), home, v: new THREE.Vector3(), roam, timer: 0 });
+      const gNew = { c: home.clone(), t: home.clone(), home, v: new THREE.Vector3(), roam, timer: 0 };
+      rt.groups.push(gNew);
+      this.mixSet(def, gNew, home);
     }
     for (let i = 0; i < def.count; i++) {
       const gi = i % def.groups;
@@ -681,9 +762,9 @@ export class Creatures {
       return d > minD && d < 75;
     };
     if (typeof reg === 'string') {
-      const list = (this.homes as unknown as Record<string, THREE.Vector3[]>)[reg];
+      const list = this.homeList(reg);
       if (!list?.length) return false;
-      const q = this.pickSpread(list, (h) => ok(h.x, h.z));
+      const q = this.pickSpread(list, (h) => ok(h.x, h.z), 8, def.id);
       if (q) p = q.clone();
     } else {
       const x0 = Math.max(reg[0], player.x - 75), x1 = Math.min(reg[1], player.x + 75);
@@ -692,6 +773,7 @@ export class Creatures {
       for (let k = 0; k < 30 && !p; k++) {
         const x = x0 + r() * (x1 - x0), z = z0 + r() * (z1 - z0);
         if (!ok(x, z)) continue;
+        if (k < 24 && this.mixFull(def.id, x, z)) continue; // Phase 4: keep cells at 2-3 species
         const ground = heightFast(x, z);
         const y = -(def.depth[0] + r() * (def.depth[1] - def.depth[0]));
         if (y < ground + 0.5 && def.behavior !== 'bottom' && def.behavior !== 'static') continue;
@@ -700,6 +782,8 @@ export class Creatures {
     }
     if (!p) return false;
     const g = rt.groups[gi];
+    this.mixSet(def, g, p);
+    g.cur = 0; g.curT = 0;
     g.home.copy(p);
     if (def.hab && def.behavior !== 'static' && def.behavior !== 'buried') this.habTarget(def, g, g.t);
     else g.t.copy(p);
@@ -726,6 +810,162 @@ export class Creatures {
       }
     }
     return true;
+  }
+
+  /**
+   * Phase 4 curious-follow state machine (per group): idle -> following the diver's side for
+   * CURIOUS.follow seconds -> leaving to a point 60 m away, with a long cooldown. No more
+   * endless circling around the diver.
+   */
+  private curiousStep(def: SpeciesDef, g: Group, player: THREE.Vector3, playerVel: THREE.Vector3, dt: number): void {
+    const dist = player.distanceTo(g.c);
+    g.curT = (g.curT ?? 0) - dt;
+    if (!g.cur) {
+      if (!g.absent && g.curT <= 0 && dist < CURIOUS.startR && dist > def.size * 1.5 + 2) {
+        g.cur = 1; g.curT = CURIOUS.follow; g.curSide = this.rnd() < 0.5 ? -1 : 1;
+      }
+      return;
+    }
+    if (g.cur === 1) {
+      if (g.curT <= 0 || dist > CURIOUS.leaveR || this.ads) {
+        g.cur = 2; g.curT = CURIOUS.cooldown; g.timer = CURIOUS.cooldown;
+        _v.copy(g.c).sub(player); _v.y = 0;
+        if (_v.lengthSq() < 0.01) _v.set(1, 0, 0);
+        _v.normalize();
+        g.t.copy(g.c).addScaledVector(_v, CURIOUS.away);
+        return;
+      }
+      // follow at the diver's side: heading from the swim direction, or the view when barely moving
+      let fx = playerVel.x, fz = playerVel.z;
+      if (Math.hypot(fx, fz) < 0.3) { fx = this.viewDir.x; fz = this.viewDir.z; }
+      const fl = Math.hypot(fx, fz) || 1; fx /= fl; fz /= fl;
+      const side = (CURIOUS.side + def.size) * (g.curSide ?? 1);
+      const ahead = 1.5 + Math.sin(this.time * 0.25 + g.home.x) * 2;
+      g.t.set(
+        player.x + fz * side + fx * ahead,
+        player.y - 1 + Math.sin(this.time * 0.3 + g.home.z) * 0.8,
+        player.z - fx * side + fz * ahead,
+      );
+      g.timer = Math.max(g.timer, 1);
+    } else if (g.curT <= 0) {
+      g.cur = 0; g.curT = 0; g.timer = 0;
+    }
+  }
+
+  /** Phase 4: octopus big enough to grab the diver (the tiny blue-ringed and the dumbo are exempt). */
+  private grabber(def: SpeciesDef): boolean {
+    return def.kind === 'octopus' && def.size >= OCTO.minSize;
+  }
+
+  /**
+   * Phase 4 octopus grab: a slow approach does not scare it off; stay inside grab reach for
+   * OCTO.dwell seconds and it wraps its arms around the diver (the game drains air and counts
+   * shutter taps; releaseGrab lets it go). Returns true when this agent is fully handled here.
+   */
+  private octoStep(rt: SpeciesRuntime, a: Agent, player: THREE.Vector3, playerVel: THREE.Vector3, dt: number): boolean {
+    const def = rt.def;
+    if (!this.grabber(def)) return false;
+    a.octCd = Math.max(0, (a.octCd ?? 0) - dt);
+    if (this.grab && this.grab.a === a) {
+      // held against the diver's front, arms waving
+      let fx = this.viewDir.x, fz = this.viewDir.z;
+      const fl = Math.hypot(fx, fz) || 1; fx /= fl; fz /= fl;
+      _v.set(player.x + fx * 0.55, player.y - 0.45, player.z + fz * 0.55);
+      a.p.lerp(_v, Math.min(1, dt * 6));
+      a.q.setFromEuler(_e.set(0.4 + Math.sin(this.time * 7) * 0.12, Math.atan2(fx, fz), Math.sin(this.time * 6) * 0.15));
+      return true;
+    }
+    if (a.alarm > 0 || (a.octCd ?? 0) > 0 || this.grab) { a.octT = 0; return false; }
+    const reach = OCTO.grabR + def.size * OCTO.grabRSize;
+    const d = a.p.distanceTo(player);
+    if (d > reach * 3) a.octWarned = false;
+    if (d < reach * 2 && !a.octWarned) {
+      a.octWarned = true;
+      this.events.push({ type: 'octoWarn', def, p: a.p.clone(), agent: a });
+    }
+    if (d < reach && playerVel.length() <= OCTO.fleeSpeed) {
+      a.octT = (a.octT ?? 0) + dt;
+      if (a.octT >= OCTO.dwell) {
+        a.octT = 0;
+        this.grab = { rt, a, t: 0, taps: 0, need: def.size >= 1 ? OCTO.tapsBig : OCTO.taps };
+        this.events.push({ type: 'grab', def, p: a.p.clone(), agent: a });
+        return true;
+      }
+    } else a.octT = 0;
+    return false;
+  }
+
+  /** The diver shakes free (or the octopus lets go): it inks off a few metres and keeps away for a while. */
+  releaseGrab(from: THREE.Vector3): void {
+    const g = this.grab;
+    if (!g) return;
+    this.grab = null;
+    const a = g.a;
+    a.octCd = OCTO.cooldown;
+    a.alarm = 3.5;
+    _v.copy(a.p).sub(from); _v.y = 0;
+    if (_v.lengthSq() < 0.01) _v.set(1, 0, 0);
+    a.v.copy(_v.normalize().multiplyScalar(2.2));
+    a.gx = undefined;
+  }
+
+  /** Scatter bait at a point: any old cloud is cleared first (only one cloud at a time). */
+  dropBait(p: THREE.Vector3, kind: string, eats: (def: SpeciesDef) => boolean, life: number): void {
+    this.clearBait();
+    this.bait = { p: p.clone(), t: 0, kind, eats, fish: new Set(), species: new Set(), refill: 0, life };
+  }
+
+  clearBait(): void {
+    if (!this.bait) return;
+    for (const a of this.bait.fish) a.lured = false;
+    this.bait = null;
+  }
+
+  /** Which species may be drawn to bait at all (no sharks, no fixed/nest/legendary/curious animals). */
+  private lurable(def: SpeciesDef): boolean {
+    return def.kind === 'fish' && def.rarity < 4 && !def.aggro && !def.curious
+      && (def.behavior === 'school' || def.behavior === 'solo' || def.behavior === 'bottom')
+      && !this.benthic(def);
+  }
+
+  private baitStep(dt: number): void {
+    const b = this.bait;
+    if (!b) return;
+    b.t += dt;
+    if (b.t >= b.life) { this.clearBait(); return; }
+    for (const a of [...b.fish]) if (a.taken) { a.lured = false; b.fish.delete(a); }
+    b.species.clear();
+    for (const rt of this.list) for (const a of rt.agents) if (b.fish.has(a)) b.species.add(rt.def.id);
+    b.refill -= dt;
+    if (b.refill > 0 || b.fish.size >= LURE.maxFish) return;
+    b.refill = LURE.refill;
+    const cands: { a: Agent; def: SpeciesDef; d: number }[] = [];
+    for (const rt of this.list) {
+      const def = rt.def;
+      if (!this.lurable(def) || !b.eats(def)) continue;
+      for (const a of rt.agents) {
+        if (a.lured || a.taken || a.aggro || rt.groups[a.g].absent) continue;
+        const d = a.p.distanceTo(b.p);
+        if (d < LURE.radius) cands.push({ a, def, d });
+      }
+    }
+    cands.sort((x, y) => x.d - y.d);
+    for (const c of cands) {
+      if (b.fish.size >= LURE.maxFish) break;
+      if (!b.species.has(c.def.id) && b.species.size >= LURE.maxSpecies) continue;
+      c.a.lured = true;
+      b.fish.add(c.a);
+      b.species.add(c.def.id);
+    }
+  }
+
+  /** Bait cloud state for the HUD and tests. */
+  baitInfo(): { kind: string; t: number; fish: number; species: string[]; near: number } | null {
+    const b = this.bait;
+    if (!b) return null;
+    let near = 0;
+    for (const a of b.fish) if (a.p.distanceTo(b.p) < 2.5) near++;
+    return { kind: b.kind, t: b.t, fish: b.fish.size, species: [...b.species], near };
   }
 
   /** Night dives: daytime species are asleep (hidden in the reef), so fewer of them show up. */
@@ -764,9 +1004,20 @@ export class Creatures {
     this.writeInstance(rt, a, i);
   }
 
-  /** Chance that a group shows up on a given dive, by rarity. */
-  private presence(rarity: number): number {
-    return rarity >= 4 ? 0.07 : rarity === 3 ? 0.3 : rarity === 2 ? 0.6 : 0.9;
+  /** Chance that a group shows up on a given dive, by rarity — mildly shifted by the day's weather (Phase 4). */
+  private presence(def: SpeciesDef): number {
+    const base = def.rarity >= 4 ? 0.07 : def.rarity === 3 ? 0.3 : def.rarity === 2 ? 0.6 : 0.9;
+    return Math.min(0.95, base * this.weatherMult(def));
+  }
+
+  /**
+   * Phase 4: a species with a fixed home (a coral head, a rock, a patch of sand) must not be
+   * chased tens of metres away from it. Roamers (pelagic / drift / curious visitors) are exempt.
+   */
+  private resident(def: SpeciesDef): boolean {
+    if (def.behavior === 'pelagic' || def.behavior === 'drift' || def.curious) return false;
+    if (def.hab) return !(def.hab === 'midwater' || def.hab === 'surface' || def.hab === 'perch' || def.hab === 'burrow');
+    return typeof def.region === 'string';
   }
 
   /**
@@ -777,7 +1028,7 @@ export class Creatures {
     this.rnd = mulberry32(seed);
     this.homeUse.clear();
     for (const rt of this.list) {
-      const p = rt.def.when === 'night' && !this.night ? 0 : rt.def.aggro?.kind === 'light' && this.night ? 1 : this.presence(rt.def.rarity) * this.nightGate(rt.def);
+      const p = rt.def.when === 'night' && !this.night ? 0 : rt.def.aggro?.kind === 'light' && this.night ? 1 : this.presence(rt.def) * this.nightGate(rt.def);
       const movable = this.canRelocate(rt.def);
       rt.groups.forEach((g, gi) => {
         g.absent = this.rnd() > p;
@@ -853,7 +1104,7 @@ export class Creatures {
         if (rt.def.rarity >= 3 && this.rnd() > 0.15) continue;
         rt.groups.forEach((g, gi) => {
           if (Math.hypot(g.c.x - player.x, g.c.z - player.z) > 100) {
-            g.absent = this.rnd() > this.presence(rt.def.rarity) * this.nightGate(rt.def);
+            g.absent = this.rnd() > this.presence(rt.def) * this.nightGate(rt.def);
             if (!g.absent) this.relocate(rt, gi, player);
           }
         });
@@ -862,6 +1113,7 @@ export class Creatures {
     this.viewPos.copy(player);
     if (viewDir) this.viewDir.copy(viewDir);
     this.time += dt;
+    this.baitStep(dt);
     const r = this.rnd;
     const pFast = Math.min(1, playerVel.length() / 1.4);
     let buildMs = 0, built = 0; // 0 = drifting / slow, 1 = finning hard
@@ -897,10 +1149,8 @@ export class Creatures {
         g.timer -= dt;
         const toT = _v.copy(g.t).sub(g.c);
         const dist = toT.length();
-        const curiousNear = def.curious && player.distanceTo(g.c) < 32 && player.distanceTo(g.c) > def.size * 1.5 + 3;
-        if (curiousNear) {
-          g.t.copy(player).add(_v2.set(Math.sin(this.time * 0.2 + g.home.x) * (def.size + 5), -1 + Math.sin(this.time * 0.3) * 2, Math.cos(this.time * 0.2 + g.home.x) * (def.size + 5)));
-        } else if (dist < 1.0 || g.timer <= 0) {
+        if (def.curious) this.curiousStep(def, g, player, playerVel, dt);
+        if (!(def.curious && g.cur) && (dist < 1.0 || g.timer <= 0)) {
           g.timer = (def.hab === 'coralHover' || def.hab === 'under' ? 3 : 8) + r() * 12;
           if (!this.habTarget(def, g, g.t)) {
             const rr = g.roam;
@@ -922,10 +1172,20 @@ export class Creatures {
         // flee as a group (schools scatter around player)
         const pd = _v2.copy(g.c).sub(player);
         const pl = pd.length();
-        if (def.flee > 0 && pl < fleeR * 2.5 && def.behavior !== 'anemone' && def.hab !== 'coralHover' && def.hab !== 'under' && def.hab !== 'cleaner') {
+        const res = this.resident(def);
+        const gFlee = res ? fleeR * SPREAD.residentFlee : fleeR;
+        if (def.flee > 0 && pl < gFlee * 2.5 && def.behavior !== 'anemone' && def.hab !== 'coralHover' && def.hab !== 'under' && def.hab !== 'cleaner') {
           // schools veer off sideways (keeping their distance) rather than bolting straight away
           fleeDir(pd, g.v, radialW, _v);
           g.v.addScaledVector(_v, dt * def.speed * 2);
+        }
+        if (res) {
+          // leash: a resident group dragged too far from home swims back instead of fleeing on
+          const hd = Math.hypot(g.c.x - g.home.x, g.c.z - g.home.z);
+          if (hd > SPREAD.leash + def.size * SPREAD.leashSize) {
+            _v.set(g.home.x - g.c.x, 0, g.home.z - g.c.z).normalize();
+            g.v.addScaledVector(_v, dt * def.speed * 2.5);
+          }
         }
         g.c.addScaledVector(g.v, dt);
         const gg = heightFast(g.c.x, g.c.z);
@@ -988,7 +1248,8 @@ export class Creatures {
           continue;
         }
         if (def.behavior === 'static') {
-          if (def.flee > 0 && dPlayer < def.flee && a.alarm <= 0) {
+          if (this.octoStep(rt, a, player, playerVel, dt)) { this.writeInstance(rt, a, i); continue; }
+          if (def.flee > 0 && dPlayer < def.flee && a.alarm <= 0 && (!this.grabber(def) || playerVel.length() > OCTO.fleeSpeed)) {
             a.alarm = 3.5;
             const away = _v.copy(a.p).sub(player).setY(0).normalize();
             a.v.copy(away).multiplyScalar(1.6);
@@ -1030,6 +1291,14 @@ export class Creatures {
           tx += Math.sin(this.time * w + a.ph * 3.1) * A;
           tz += Math.cos(this.time * w * 0.83 + a.ph * 1.7) * A;
           ty += Math.sin(this.time * w * 0.6 + a.ph) * A * (hover ? 0.25 : 0.12);
+        }
+        if (a.lured && this.bait) {
+          // Phase 4: lured fish circle the bait cloud, too busy feeding to mind the diver
+          const bt = this.time * (0.7 + (a.ph % 1) * 0.6) + a.ph * 5;
+          const rr = 0.4 + (a.ph % 0.8);
+          tx = this.bait.p.x + Math.cos(bt) * rr;
+          ty = this.bait.p.y + Math.sin(bt * 1.3) * 0.3;
+          tz = this.bait.p.z + Math.sin(bt) * rr;
         }
         let charging = false;
         if (a.aggro && def.aggro) {
@@ -1084,32 +1353,37 @@ export class Creatures {
             if (a.modeT <= 0) { a.mode = 0; a.modeT = ag.kind === 'territory' ? 5 : 14; }
           }
         }
-        const hiding = !a.aggro && (def.hab === 'coralHover' || def.hab === 'under') && dPlayer < fleeR * 1.6;
+        // Phase 4: this individual's flight distance — residents flee less far, lured fish barely flee at all
+        const fr = a.lured ? fleeR * LURE.fear : this.resident(def) ? fleeR * SPREAD.residentFlee : fleeR;
+        const hiding = !a.aggro && !a.lured && (def.hab === 'coralHover' || def.hab === 'under') && dPlayer < fr * 1.6;
         if (hiding) {
-          tx = g.home.x + a.off.x * 0.15;
+          // keep each fish's own offset (scaled, not collapsed) so the school hugs the coral surface spread out
+          tx = g.home.x + a.off.x * SPREAD.hideSpread;
           // nestle just above the coral surface (still visible) instead of disappearing inside it
           ty = g.home.y + (def.hab === 'coralHover' ? 0.08 : -0.05);
-          tz = g.home.z + a.off.z * 0.15;
+          tz = g.home.z + a.off.z * SPREAD.hideSpread;
         }
         _v.set(tx - a.p.x, ty - a.p.y, tz - a.p.z);
-        const k = charging ? 4 : def.behavior === 'anemone' || hiding ? 3 : def.hab === 'coralHover' || def.hab === 'under' || def.hab === 'cleaner' ? 1.6 : 0.9;
+        const k = charging ? 4 : a.lured ? 1.8 : def.behavior === 'anemone' || hiding ? 3 : def.hab === 'coralHover' || def.hab === 'under' || def.hab === 'cleaner' ? 1.6 : 0.9;
         const acc = _v.multiplyScalar(k);
-        const watchR = Math.max(fleeR * 2.6, 2.6);
+        const watchR = Math.max(fr * 2.6, a.lured ? 1.2 : 2.6);
         a.watch = !a.aggro && def.flee > 0 && !hiding && dPlayer < watchR && dPlayer > def.size * 0.6 && pFast < 0.6 ? (1 - pFast / 0.6) * Math.min(1, (watchR - dPlayer) / (watchR * 0.4)) : 0;
         if (def.flee > 0 && dPlayer < watchR && !hiding && !(a.aggro && a.mode)) {
-          if (dPlayer < fleeR) {
-            fleeDir(_v2.copy(a.p).sub(player), a.v, radialW, _v2);
-            acc.addScaledVector(_v2, (fleeR - dPlayer) * 4);
+          // Phase 4: each fish veers to its own fixed side, so the school splits instead of bunching
+          const side = (a.ph % 2) < 1 ? 1 : -1;
+          if (dPlayer < fr) {
+            fleeDir(_v2.copy(a.p).sub(player), a.v, radialW, _v2, side);
+            acc.addScaledVector(_v2, (fr - dPlayer) * 4);
           } else if (pFast < 0.6) {
             // wary but not frightened: drift sideways round the diver, keeping one eye on it (broadside view)
-            fleeDir(_v2.copy(a.p).sub(player), a.v, 0, _v2);
+            fleeDir(_v2.copy(a.p).sub(player), a.v, 0, _v2, side);
             acc.addScaledVector(_v2, (watchR - dPlayer) * 1.2 * (1 - pFast));
-            acc.addScaledVector(_v, -0.35 * (1 - pFast)); // linger rather than rejoin the school's heading
+            acc.addScaledVector(_v, -SPREAD.linger * (1 - pFast)); // linger rather than rejoin the school's heading
           }
         }
         a.v.addScaledVector(acc, dt);
         a.v.multiplyScalar(1 - Math.min(0.9, dt * 1.2));
-        const maxV = charging ? def.aggro!.speed : a.aggro && a.mode === 1 ? Math.max(def.speed * 1.6, 1.6) : def.speed * (dPlayer < fleeR ? 1.6 + 1.2 * radialW : 1.6) + 0.15;
+        const maxV = charging ? def.aggro!.speed : a.aggro && a.mode === 1 ? Math.max(def.speed * 1.6, 1.6) : def.speed * (dPlayer < fr ? 1.6 + 1.2 * radialW : 1.6) + 0.15 + (a.lured ? 0.4 : 0);
         const vl = a.v.length();
         if (vl > maxV) a.v.multiplyScalar(maxV / vl);
         // keep a minimum cruising speed for pelagics so they never hover
@@ -1167,9 +1441,12 @@ export class Creatures {
     const fwd = _v.set(0, 0, -1).applyQuaternion(cam.quaternion);
     const cp = cam.position;
     const fovV = (cam.fov * Math.PI) / 180;
-    let best: PhotoTarget | null = null;
-    let bestScore = -Infinity;
     const ndc = new THREE.Vector3();
+    // Phase 4, stage 1: cheap conditions only. Animals the diver cannot actually see —
+    // lost in the haze, in darkness beyond arm's reach, or with almost none of the body in
+    // the frame — never become candidates at all (no label, no "???").
+    type Cand = { rt: SpeciesRuntime; a: Agent; dist: number; angle: number; reason: PhotoTarget['reason']; frac: number; centred: number; side: number; clear: number; score: number };
+    const cands: Cand[] = [];
     for (const rt of this.list) {
       if (!rt.active || (!rt.mesh && rt.def.kind !== 'none')) continue;
       const def = rt.def;
@@ -1188,45 +1465,68 @@ export class Creatures {
         const frac = ((2 * Math.atan(span / 2 / Math.max(dist, 0.05))) / fovV) * (o.macro && def.size < 0.2 ? 1.7 : 1);
         if (frac < 0.025) continue;
         const clear = o.clear * (o.wide && def.size >= 1 ? 1.35 : 1);
+        if (dist > clear * PHOTO_VIS.fogCut) continue; // haze has eaten it: not a candidate
         let reason: PhotoTarget['reason'] = 'ok';
         if (frac < 0.06) reason = 'small';
         if (dist > clear) reason = 'murky';
         if (o.dark) {
           const glows = !!def.mat?.glow;
           const inBeam = o.lightOn && _v2.angleTo(fwd) < 0.5 * (o.beam ?? 1) && dist < 14 * (o.beam ?? 1);
-          if (!inBeam && !(glows && dist < 9)) reason = 'dark';
+          if (!inBeam && !(glows && dist < 9)) {
+            if (dist > PHOTO_VIS.darkSeen) continue; // too dark to see at all
+            reason = 'dark'; // close enough that its shadow shows: "too dark, use the light"
+          }
         }
-        if (reason === 'ok' && this.occluded(cp, a.p)) reason = 'hidden';
         const centred = 1 - Math.min(1, Math.hypot(ndc.x / o.cropX, ndc.y / o.cropY));
-        const score = (reason === 'ok' ? 3 : 0) + Math.min(frac, 0.5) * 4 + centred + (def.rarity - 1) * 0.1;
-        if (score > bestScore) {
-          bestScore = score;
-          let side = 1;
-          if (def.kind === 'fish' || def.kind === 'turtle') {
-            const f = _v3.set(0, 0, 1).applyQuaternion(a.q);
-            const c = Math.abs(f.dot(_v2) / Math.max(dist, 1e-3));
-            side = Math.sqrt(Math.max(0, 1 - c * c));
-          }
-          // framing: sample the body outline and count how much of it is inside the crop
-          const ax = _v3.set(0, 0, 1).applyQuaternion(a.q);
-          const half = a.s * 0.5;
-          const up = def.kind === 'fish' ? a.s * 0.18 : a.s * 0.3;
-          let inside = 0, total = 0, x0 = 9, x1 = -9, y0 = 9, y1 = -9;
-          for (let k = -2; k <= 2; k++) {
-            for (const h of k === 0 ? [-1, 0, 1] : [0]) {
-              ndc.copy(a.p).addScaledVector(ax, (half * k) / 2);
-              ndc.y += up * h;
-              ndc.project(cam);
-              total++;
-              x0 = Math.min(x0, ndc.x); x1 = Math.max(x1, ndc.x); y0 = Math.min(y0, ndc.y); y1 = Math.max(y1, ndc.y);
-              if (Math.abs(ndc.x) <= o.cropX && Math.abs(ndc.y) <= o.cropY && ndc.z < 1) inside++;
-            }
-          }
-          best = { rt, agent: a, dist, angle: _v2.angleTo(fwd), inRange: reason === 'ok', reason, frac, centred: Math.max(0, centred), fit: inside / total, fill: Math.max((x1 - x0) / (2 * o.cropX), (y1 - y0) / (2 * o.cropY)), side, danger: !!a.aggro && (a.mode === 1 || a.mode === 2), clear };
+        let side = 1;
+        if (def.kind === 'fish' || def.kind === 'turtle') {
+          const f = _v3.set(0, 0, 1).applyQuaternion(a.q);
+          const c = Math.abs(f.dot(_v2) / Math.max(dist, 1e-3));
+          side = Math.sqrt(Math.max(0, 1 - c * c));
         }
+        const score = (reason === 'ok' ? 3 : 0) + Math.min(frac, 0.5) * 4 + centred + (def.rarity - 1) * 0.1;
+        cands.push({ rt, a, dist, angle: _v2.angleTo(fwd), reason, frac, centred: Math.max(0, centred), side, clear, score });
       }
     }
-    return best;
+    if (!cands.length) return null;
+    // Stage 2: the expensive checks (body-in-frame share, occlusion by terrain and solids)
+    // run on the best few candidates only.
+    cands.sort((x, y) => y.score - x.score);
+    let fallback: PhotoTarget | null = null;
+    for (const c of cands.slice(0, PHOTO_VIS.occTests)) {
+      const { rt, a } = c;
+      const def = rt.def;
+      // framing: sample the body outline and count how much of it is inside the crop
+      const ax = _v3.set(0, 0, 1).applyQuaternion(a.q);
+      const half = a.s * 0.5;
+      const up = def.kind === 'fish' ? a.s * 0.18 : a.s * 0.3;
+      let inside = 0, total = 0, x0 = 9, x1 = -9, y0 = 9, y1 = -9;
+      for (let k = -2; k <= 2; k++) {
+        for (const h of k === 0 ? [-1, 0, 1] : [0]) {
+          ndc.copy(a.p).addScaledVector(ax, (half * k) / 2);
+          ndc.y += up * h;
+          ndc.project(cam);
+          total++;
+          x0 = Math.min(x0, ndc.x); x1 = Math.max(x1, ndc.x); y0 = Math.min(y0, ndc.y); y1 = Math.max(y1, ndc.y);
+          if (Math.abs(ndc.x) <= o.cropX && Math.abs(ndc.y) <= o.cropY && ndc.z < 1) inside++;
+        }
+      }
+      const fit = inside / total;
+      if (fit < PHOTO_VIS.minFit) continue; // the body is barely in the frame: not a candidate
+      // occlusion at head / middle / tail: fully covered means unseen; partly means "hidden"
+      let blocked = 0;
+      for (const s of [-0.4, 0, 0.4]) {
+        _v2.copy(a.p).addScaledVector(ax, a.s * s);
+        if (this.occluded(cp, _v2, a.s * 0.3 + 0.25)) blocked++;
+      }
+      if (blocked === 3) continue;
+      let reason = c.reason;
+      if (blocked > 0 && reason === 'ok') reason = 'hidden';
+      const t: PhotoTarget = { rt, agent: a, dist: c.dist, angle: c.angle, inRange: reason === 'ok', reason, frac: c.frac, centred: c.centred, fit, fill: Math.max((x1 - x0) / (2 * o.cropX), (y1 - y0) / (2 * o.cropY)), side: c.side, danger: !!a.aggro && (a.mode === 1 || a.mode === 2), clear: c.clear };
+      if (t.inRange) return t;
+      fallback ??= t;
+    }
+    return fallback;
   }
 
   /** Spearfishing: the creature nearest the aim line within reach (any kind; the caller decides what may be taken). */
@@ -1308,7 +1608,7 @@ export class Creatures {
       }
       const movable = this.canRelocate(rt.def);
       rt.groups.forEach((g, gi) => {
-        g.absent = Math.random() > this.presence(rt.def.rarity);
+        g.absent = Math.random() > this.presence(rt.def);
         if (!g.absent && movable) this.relocate(rt, gi, player, 4);
       });
     }
@@ -1337,15 +1637,23 @@ export class Creatures {
     }
   }
 
-  /** Terrain between camera and subject? (coarse ray march against the height field) */
-  private occluded(from: THREE.Vector3, to: THREE.Vector3): boolean {
-    const n = 10;
-    for (let i = 1; i < n; i++) {
-      const t = i / n;
-      const x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t, z = from.z + (to.z - from.z) * t;
-      if (heightFast(x, z) > y + 0.15) return true;
+  /** Terrain or a solid (rock, coral head, wreck) between camera and subject? */
+  private occluded(from: THREE.Vector3, to: THREE.Vector3, skip = 0.3): boolean {
+    // Inside the cave the heightfield is the seabed above the roof, so it must not
+    // count as an obstacle between two points that are both under the roof —
+    // otherwise nothing in the cave can ever be targeted (pre-Phase-4, occlusion
+    // only softened the reason to "hidden"; Phase 4 made it an exclusion).
+    const roof = caveRoofAt((from.x + to.x) / 2, (from.z + to.z) / 2);
+    const inCave = roof !== null && from.y < roof && to.y < roof;
+    if (!inCave) {
+      const n = 10;
+      for (let i = 1; i < n; i++) {
+        const t = i / n;
+        const x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t, z = from.z + (to.z - from.z) * t;
+        if (heightFast(x, z) > y + 0.15) return true;
+      }
     }
-    return false;
+    return segmentBlocked(from, to, skip);
   }
 
   nearestOf(id: string, from: THREE.Vector3): number {

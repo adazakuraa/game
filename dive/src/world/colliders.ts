@@ -85,6 +85,32 @@ export function insideAny(p: THREE.Vector3, rad: number): boolean {
   return list.some((c) => p.y >= c.y0 - rad * 0.5 && p.y <= c.y1 + rad * 0.5 && Math.hypot(p.x - c.x, p.z - c.z) < c.r + rad * 0.5);
 }
 
+/**
+ * Is the straight segment a->b blocked by a collider? Samples every 0.5 m, skipping the
+ * first 0.3 m and the last `skipEnd` m (so a subject touching a rock is not "behind" it).
+ * Spheres test the centre distance; cylinders test the y band and horizontal distance.
+ */
+export function segmentBlocked(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, skipEnd = 0.3): boolean {
+  const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 1e-6) return false;
+  const seen = new Set<Collider>();
+  for (let d = 0.3; d < len - skipEnd; d += 0.5) {
+    const t = d / len;
+    const x = a.x + dx * t, y = a.y + dy * t, z = a.z + dz * t;
+    const list = grid.get(key(Math.floor(x / CELL), Math.floor(z / CELL)));
+    if (!list) continue;
+    for (const c of list) {
+      if (seen.has(c)) continue;
+      seen.add(c);
+      if (c.sphere) {
+        if (Math.hypot(x - c.x, y - c.y!, z - c.z) < c.r) return true;
+      } else if (y >= c.y0 && y <= c.y1 && Math.hypot(x - c.x, z - c.z) < c.r) return true;
+    }
+  }
+  return false;
+}
+
 export function addSphere(x: number, y: number, z: number, r: number): void {
   addCollider({ x, z, r, y0: y - r, y1: y + r, sphere: true, y });
 }

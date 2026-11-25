@@ -505,6 +505,8 @@ export type Homes = {
   rockSpots: THREE.Vector3[];
   /** top surface of branching coral heads (y = coral top) */
   coralTops: THREE.Vector3[];
+  /** tops of every visible coral colony (brain, branching, table, cauliflower): the wide pool of coral homes */
+  coralAll: THREE.Vector3[];
   /** shaded space under table corals (y = mid-height under the plate) */
   underTables: THREE.Vector3[];
   /** points just off the drop-off wall face, with outward normal in w-less form */
@@ -529,7 +531,7 @@ export class Flora {
   private mats: THREE.Material[] = [];
   /** rock ledges a diver can swim under (for tests and hints) */
   ledges: { x: number; z: number; bottom: number }[] = [];
-  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], kelpSpots: [] };
+  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], coralAll: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], kelpSpots: [] };
   boat: THREE.Group;
   carpetCount = 0;
   private landmarks: THREE.Object3D[] = [];
@@ -665,10 +667,13 @@ export class Flora {
     // ---- reef corals
     const reefOk = (x: number, z: number) => zoneAt(x, z) === 'reef' && slopeAt(x, z) < 0.55 && (bommieAt(x, z) > 0.9 || r() < 0.18);
     const brainG = domeColony(3, 12, 0.12, 1.4, 0.75);
+    brainG.computeBoundingBox();
     const brains = sample(420, [-200, 200, 120, 345], reefOk, 30);
     solid(brainG, brainMat, brains.map(([x, z]) => {
       const c = [color(0.1, 0.35, 0.55), color(0.28, 0.3, 0.5), color(0.08, 0.45, 0.5), color(0.6, 0.2, 0.55)][Math.floor(r() * 4)];
-      return { m: placeMatrix(x, z, 0.5 + r() * 1.1, r, 0.6, 0.15), c };
+      const sc = 0.5 + r() * 1.1;
+      this.homes.coralAll.push(new THREE.Vector3(x, heightAt(x, z) + sc * brainG.boundingBox!.max.y * 0.9, z));
+      return { m: placeMatrix(x, z, sc, r, 0.6, 0.15), c };
     }));
     const stagVariants = [branchingCoral(11, 3, 0.9, 0.03), branchingCoral(12, 3, 0.75, 0.026), corymboseCoral(13)];
     const coralPalette = [
@@ -686,7 +691,9 @@ export class Flora {
       const pts = sample(200, [-200, 200, 125, 345], reefOk, 30);
       solid(g, coralMat, pts.map(([x, z]) => {
         const p = coralPalette[Math.floor(r() * coralPalette.length)];
-        return { m: placeMatrix(x, z, vi === 2 ? 0.9 + r() * 1.2 : 0.55 + r() * 0.6, r, 0.3, 0.05), c: color(p[0], p[1], p[2]) };
+        const sc = vi === 2 ? 0.9 + r() * 1.2 : 0.55 + r() * 0.6;
+        this.homes.coralAll.push(new THREE.Vector3(x, heightAt(x, z) + sc * topY * 0.9, z));
+        return { m: placeMatrix(x, z, sc, r, 0.3, 0.05), c: color(p[0], p[1], p[2]) };
       }));
       // dense coral heads on bommies (higher points)
       const heads = sample(60, [-200, 200, 130, 340], (x, z) => reefOk(x, z) && bommieAt(x, z) > 2.2 + vi * 0.3, 40);
@@ -703,6 +710,7 @@ export class Flora {
     solid(tableG, coralMat, tables.map(([x, z]) => {
       const sc = 0.9 + r() * 1.4;
       this.homes.underTables.push(new THREE.Vector3(x, heightAt(x, z) + sc * 0.45, z));
+      this.homes.coralAll.push(new THREE.Vector3(x, heightAt(x, z) + sc * 0.9, z));
       return { m: placeMatrix(x, z, sc, r, 0.1, 0), c: color(0.1 + r() * 0.1, 0.35, 0.55 + r() * 0.15) };
     }));
     // habitat anchors: sand patches between bommies, wall face, seagrass
@@ -726,10 +734,13 @@ export class Flora {
     });
     this.mats.push(bushMat);
     const bushG = domeColony(21, 9, 0.35, 3.2, 0.7);
+    bushG.computeBoundingBox();
     const bushes = sample(900, [-200, 200, 125, 345], reefOk, 30);
     solid(bushG, bushMat, bushes.map(([x, z]) => {
       const p = coralPalette[Math.floor(r() * coralPalette.length)];
-      return { m: placeMatrix(x, z, 0.2 + r() * 0.4, r, 0.5, 0.03), c: color(p[0], p[1] * 0.9, p[2] * 0.95) };
+      const sc = 0.2 + r() * 0.4;
+      if (sc > 0.4) this.homes.coralAll.push(new THREE.Vector3(x, heightAt(x, z) + sc * bushG.boundingBox!.max.y * 0.9, z));
+      return { m: placeMatrix(x, z, sc, r, 0.5, 0.03), c: color(p[0], p[1] * 0.9, p[2] * 0.95) };
     }));
     // ---- dense coral carpet on the bommies (jittered grid, cheap meshes, culled per 40 m cell)
     {

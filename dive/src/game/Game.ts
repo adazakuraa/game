@@ -13,7 +13,9 @@ import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
 import { Environment } from '../world/environment';
 import { Flora } from '../world/flora';
-import { Creatures, type PhotoTarget } from '../life/creatures';
+import { Creatures, OCTO, type PhotoTarget } from '../life/creatures';
+import { BAIT, eatsBait, type BaitId } from './bait';
+import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
 import { caveRoofAt, DIVE_POINTS, heightAt, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
 import { Input } from '../core/input';
@@ -98,6 +100,11 @@ export class Game {
   private coldWarned = -100;
   /** camera or spear in hand */
   private tool: 'camera' | 'spear' = 'camera';
+  /** Phase 4: the day's weather on this dive, the bait selected, and its visible cloud */
+  private weather: WeatherId = 'sunny';
+  private baitKind: BaitId = 'krill';
+  private baitPts: THREE.Points | null = null;
+  private baitPtsT = 0;
   private reload = 0;
   private diveCatch: Catch[] = [];
   private spearT: ReturnType<Creatures['findSpearTarget']> = null;
@@ -636,6 +643,8 @@ export class Game {
     this.input.bindButton($('btn-shutter'), 'shutter');
     this.input.bindButton($('btn-light'), 'light');
     this.input.bindButton($('btn-tool'), 'tool');
+    this.input.bindButton($('btn-bait'), 'bait');
+    this.input.bindButton($('btn-bait-kind'), 'baitKind');
     $('btn-pause').addEventListener('click', () => this.setPaused(true));
     $('resume').addEventListener('click', () => this.setPaused(false));
     $('abort').addEventListener('click', () => { if (this.surfaceAnywhere()) this.endDive('surface'); });
@@ -795,7 +804,8 @@ export class Game {
   private renderDaytime(): void {
     const c = this.save.clock ?? 0;
     const el = $('daytime');
-    const now = `<span class="dt-now">${this.save.day ?? 1}日目・<b>${timeLabel(c)}</b></span>`;
+    const w = WEATHER[weatherOf(this.save.day ?? 1)];
+    const now = `<span class="dt-now">${this.save.day ?? 1}日目・<b>${timeLabel(c)}</b>・${w.icon}${w.name}</span>`;
     const night = nightOf(c) >= 0.5;
     const torch = this.hasTorch();
     const buff = this.save.buff ? `<small>まかない：${DISH[this.save.buff].name}（${DISH[this.save.buff].short}）が次のダイブに効く</small>` : '';
@@ -983,6 +993,17 @@ export class Game {
       this.flora.boat.visible = !this.ads;
       this.terrain.prime(dp.x, dp.z, 80);
       this.creatures.night = !this.ads && nightOf(this.save.clock ?? 0) >= 0.5;
+      // Phase 4: the day's weather shapes this dive (ADS dives are always calm and clear)
+      this.weather = this.ads ? 'sunny' : weatherOf(this.save.day ?? 1);
+      const wNow = WEATHER[this.weather];
+      this.creatures.weatherMult = (def) => weatherMultOf(def, this.weather);
+      this.creatures.ads = this.ads;
+      this.env.weatherLight = wNow.light;
+      this.env.weatherFog = wNow.fog;
+      this.creatures.clearBait();
+      this.creatures.grab = null;
+      this.clearBaitVisual();
+      this.refreshBaitUi();
       this.creatures.reshuffle(this.camera.position);
       this.creatures.events.length = 0;
       this.placeCurrents();
@@ -1079,7 +1100,7 @@ export class Game {
         $('help').classList.remove('hidden');
         window.setTimeout(() => $('help').classList.add('hidden'), 7000);
       }
-      this.toast(this.ads ? '大気圧潜水服で深海へ降下中…' : `${dp.name}にエントリー${this.env.night >= 0.5 ? '（夜の海）' : ''}${this.buff ? `　まかないの${DISH[this.buff].name}：${DISH[this.buff].short}` : ''}`, '', 3);
+      this.toast(this.ads ? '大気圧潜水服で深海へ降下中…' : `${dp.name}にエントリー${this.env.night >= 0.5 ? '（夜の海）' : ''}　天気：${WEATHER[this.weather].icon}${WEATHER[this.weather].name}${this.buff ? `　まかないの${DISH[this.buff].name}：${DISH[this.buff].short}` : ''}`, '', 3);
     }, 650);
   }
 
@@ -1094,6 +1115,87 @@ export class Game {
       if (this.currents.some((c) => Math.hypot(c.x - x, c.z - z) < 60)) continue;
       this.currents.push({ x, z, r: 14 + Math.random() * 10, s: 0.8 + Math.random() * 0.6 });
     }
+  }
+
+  /** Bait kinds the diver actually holds, in shelf order. */
+  private heldBaits(): typeof BAIT.kinds {
+    return BAIT.kinds.filter((k) => (this.save.bait?.[k.id] ?? 0) > 0);
+  }
+
+  private cycleBaitKind(): void {
+    const held = this.heldBaits();
+    if (held.length < 2) return;
+    const i = held.findIndex((k) => k.id === this.baitKind);
+    this.baitKind = held[(i + 1) % held.length].id;
+    this.refreshBaitUi();
+  }
+
+  /** Scatter the selected bait 1.5 m ahead: a sinking cloud of particles that lures fish in. */
+  private scatterBait(): void {
+    if (this.ads || !this.save.tutorial) return;
+    const held = this.heldBaits();
+    if (!held.length) return;
+    if (!held.some((k) => k.id === this.baitKind)) this.baitKind = held[0].id;
+    const kind = BAIT.kinds.find((k) => k.id === this.baitKind)!;
+    const s = this.save;
+    s.bait![kind.id] = (s.bait?.[kind.id] ?? 0) - 1;
+    this.writeSave();
+    const fwd = this.tmpDir.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    const p = this.camera.position.clone().addScaledVector(fwd, 1.5);
+    const gy = heightAt(p.x, p.z) + 0.5;
+    if (p.y < gy) p.y = gy;
+    this.creatures.dropBait(p, kind.id, (def) => eatsBait(def, kind.id), BAIT.life);
+    // the visible cloud: soft particles that sink slowly and fade out in the last seconds
+    this.clearBaitVisual();
+    const N = 60;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      pos[i * 3] = p.x + (Math.random() - 0.5) * 0.7;
+      pos[i * 3 + 1] = p.y + (Math.random() - 0.5) * 0.7;
+      pos[i * 3 + 2] = p.z + (Math.random() - 0.5) * 0.7;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const m = new THREE.PointsMaterial({ color: kind.color, size: 0.09, transparent: true, opacity: 0.9, depthWrite: false });
+    this.baitPts = new THREE.Points(g, m);
+    this.baitPts.frustumCulled = false;
+    this.scene.add(this.baitPts);
+    this.baitPtsT = 0;
+    this.audio.chime(false);
+    this.toast(`「${kind.name}」をまいた`, '', 1.6);
+    this.refreshBaitUi();
+  }
+
+  private clearBaitVisual(): void {
+    if (!this.baitPts) return;
+    this.scene.remove(this.baitPts);
+    this.baitPts.geometry.dispose();
+    (this.baitPts.material as THREE.Material).dispose();
+    this.baitPts = null;
+  }
+
+  /** Per-frame: the cloud sinks with time and fades out over its last seconds. */
+  private updateBaitVisual(dt: number): void {
+    if (!this.baitPts) return;
+    if (!this.creatures.bait) { this.clearBaitVisual(); return; }
+    this.baitPtsT += dt;
+    const pos = this.baitPts.geometry.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) pos.setY(i, pos.getY(i) - dt * 0.05);
+    pos.needsUpdate = true;
+    const left = BAIT.life - this.creatures.bait.t;
+    (this.baitPts.material as THREE.PointsMaterial).opacity = left < 8 ? Math.max(0, left / 8) * 0.9 : 0.9;
+  }
+
+  /** Bait buttons: shown while diving after the tutorial (never in the ADS), with kind and uses left. */
+  private refreshBaitUi(): void {
+    const held = this.heldBaits();
+    const show = this.state === 'diving' && !this.ads && !!this.save.tutorial && held.length > 0;
+    $('btn-bait').classList.toggle('hidden', !show);
+    $('btn-bait-kind').classList.toggle('hidden', !(show && held.length > 1));
+    if (held.length && !held.some((k) => k.id === this.baitKind)) this.baitKind = held[0].id;
+    const kind = BAIT.kinds.find((k) => k.id === this.baitKind);
+    $('bait-label').textContent = kind && show ? `${kind.name}×${this.save.bait?.[kind.id] ?? 0}` : '';
+    if (kind) $('btn-bait').style.color = kind.color;
   }
 
   /** Warnings, charges and bites from territorial triggerfish / curious sharks. */
@@ -1115,6 +1217,15 @@ export class Game {
       } else if (e.type === 'charge') {
         this.audio.warn();
         this.toast(light ? `${name}がライトめがけて突っ込んでくる！ ライトを消して！` : shark ? `${name}が突っ込んでくる！` : `${name}が突進してくる！ 離れて！`, 'danger', 2.5);
+      } else if (e.type === 'octoWarn') {
+        this.toast(`${name}の腕がこちらに伸びてきた… 近づきすぎ注意（ゆっくり離れよう）`, 'warn', 3);
+      } else if (e.type === 'grab') {
+        const dmg = Math.round(OCTO.first * (e.def.size >= 1 ? OCTO.big : 1));
+        this.air = Math.max(1, this.air - dmg);
+        this.shake = Math.max(this.shake, 0.8);
+        this.audio.warn();
+        try { navigator.vibrate?.(160); } catch { /* not supported */ }
+        this.toast(`${name}に吸盤で絡まれた！ エア −${dmg}bar　シャッター連打で振りほどこう`, 'danger', 3.5);
       } else {
         const bite = e.def.aggro?.bite ?? 5;
         this.air = Math.max(1, this.air - bite);
@@ -1291,6 +1402,8 @@ export class Game {
     if (inp.consume('menu')) this.setPaused(true);
     if (inp.consume('surface') && this.canSurface()) this.endDive('surface');
     if (inp.consume('tool')) this.setTool(this.tool === 'camera' ? 'spear' : 'camera');
+    if (inp.consume('baitKind')) this.cycleBaitKind();
+    if (inp.consume('bait')) this.scatterBait();
 
     const cam = this.camera;
     const fwd = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
@@ -1298,6 +1411,7 @@ export class Game {
     const boosting = inp.boost && this.has('scooter');
     let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.buff === 'shioyaki' ? 1.15 : this.buff === 'fugu' ? 1.1 : 1) * (1 - Math.min(0.3, this.carryKg / 120));
     if (boosting) speed = 6;
+    if (this.creatures.grab) speed *= 0.25; // Phase 4: an octopus on the arms — barely able to swim
     const want = new THREE.Vector3().addScaledVector(fwd, inp.moveY * speed).addScaledVector(right, inp.moveX * speed * 0.7);
     if (inp.up) want.y += speed * 0.75;
     if (inp.down) want.y -= speed * (this.ads ? 1.3 : 0.75);
@@ -1369,6 +1483,18 @@ export class Game {
       'YXZ',
     );
     this.handleEncounters();
+
+    // Phase 4: held by an octopus — air drains until the diver shakes free or it lets go
+    const gr = this.creatures.grab;
+    if (gr) {
+      gr.t += dt;
+      this.air = Math.max(1, this.air - OCTO.perSec * (gr.rt.def.size >= 1 ? OCTO.big : 1) * dt);
+      this.shake = Math.max(this.shake, 0.25);
+      if (gr.t >= OCTO.maxHold) {
+        this.creatures.releaseGrab(this.camera.position);
+        this.toast(`${gr.rt.def.name}は腕をほどいて離れていった`, '', 2.5);
+      }
+    }
 
     // air
     const d = Math.max(0, -p.y);
@@ -1467,7 +1593,19 @@ export class Game {
       this.vmKnife.position.set(0.15, -0.14, -0.28);
       this.vmKnife.rotation.set(0.1, 0.1, -0.3 + Math.sin(this.time * 2) * 0.03);
     }
-    if (this.tool === 'spear') {
+    if (this.creatures.grab) {
+      // Phase 4: while grabbed, the shutter button is the shake-free button
+      if (inp.consume('shutter')) {
+        const g2 = this.creatures.grab!;
+        g2.taps++;
+        this.audio.shutter();
+        this.shake = Math.max(this.shake, 0.35);
+        if (g2.taps >= g2.need) {
+          this.creatures.releaseGrab(this.camera.position);
+          this.toast('振りほどいた！', '', 2);
+        }
+      }
+    } else if (this.tool === 'spear') {
       this.spearT = this.creatures.findSpearTarget(cam, this.spearTool.range);
       this.updateSpearFx(dt);
       if (inp.consume('shutter')) this.fireSpear();
@@ -1912,6 +2050,7 @@ export class Game {
     this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
 
+    this.refreshBaitUi();
     const sb = $('surface-btn');
     const can = this.canSurface();
     sb.classList.toggle('hidden', !can);
@@ -1926,6 +2065,14 @@ export class Game {
     $('catch-val').textContent = `${this.bagKg.toFixed(1)}/${this.bagCap}kg`;
     cc.classList.toggle('full', this.bagKg >= this.bagCap - 0.05);
     $('btn-shutter').classList.toggle('reload', this.tool === 'spear' && this.reload > 0);
+    if (this.creatures.grab) {
+      const g = this.creatures.grab;
+      ret.classList.add('lock');
+      ret.classList.remove('far');
+      lab.innerHTML = `${g.rt.def.name}に絡まれた！<small>シャッター連打で振りほどく（あと${Math.max(0, g.need - g.taps)}回）</small>`;
+      $('btn-shutter').classList.add('ready');
+      return this.updateToasts(dt);
+    }
     if (this.cutReady || this.missions.cutProgress() !== null) {
       ret.classList.add('lock');
       ret.classList.remove('far');
@@ -2012,6 +2159,7 @@ export class Game {
       this.creatures.lightOn = this.env.lightOn;
       this.creatures.update(dt, cp, this.vel, this.camera.getWorldDirection(this.tmpDir));
     }
+    if (this.state === 'diving' && !this.paused) this.updateBaitVisual(dt);
     this.flora.update(cp, this.time);
     this.env.update(dt, this.camera, this.renderer, this.time);
     // image-based fill only adds sheen near the surface; it must not flatten the sun/shade contrast
@@ -2254,6 +2402,98 @@ export class Game {
       unlockAll: () => {
         for (const s of SPECIES.slice(0, 40)) this.save.found[s.id] = this.save.found[s.id] ?? { photo: '', depth: 0, t: 0 };
       },
+      /** Phase 4: distribution metrics around the diver (cf. PHASE4-DESIGN §0) */
+      spreadStats: (R = 40) => {
+        const c = this.camera.position;
+        const corals = [...this.flora.homes.coralTops, ...this.flora.homes.coralAll].filter((p) => Math.hypot(p.x - c.x, p.z - c.z) < R);
+        const agents: { x: number; y: number; z: number; id: string; swim: boolean }[] = [];
+        for (const rt of this.creatures.list) {
+          const swim = rt.def.kind === 'fish' || rt.def.kind === 'ray' || rt.def.kind === 'squid' || rt.def.kind === 'turtle';
+          for (const a of rt.agents) if (!rt.groups[a.g].absent && !a.taken) agents.push({ x: a.p.x, y: a.p.y, z: a.p.z, id: rt.def.id, swim });
+        }
+        let empty = 0;
+        for (const p of corals) {
+          let has = false;
+          for (const a of agents) { if (Math.abs(a.x - p.x) < 2.5 && Math.abs(a.z - p.z) < 2.5 && Math.abs(a.y - p.y) < 2.5) { has = true; break; } }
+          if (!has) empty++;
+        }
+        const cells = new Map<string, Set<string>>();
+        for (const a of agents) {
+          if (!a.swim || Math.hypot(a.x - c.x, a.z - c.z) > R) continue;
+          const k = Math.floor(a.x / 5) + ',' + Math.floor(a.z / 5);
+          let s = cells.get(k);
+          if (!s) cells.set(k, (s = new Set()));
+          s.add(a.id);
+        }
+        let cells4 = 0, maxSp = 0;
+        for (const s of cells.values()) { if (s.size >= 4) cells4++; maxSp = Math.max(maxSp, s.size); }
+        return { corals: corals.length, emptyPct: corals.length ? Math.round((empty / corals.length) * 100) : 0, cells4plus: cells4, cells: cells.size, maxSpecies: maxSp };
+      },
+      /** Phase 4: how tightly fish near the diver bunch up (max neighbours within 1.5 m) */
+      clump: (r = 8) => {
+        const c = this.camera.position;
+        const near: THREE.Vector3[] = [];
+        for (const rt of this.creatures.list) for (const a of rt.agents) if (!rt.groups[a.g].absent && a.p.distanceTo(c) < r) near.push(a.p);
+        let max = 0;
+        for (const p of near) { let n = 0; for (const q of near) if (p.distanceTo(q) < 1.5) n++; max = Math.max(max, n); }
+        return { fish: near.length, maxClump: max };
+      },
+      curiousState: (id: string) => {
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        if (!rt) return null;
+        return rt.groups.map((g) => ({ cur: g.cur ?? 0, curT: Math.round((g.curT ?? 0) * 10) / 10, absent: !!g.absent }));
+      },
+      callCurious: (id: string) => {
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        if (!rt) return false;
+        const g = rt.groups[0];
+        const c = this.camera.position;
+        g.absent = false; g.cur = 0; g.curT = 0;
+        g.c.set(c.x + 12, c.y - 1, c.z); g.t.copy(g.c); g.home.copy(g.c);
+        for (const a of rt.agents) if (a.g === 0) a.p.copy(g.c).add(a.off);
+        return true;
+      },
+      giveBait: (n = 3) => {
+        this.save.bait = { krill: n, chunk: n, weed: n };
+        this.writeSave();
+        this.refreshBaitUi();
+      },
+      dropBait: (kind: string) => {
+        this.baitKind = kind as BaitId;
+        this.scatterBait();
+        return this.creatures.baitInfo();
+      },
+      baitInfo: () => this.creatures.baitInfo(),
+      placeOcto: (id: string) => {
+        const rt = this.creatures.list.find((r) => r.def.id === id);
+        const a = rt?.agents[0];
+        if (!rt || !a) return false;
+        rt.groups[a.g].absent = false;
+        rt.active = true;
+        const f = new THREE.Vector3();
+        this.camera.getWorldDirection(f);
+        const x = this.camera.position.x + f.x * 2.5, z = this.camera.position.z + f.z * 2.5;
+        a.p.set(x, heightAt(x, z) + 0.1, z);
+        a.gx = undefined; a.alarm = 0; a.octCd = 0; a.octT = 0; a.v.set(0, 0, 0);
+        return true;
+      },
+      octo: () => {
+        const g = this.creatures.grab;
+        return { grab: !!g, id: g?.rt.def.id ?? null, taps: g?.taps ?? 0, need: g?.need ?? 0, t: g ? Math.round(g.t * 10) / 10 : 0, air: Math.round(this.air) };
+      },
+      weather: () => this.weather,
+      setWeather: (w: string) => {
+        this.weather = w as WeatherId;
+        this.creatures.weatherMult = (def) => weatherMultOf(def, this.weather);
+        this.env.weatherLight = WEATHER[this.weather].light;
+        this.env.weatherFog = WEATHER[this.weather].fog;
+        return this.weather;
+      },
+      weatherMult: (id: string, w: string) => {
+        const def = SPECIES_BY_ID.get(id);
+        return def ? weatherMultOf(def, w as WeatherId) : null;
+      },
+      targetInfo: () => this.target ? { id: this.target.rt.def.id, reason: this.target.reason, inRange: this.target.inRange, fit: Math.round(this.target.fit * 100) / 100, dist: Math.round(this.target.dist * 10) / 10 } : null,
     };
   }
 

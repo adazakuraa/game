@@ -317,6 +317,10 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 
 /* spearfishing */
 #btn-tool { position: absolute; right: 100%; bottom: 0; margin-right: 12px; flex-direction: column; gap: 0; }
+#btn-bait { position: absolute; right: 100%; bottom: 64px; margin-right: 12px; color: #f0a080; }
+#btn-bait small { font-size: 10px; font-weight: 900; line-height: 1; margin-top: -2px; }
+#btn-bait-kind { position: absolute; right: calc(100% + 12px); bottom: 128px; width: 34px; height: 34px; }
+#btn-bait-kind svg { width: 16px; height: 16px; }
 #btn-tool small { font-size: 10px; font-weight: 900; line-height: 1; margin-top: -2px; }
 #btn-tool .i-cam, #btn-shutter .i-spear { display: none; }
 #hud.spear #btn-tool .i-cam, #hud.spear #btn-shutter .i-spear { display: block; }
