@@ -1,6 +1,6 @@
 # Phase 4 設計：魚のAI・生態・撮影・行動イベント
 
-作成: 2026-11-25（作業ブランチ `claude/focused-lamport-zo5rwl`）
+作成: 2026-11-25（作業ブランチ `claude/focused-lamport-zo5rwl`）。実装は Muse 側で行う（§9 が実装手順）。
 依頼の正は `dive/IMPROVEMENT_TRACKER.md` の Phase 4。この文書は「どこをどう変えるか」の決定の正。迷った点は §8「確認が必要な点」に残し、仮の決定で進める。
 
 調整値はすべて定数オブジェクトにまとめる（`SPREAD` / `CURIOUS` / `BAIT` / `OCTO` / `WEATHER`、§各節）。セーブキーは `blue-depths-save-v1` のまま、追加フィールドはすべて省略可（無い＝旧動作）なので移行は不要。
@@ -40,10 +40,10 @@
 ### 1.1 魚のいないサンゴを減らす（トラッカー：サンゴの周りに魚）
 
 - `flora.ts`：脳サンゴ・枝サンゴ（一般）・テーブル・ハナヤサイ（大きめのもの、半径 0.6m 以上）の位置と頂上の高さを、新しい生息点 **`Homes.coralAll`** に登録する（既存の `coralTops` などはそのまま）。
-- サンゴ住まいの種（`hab` が `coralHover`／`coralPick`／`under`／`cleaner` で、`region` が `coralTops`／`underTables`／`bommieSpots`）は、**個体数（count）はそのままで群れ数（groups）を増やす**：`groups = max(groups, ceil(count / SPREAD.coralGroupSize))`（`coralGroupSize = 4`）。
+- サンゴ住まいの種（`hab` が `coralHover`／`coralPick`／`under`／`cleaner` で、`region` が `coralTops`／`bommieSpots`）は、**個体数（count）はそのままで群れ数（groups）を増やす**：`groups = max(groups, ceil(count / SPREAD.coralGroupSize))`（`coralGroupSize = 4`）。
   - 例：デバスズメダイ 200匹/16群れ → 50群れ（1か所4匹）。
   - 個体数・メッシュ・ドローコールは増えない（増えるのは群れの中心の計算だけ）。
-- 増やした群れの生息点は `coralTops`＋`coralAll` から選ぶ（`coralTops` 種のみ。`underTables` は従来どおりテーブルの下）。
+- 増やした群れの生息点は `coralTops`＋`coralAll` から選ぶ（`coralTops` 種のみ）。`underTables`（テーブルの下、140か所しかない）の種は群れ数を増やさない（実装時の計測で、増やすとテーブルの下が混みすぎた）。
 - 目標：上の指標で「魚のいないサンゴ」を **30%以下**。
 
 ### 1.2 一箇所に集まりすぎない・集まるなら2〜3種まで
@@ -124,7 +124,7 @@
 
 ### 3.3 海中で使う
 
-- 手持ちがあるとき、HUD に**餌ボタン**（`#btn-bait`、銛の持ち替えボタンの近く）を出す。タップで手持ちの餌の種類を順に切り替え、長押し（0.4秒）でまく……ではスマホで分かりにくいので、**タップでまく**＋ボタン横の小さな切替（`#btn-bait-kind`、2種類以上持っているときだけ）にする。
+- 手持ちがあるとき（チュートリアル後・ADS 以外）、HUD に**餌ボタン**（`#btn-bait`、銛の持ち替えボタンの上）を出す。**タップでまく**。ボタン下に「オキアミ×3」のように種類と残り回数。2種類以上持っているときだけ、その上に小さな切替ボタン（`#btn-bait-kind`、34px）を出し、タップで手持ちの種類を順に切り替える（長押し操作は使わない）。
 - まくと、目の前 1.5m に餌の雲（小さな粒の `Points`、40秒で消える）。手持ちを1減らしてセーブ。
 - **誘引**：餌の点から `BAIT.radius`（15m）以内の、その餌を食べる種の個体を選ぶ。
   - 上限：**`BAIT.maxFish`（10匹）・`BAIT.maxSpecies`（3種）**（「寄ってくる魚が多すぎない」＋ §1.2 の「集まるなら2〜3種」）。近い個体から。
@@ -234,3 +234,162 @@
 - **U**：タコの被害（最初 −3bar、−1.5bar/秒、最大6秒、シャッター6回で抜ける）は仮。
 - **V**：天候は日数から決め、やり直しで引き直せない。天候の割合（晴40・曇30・雨20・荒10）と倍率（0.75〜1.35）は仮。荒天でも潜れる（潜れなくする案は採らない：ゲームが止まるため）。
 - **W**：天候の見た目は光と霞の少しの変化だけ。波・雨粒・流れの強さなどの演出は Phase 5/10。
+
+---
+
+## 9. 実装手順（実装担当向け）
+
+設計セッションで方針を確かめるために短い試作を行い、§0 の計測と同じ方法で次の値を確認した（試作のコードはコミットしていない。数値は実装の目安）。
+
+| 指標（reef、半径40m） | 変更前 | 試作後（2回） |
+| --- | --- | --- |
+| 魚のいないサンゴ | 57〜58% | 23〜29% |
+| 泳ぐ生き物が4種以上いる5mマス | 15 | 4〜7 |
+| 1マスの泳ぐ生き物の最大種数 | 11 | 5 |
+
+試作で分かった注意点：
+- **`underTables` の種は群れ数を増やさない**（増やすとテーブルの下が混み、4種以上のマスが 9〜12 にしか減らなかった）。
+- 生息点選び `pickSpread` は、種 id を渡したとき試行回数を 2 倍（8→16）にしないと混雑回避が効きにくい。
+- `flora.ts` で `coralAll` を登録するとき、乱数 `r()` を呼ぶ順番を変えないこと（変えるとサンゴの配置が全部変わる）。色 → 大きさ → `placeMatrix` の順のまま、大きさを変数に取り出すだけにする。
+
+### 9.1 種データ（`src/life/species.ts` の末尾、`SPECIES.push(...)` の後）
+
+```ts
+export const SPREAD_DATA = {
+  coralGroupSize: 4,
+  zoneBoost: { lagoon: 1.5, kelp: 1.5, rocky: 1.3, cold: 1.3, dropoff: 1.2 },
+};
+function balanceZones() {
+  for (const d of SPECIES) {
+    const coralHab = d.hab === 'coralHover' || d.hab === 'coralPick' || d.hab === 'under' || d.hab === 'cleaner';
+    const coralReg = d.region === 'coralTops' || d.region === 'bommieSpots';   // underTables は除く
+    if (coralHab && coralReg && !['anemone', 'static', 'buried'].includes(d.behavior))
+      d.groups = Math.max(d.groups, Math.ceil(d.count / SPREAD_DATA.coralGroupSize));
+    const k = SPREAD_DATA.zoneBoost[d.zone];
+    if (k && d.kind === 'fish' && d.rarity <= 2 && ['school', 'solo', 'bottom'].includes(d.behavior) && !d.aggro) {
+      d.count = Math.round(d.count * k);
+      d.groups = Math.min(d.count, Math.ceil(d.groups * k));
+    }
+  }
+}
+balanceZones();
+```
+`Creatures` の生成より前に走ること（`species.ts` の読み込み時でよい）。
+
+### 9.2 サンゴの生息点（`src/world/flora.ts`）
+
+- `Homes` 型に `coralAll: THREE.Vector3[]` を追加、`homes` の初期値にも `coralAll: []`。
+- 登録する場所（いずれも `new THREE.Vector3(x, heightAt(x, z) + 頂上, z)`）：
+  - 脳サンゴ `brains`：頂上 = `sc × brainG.boundingBox.max.y × 0.9`（`sc = 0.5 + r()*1.1`）
+  - 枝サンゴ一般 `pts`（`stagVariants` の各 `vi`）：頂上 = `sc × topY × 0.9`
+  - テーブル `tables`：頂上 = `sc × 0.9`
+  - ハナヤサイ `bushes`：`sc > 0.4` のものだけ、頂上 = `sc × bushG.boundingBox.max.y × 0.9`
+
+### 9.3 生き物の行動（`src/life/creatures.ts`）
+
+定数（ファイル上部、`NIGHT` の近く）：
+```ts
+export const SPREAD = { cell: 5, maxSpecies: 3, hideSpread: 0.7, linger: 0.15, residentFlee: 0.75, leash: 4, leashSize: 3 };
+export const CURIOUS = { startR: 25, follow: 30, leaveR: 45, cooldown: 120, side: 5, away: 60 };
+export const OCTO = { minSize: 0.3, grabR: 0.5, grabRSize: 0.8, dwell: 1.0, fleeSpeed: 0.9, first: 3, perSec: 1.5, big: 1.5, taps: 6, tapsBig: 9, maxHold: 6, cooldown: 20 };
+export const PHOTO_VIS = { fogCut: 1.3, darkSeen: 4, minFit: 0.4, occTests: 8 };
+export const LURE = { radius: 15, maxFish: 10, maxSpecies: 3, refill: 2, fear: 0.3 };
+```
+
+型の追加：
+- `Group` に `cell?: string`（混み具合の登録先）、`cur?: number; curT?: number; curSide?: number`（好奇心）。
+- `Agent` に `lured?: boolean`、`octT?: number; octCd?: number; octWarned?: boolean`。
+- `CreatureEvent.type` に `'octoWarn' | 'grab'`。
+- `Creatures` に `weatherMult: (def) => number = () => 1`、`bait: {p, t, kind, eats, fish: Set<Agent>, species: Set<string>, refill} | null`、`grab: {rt, a, t, taps, need} | null`。
+
+**§1.2 混み具合**：
+- `spotMix: Map<string, Map<string, number>>`（マス → 種 id → 群れ数）。マスのキーは `floor(x/5),floor(z/5)`。数えるのは kind `fish`／`ray`／`squid`／`turtle` だけ。
+- `mixFull(id, x, z)`：そのマスの種数が 3 以上で、`id` が含まれていなければ true。
+- `mixSet(def, g, p)`：群れ `g` の古い登録を外し（`g.cell`）、`p` のマスに登録。`spawn` で群れを作ったとき・`relocate` で `g.home` を変える直前に呼ぶ。`reshuffle` で全消去はしない（動かない群れの登録が消えるため）。
+- `pickSpread(arr, ok, tries, id?)`：`id` があれば `tries *= 2`、候補の評価値 `u` に `mixFull` なら `+50`（＝最後の手段）。`pickHome` の `fromList` と `relocate` の文字列 region で `def.id` を渡す。
+- box region：`pickHome` の座標引き直しループ（40回）で `k ≤ 30` の間は `mixFull` なら引き直し。`relocate` のループ（30回）では `k < 24` の間は `mixFull` なら `continue`。
+- `homeList(reg)`：`'coralTops'` のとき `[...homes.coralTops, ...homes.coralAll]`（一度作ってキャッシュ）、それ以外は `homes[reg]`。`pickHome`（`reg === 'coralTops'`）と `relocate` で使う。
+
+**§1.3 固まらない**：
+- `fleeDir(away, vel, radialW, out, side = 0)`：`side` が 0 でなければ、接線の向きを `side < 0` で反転（進行方向による選択の代わり）。
+- 個体の逃走・警戒（swimmers の `if (dPlayer < fr)` と `else if (pFast < 0.6)`）で `side = (a.ph % 2) < 1 ? 1 : -1` を渡す。群れ中心の逃走は従来どおり `side` なし。
+- 隠れる目標：`g.home + a.off × 0.15` → `× SPREAD.hideSpread`。
+- 警戒中の `acc.addScaledVector(_v, -0.35 …)` → `-SPREAD.linger`。
+
+**§1.4 居場所の決まった魚**：
+- `resident(def)`：`pelagic`／`drift`／`curious` は false。`hab` があり `midwater`／`surface`／`perch`／`burrow` 以外なら true。それ以外は `typeof region === 'string'`。
+- 群れ中心：`resident` なら `gFlee = fleeR × 0.75`、`leash = 4 + size × 3`。ホームからの水平距離 > `leash` なら逃走をやめ `g.v += normalize(home − c) × dt × speed × 2.5`。
+- 個体：`fr = lured ? fleeR × LURE.fear : resident ? fleeR × 0.75 : fleeR` を作り、個体ループ内の `fleeR` を全部 `fr` に置き換える（hiding・watchR・逃走・最高速度）。
+
+**§2 好奇心**：
+- 群れ中心ループの `curiousNear` 分岐を置き換え：`def.curious` なら `curiousStep()` を毎フレーム呼ぶ。
+  - `cur=0`：距離 < 25m かつ 距離 > `size × 1.5 + 2` かつ `curT ≤ 0` かつ出現中 → `cur=1, curT=30, curSide=±1`（乱数）。
+  - `cur=1`：`curT ≤ 0` または距離 > 45m → `cur=2, curT=120`、`g.t = g.c + 水平(g.c − player) 正規化 × 60`、`g.timer = 120`。
+  - `cur=2`：`curT ≤ 0` → `cur=0, curT=0, timer=0`。
+- `cur=1` の目標：進行方向 `f`（`playerVel` の水平成分、0.3m/s 未満なら視線 `viewDir`）に対し、横 `sd = (5 + size) × curSide`、前 `1.5 + sin(time×0.25 + home.x) × 2` → `g.t = (player.x + f.z×sd + f.x×ahead, player.y − 1 + sin(time×0.3 + home.z)×0.8, player.z − f.x×sd + f.z×ahead)`。
+- `cur=2` の間は目標を引き直さない（`dist < 1 || timer ≤ 0` の分岐に入らない）。
+- `relocate` で群れを移したら `cur = 0, curT = 0`。
+
+**§3 餌（誘引）**：
+- `dropBait(p, kind, eats, life)`：古い雲を `clearBait()`（全個体の `lured=false`）してから作る。
+- `update()` の冒頭（`time += dt` の直後）で `baitStep(dt)`：`t` を減らし 0 で `clearBait`。2秒ごとに、捕られた個体を外し、空きがあれば候補を集める：`rt.active` で `lurable(def)`（kind fish、rarity < 4、aggro なし、curious でない、behavior が school／solo／bottom、`benthic` でない、`stage` 中でない）かつ `eats(def)`、出現中・未捕獲・aggro でない個体で、餌から 15m 以内。近い順に、10匹・3種の上限まで `lured = true`。
+- swimmers の目標計算の後（aggro 処理の前）：`lured` なら `t = time × (0.7 + (ph % 1) × 0.6) + ph × 5`、`rr = 0.4 + (ph % 0.8)` で `target = bait.p + (cos t × rr, sin(1.3t) × 0.3, sin t × rr)`。`hiding` は `!lured` のときだけ。加速係数 `k` は lured なら 1.8、`watchR` は `max(fr × 2.6, lured ? 1.2 : 2.6)`、最高速度に `+0.4`。
+- `baitInfo()`：`{kind, t, fish, species, near（餌から2.5m以内の数）}`（テスト・表示用）。
+
+**§4 撮影判定**（`findTarget` を2段に）：
+1. 全個体を走査して候補を集める（従来の条件＋）：`dist > clear × 1.3` は除外。暗所で光の中でも発光9m以内でもなければ、4m 超は除外・4m 以内は `dark`。点数は従来の式。
+2. 点数順に並べ、上位8体まで：体の7点サンプルで `fit`（従来の計算）を出し `fit < 0.4` は除外。頭・中央・尾（`a.p + 体軸 × a.s × {−0.4, 0, 0.4}`）への視線を `occluded(cp, 点, a.s×0.3+0.25)` で調べ、3点とも遮られたら除外、一部なら `ok → hidden`。最初に `inRange`（ok）になった候補を返す。なければ最初に通った候補（ok 以外の理由つき）、それもなければ null。
+- `occluded(from, to, skip = 0.3)`：従来の地形チェック（10分割）に加えて `segmentBlocked(from, to, skip)`。銛の `findSpearTarget` も同じ関数を使う。
+- `src/world/colliders.ts` に追加：
+```ts
+export function segmentBlocked(a, b, skipEnd = 0.3): boolean {
+  // a→b を 0.5m 刻み（最初の 0.3m と最後の skipEnd m は見ない）。各点で grid のセルの collider を見て、
+  // sphere は中心距離 < r、円柱は y0 ≤ y ≤ y1 かつ 水平距離 < r なら true
+}
+```
+
+**§5 タコ**：
+- `grabber(def)`：kind `octopus` かつ `size ≥ 0.3`。
+- static 分岐の先頭で `octoStep()`。true が返ればその個体は `writeInstance` して次へ。
+  - 絡んでいる個体：`a.p` を `player + 視線水平 × 0.55 − (0, 0.45, 0)` へ `lerp(dt × 6)`、姿勢は揺らす（pitch `0.4 + sin(7t)×0.12`、yaw はダイバーの方、roll `sin(6t)×0.15`）。
+  - それ以外：`alarm > 0`・`octCd > 0`・ほかに絡まれ中 なら何もしない。`reach = 0.5 + size × 0.8`。距離 < `reach × 2` で一度だけ `octoWarn` イベント（`reach × 3` を離れたら再び出せる）。距離 < `reach` かつ ダイバーの速さ ≤ 0.9 の間 `octT += dt`、1.0秒で `grab = {rt, a, t: 0, taps: 0, need: size ≥ 1 ? 9 : 6}` と `grab` イベント。外れたら `octT = 0`。
+- 逃げる条件に `(!grabber || playerVel.length() > 0.9)` を追加。
+- `releaseGrab(from)`：`grab = null`、`octCd = 20`、`alarm = 3.5`、`v = 水平(a.p − from) 正規化 × 2.2`、`gx = undefined`。
+
+**天候**：`presence(rarity)` を `presence(def)` に変え、`min(0.95, base × weatherMult(def))`。呼び出し3か所（`reshuffle`・遠い群れの再配置・`nightFall`）。
+
+### 9.4 新規ファイル
+
+- `src/game/bait.ts`：`BAIT = { life: 40, pack: 3, kinds: [{id:'krill', name:'オキアミ', price:300, diet:'plankton', color:'#f0a080'}, {id:'chunk', name:'魚の切り身', price:500, diet:'meat', color:'#e8d0c0'}, {id:'weed', name:'海藻だんご', price:300, diet:'weed', color:'#7aa050'}] }`、`dietOf(def)`（§3.1：名前の語の表 `DIET_WORDS` を順に見て最初に当たった語で決める。草食の語（ハギ・ブダイ・アイゴ・メジナ・ニザダイ・イスズミ・ハコフグ・オヤビッチャ）を「タイ」「ハタ」より先に置くこと。当たらなければ「school かつ 0.15m 未満 → plankton」「0.15〜2.5m → meat」「それ以外 → 寄らない」）、`eatsBait(id)`。
+- `src/game/weather.ts`：`WEATHER`（割合・名前・アイコン ☀☁☂🌀・光 `{1, 0.9, 0.8, 0.7}`・霧 `{1, 1.05, 1.1, 1.2}`・朝の一言 §6.3）、`weatherOf(day)`（1日目は晴れ。`hash(day + 1013)` を累積割合で引く。前日も荒天なら曇り）、`weatherMult(def, w)`（§6.2 の表。範囲 0.75〜1.35 で clamp）。
+
+### 9.5 ゲーム側（`src/game/Game.ts`・`kitchen.ts`・`environment.ts`・`index.html`・`styles.css`）
+
+- `environment.ts`：`weatherLight = 1; weatherFog = 1` を追加。`vis /= weatherFog`（`fog.density` の計算前）、`sun.intensity *= weatherLight`、`hemi.intensity *= 0.6 + 0.4 × weatherLight`。
+- `startDive`：`reshuffle` の前に `weather = ads ? 'sunny' : weatherOf(save.day)`、`creatures.weatherMult`・`env.weatherLight/Fog` を設定、`clearBait()`・`grab = null`。エントリーのトーストに「天気：☂雨」。
+- ボートの日付表示 `renderDaytime`：「N日目・時刻・☂雨」。
+- 入力：`bindButton($('btn-bait'), 'bait')`・`bindButton($('btn-bait-kind'), 'baitKind')`。`consume('baitKind')` で切替、`consume('bait')` でまく（目の前1.5m、海底+0.5m より上。手持ちを1減らしてセーブ、粒60個の `THREE.Points` を雲として表示し、毎フレーム少し沈ませ、残り8秒から薄くする）。
+- 絡まれ中：泳ぐ速さ ×0.25。シャッター処理の最初で `grab` を処理（`air -= 1.5 × (size≥1 ? 1.5 : 1) × dt`、最低 1bar。`consume('shutter')` で `taps++`。`taps ≥ need` または `t ≥ 6` で `releaseGrab` と「振りほどいた！」／「腕をほどいて離れていった」）。照準ラベル「◯◯に絡まれた！ シャッター連打で振りほどく（あと n 回）」。
+- `handleEncounters`：`octoWarn` →「◯◯の腕がこちらに伸びてきた… 近づきすぎ注意（ゆっくり離れよう）」（warn）。`grab` → `air −= round(3 × big)`、揺れ 0.8、警告音、振動、「◯◯に吸盤で絡まれた！ エア −3bar　シャッター連打で振りほどこう」（danger）。
+- `kitchen.ts`：`LandSave.bait?: Partial<Record<BaitId, number>>`。`say()`：朝は `WEATHER.morning[weatherOf(day)]`（掲示板の紹介の日は「天候の一言。」＋紹介文から「おはよう。」を除いたもの）。島の話 `LORE` は `lore > 0` の朝には出さず、次の来店（`back`）へ。状態行 `#k-status` に「天気 ☂ 雨」。`#k-bait` に3種の棚（手持ち回数・説明・「買う ¥300」、所持金不足なら disabled）、`buyBait(id)` で所持金を引き `pack` 回分足す。
+- `index.html`：`#k-buff` の後に `<h3 class="k-h">釣具の棚：餌</h3><div id="k-bait" class="k-list k-board"></div>`（`k-shop` クラスを付けない＝手銛の前でも出る）。`#controls` の `#btn-shutter` の前に `#btn-bait`（粒のアイコン＋`<small id="bait-label">`）と `#btn-bait-kind`（`ctl mini`）。
+- `styles.css`：`#btn-bait { position:absolute; right:100%; bottom:72px; margin-right:12px; flex-direction:column; color:var(--bait) }`、`#btn-bait-kind { position:absolute; right:calc(100% + 12px); bottom:136px; width:34px; height:34px }`。
+
+### 9.6 テストフックと確認スクリプト
+
+`__THREE_GAME_TEST_HOOKS__` に追加するもの：
+- `spreadStats(R=40)`：§0 の指標（サンゴ数・魚のいないサンゴ %・4種以上のマス・最大種数）。サンゴは `flora.group` の InstancedMesh のインスタンスのうち 半径 0.5〜6m・z 125〜345・ダイバーから R 以内。
+- `clump(r=8)`：r 以内の魚の数と、1.5m 以内に集まる最大数。
+- `curiousState(id)`・`callCurious(id)`（群れ0をダイバーの 12m 横へ）。
+- `giveBait(n)`・`dropBait(kind)`・`baitInfo()`。
+- `placeOcto(id)`（目の前 2.5m の海底へ）・`octo()`（絡まれ状態とエア）。
+- `weather()`・`weatherMult(id, w)`・`targetInfo()`。
+
+確認は `dive/scripts/probe-phase4.cjs`（Playwright、`dist/artifact.html` を file:// で開く）。headless の swiftshader は 1〜6 fps なので、待つときは時刻でなく `waitForFunction(() => game.time > t0 + 秒)` を使う。合格の目安：
+- reef の `spreadStats`：魚のいないサンゴ ≤ 30%、4種以上のマス ≤ 変更前の半分（変更前 15）。
+- イルカ：`callCurious('dolphin')` → `cur` が 1 になってから 2 になるまで 30 ±2 秒（ゲーム内時間）。その後 15 秒で距離が広がっている。
+- 餌：3種それぞれで `baitInfo().fish ≤ 10`、`species.length ≤ 3`、種の顔ぶれが餌ごとに違う。手持ちが 1 ずつ減る。
+- 撮影判定：目の前 3m は `ok`、`clear×1.15` は `murky`、`clear×1.6` は null、暗所 8m は null・3m は `dark`、サンゴの頭の向こうは null。
+- タコ：`placeOcto` の上でゆっくり止まると 1 秒後に絡まれ、エアが 3bar＋1.5bar/秒で減り、シャッター6回で外れる。
+- 天候：朝にすると女将さんの一言が天候の文になり、状態行に天気。`weatherMult` が 0.75〜1.35 に収まる。
+- ページエラー 0、横 844×390・縦 390×844 で餌ボタンが他のボタンに重ならない。
