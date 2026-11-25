@@ -19,10 +19,13 @@ export type Quest = {
   z: number;
   reward: number;
   species?: string;
+  /** newly put up on the board (shown as NEW until the board is looked at) — Phase 3 */
+  fresh?: boolean;
 };
 
 /** 【依頼】offers on the board, requests held at once, reward per kind (yen) */
 export const QUEST = {
+  /** 【掲示板の枠】board + held together (Phase 3): taking or dropping moves a request, clearing one frees a slot and one new request is put up */
   board: 3,
   maxHeld: 2,
   /** distance (m) at which the instructions appear and a timed request begins */

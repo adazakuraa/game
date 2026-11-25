@@ -520,3 +520,27 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 .q-intro { background: rgba(95,227,240,0.08); border: 1px solid var(--cyan); border-radius: 12px; padding: 10px 12px; font-size: 13px; line-height: 1.7; }
 .q-intro b { display: block; color: var(--cyan); }
 .q-intro ul { margin: 4px 0 8px; padding-left: 18px; }
+/* Phase 3: editor's reward, S tips */
+.t-goal { position: relative; }
+.money-pop { position: absolute; left: 0; top: -6px; font-family: var(--num); font-weight: 900; font-size: 20px; color: var(--warn); text-shadow: 0 2px 6px rgba(0,0,0,0.6); pointer-events: none; animation: moneyPop 1.6s ease-out forwards; }
+@keyframes moneyPop { from { transform: translateY(6px); opacity: 0; } 15% { opacity: 1; } to { transform: translateY(-26px); opacity: 0; } }
+.story-card .sc-claim { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: 10px; background: rgba(255,215,120,0.12); border: 1px solid rgba(255,215,120,0.5); font-weight: 900; }
+.story-card .sc-claim .btn { animation: none; }
+.story-card .sc-tips { background: rgba(95,227,240,0.07); border-radius: 10px; padding: 6px 10px; }
+.story-card .sc-tips summary { cursor: pointer; font-weight: 900; color: var(--cyan); min-height: 28px; display: flex; align-items: center; }
+.story-card .sc-tips ul { margin: 4px 0 2px; padding-left: 18px; line-height: 1.6; }
+.story-card .sc-tips b { color: var(--warn); }
+.q-new { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 6px; background: var(--warn); color: #10202a; font-size: 10px; font-weight: 900; }
+.k-item.q-inn { border-style: dashed; }
+/* Phase 3: new-map banner (its own slot: no toast can overwrite it) */
+#map-found { position: absolute; left: 50%; top: calc(68px + var(--safe-t)); transform: translateX(-50%); z-index: 7; pointer-events: none; text-align: center; padding: 8px 22px 10px; border-radius: 14px; background: linear-gradient(180deg, rgba(10,50,70,0.94), rgba(4,26,38,0.94)); border: 1.5px solid var(--warn); box-shadow: 0 0 24px rgba(255,200,80,0.35); animation: mfIn 0.5s ease-out; max-width: calc(100vw - 32px); }
+#map-found .mf-kick { font-size: 12px; font-weight: 900; letter-spacing: 2px; color: var(--warn); }
+#map-found .mf-name { font-size: 20px; font-weight: 900; color: var(--ink); }
+#map-found .mf-sub { font-size: 11.5px; color: var(--ink-dim); }
+@media (max-width: 560px) { #map-found { top: calc(206px + var(--safe-t)); } }
+@keyframes mfIn { from { transform: translate(-50%, -14px) scale(0.92); opacity: 0; } to { transform: translate(-50%, 0) scale(1); opacity: 1; } }
+.al-count small { display: block; font-size: 11px; color: var(--ink-dim); font-weight: 400; }
+.al-spots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin-top: 6px; }
+.al-spot { padding: 7px 9px; border-radius: 10px; border: 1px dashed rgba(120,235,255,0.45); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.al-spot span { color: var(--ink-dim); font-size: 11px; }
+.al-spot.done { border-style: solid; background: rgba(90,230,255,0.1); }

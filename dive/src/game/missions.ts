@@ -25,8 +25,8 @@ export const MISSION = {
   photo: { time: 90, rewardMult: 4, minGrade: ['S', 'A', 'B'] },
   lost: { time: 100, reward: 2500, radius: 22 },
   treasure: { time: 120, reward: 4500, radius: 30 },
-  /** 【ウミガメ救出】stay this long next to the net to cut it free */
-  rescue: { time: 120, reward: 3500, cut: 3, radius: 28 },
+  /** 【ウミガメ救出】Phase 3: rarer (after 60 s, 5 % per check, never two dives in a row); tap within reach to cut the net (cutTime s of knife strokes) */
+  rescue: { time: 120, reward: 3500, radius: 28, after: 60, chance: 0.05, restDives: 1, reach: 2.4, cutTime: 1.8, strokes: 3 },
   /** 【生き物調査】different species, grade B or better */
   survey: { time: 100, need: 3, reward: 2200 },
   /** 【標識の読み取り】keep a large animal in the viewfinder within this distance for this long */
@@ -78,7 +78,7 @@ export type MissionCtx = {
   companion: (id: string, from: THREE.Vector3) => void;
 };
 
-type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; hold?: number; seen?: Set<string>; title: string; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number; area?: Area };
+type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; hold?: number; seen?: Set<string>; title: string; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number; area?: Area; inside?: boolean; cut?: number };
 /** a circle (world m) drawn on the map: the goal is somewhere inside it */
 export type Area = { x: number; z: number; r: number };
 
@@ -110,6 +110,9 @@ export class Missions {
   /** test hook: make the next update propose a request */
   forceOffer = false;
   private count = 0;
+  /** dives since the last netted turtle (Phase 3: never two in a row) */
+  private restDives = 99;
+  private rescuedThisDive = false;
   private lastEnd = -1e9;
   private nextCheck = 0;
   private items: THREE.Vector3[] = [];
@@ -173,8 +176,35 @@ export class Missions {
     }
     const ng = new THREE.BufferGeometry();
     ng.setAttribute('position', new THREE.Float32BufferAttribute(np, 3));
-    this.netMesh = new THREE.LineSegments(ng, new THREE.LineBasicMaterial({ color: 0x5a8a6a }));
+    this.netMesh = new THREE.LineSegments(ng, new THREE.LineBasicMaterial({ color: 0x5a8a6a, transparent: true }));
     for (const m of [this.netMesh, ...this.urchinMeshes, this.trashMesh, this.camMesh, this.chestMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
+  }
+
+  /** A new dive begins (Phase 3: a netted turtle never turns up two dives in a row). */
+  newDive(): void {
+    if (this.rescuedThisDive) this.restDives = 0;
+    else this.restDives++;
+    this.rescuedThisDive = false;
+  }
+
+  /** Within reach of the netted turtle, before the cutting has begun: the shutter button cuts. */
+  cutReady(player: THREE.Vector3): boolean {
+    const a = this.active;
+    return a?.kind === 'rescue' && !!a.spot && a.cut === undefined && a.got < a.need && a.spot.distanceTo(player) < MISSION.rescue.reach;
+  }
+
+  /** Tap: the knife comes out and the strokes begin (the motion runs on its own). */
+  startCut(): void {
+    const a = this.active;
+    if (a?.kind !== 'rescue' || a.cut !== undefined) return;
+    a.cut = 0;
+    a.hold = 0;
+  }
+
+  /** 0..1 through the cutting motion, or null when not cutting. */
+  cutProgress(): number | null {
+    const a = this.active;
+    return a?.kind === 'rescue' && a.cut !== undefined ? Math.min(1, a.cut / MISSION.rescue.cutTime) : null;
   }
 
   reset(): void {
@@ -229,14 +259,17 @@ export class Missions {
     if (!this.active) {
       this.answer = null;
       this.nextCheck -= c.dt;
-      if (this.count >= MISSION.maxPerDive || c.diveTime < MISSION.firstAfter || c.time - this.lastEnd < MISSION.gap || this.nextCheck > 0) return;
+      if (this.count >= MISSION.maxPerDive || c.diveTime < Math.max(MISSION.firstAfter, MISSION.rescue.after) || c.time - this.lastEnd < MISSION.gap || this.nextCheck > 0) return;
       this.nextCheck = MISSION.checkEvery;
-      // only happenings start by themselves at sea (requests are taken on land)
-      if (Math.random() < MISSION.chance * 0.5 && (c.zone === 'lagoon' || c.zone === 'reef' || c.zone === 'rocky')) this.start(c, 'rescue');
+      // only happenings start by themselves at sea (requests are taken on land); Phase 3: rarer, never two dives in a row
+      if (this.restDives < MISSION.rescue.restDives) return;
+      if (Math.random() < MISSION.rescue.chance && (c.zone === 'lagoon' || c.zone === 'reef' || c.zone === 'rocky')) this.start(c, 'rescue');
       return;
     }
     const a = this.active;
-    a.t -= c.dt;
+    // Phase 3: the clock runs (and shows) only inside the circle; outside it the diver is just on the way
+    a.inside = !a.area || Math.hypot(c.player.x - a.area.x, c.player.z - a.area.z) <= a.area.r;
+    if (a.inside && a.cut === undefined) a.t -= c.dt;
     // collect by swimming close
     if (a.kind === 'urchin' || a.kind === 'trash') {
       for (let i = 0; i < this.items.length; i++) {
@@ -270,17 +303,30 @@ export class Missions {
       if (d < MISSION.pickR + 0.3) a.got = 1;
     }
     if (a.kind === 'rescue' && a.spot) {
+      const R = MISSION.rescue;
       const d = a.spot.distanceTo(c.player);
-      if (d < 2) {
-        a.hold = (a.hold ?? 0) + c.dt;
-        if (a.hold >= MISSION.rescue.cut) {
+      if (a.cut !== undefined) {
+        // the knife strokes: each one tears the net open a little more, the last one sets the turtle free
+        a.cut += c.dt;
+        const k = Math.min(1, a.cut / R.cutTime);
+        const stroke = Math.min(R.strokes, Math.floor(k * R.strokes + 0.35));
+        if (stroke > (a.hold ?? 0)) { a.hold = stroke; c.chime(stroke >= R.strokes); }
+        const torn = (a.hold ?? 0) / R.strokes;
+        const sc = 1 + torn * 0.9 + Math.max(0, k - 0.8) * 2;
+        this.netMesh.scale.set(sc, 1 + torn * 0.4, sc);
+        this.netMesh.position.y = a.spot.y + torn * 0.5;
+        this.netMesh.rotation.y += c.dt * torn * 0.8;
+        (this.netMesh.material as THREE.LineBasicMaterial).opacity = Math.max(0, 1 - torn * 0.55 - Math.max(0, k - 0.8) * 2.2);
+        if (a.cut >= R.cutTime) {
           a.got = 1;
           this.netMesh.visible = false;
           c.companion('turtle', a.spot);
         }
+      } else if (d < R.reach) {
+        if ((a.lastHint ?? 0) <= c.time - 5) { a.lastHint = c.time; c.toast('ボタンをタップして、ナイフで網を切ろう', 'warn', 2.5); }
       } else if ((a.lastHint ?? 0) <= c.time - 7) {
         a.lastHint = c.time;
-        c.toast(d < 8 ? '網に絡まったウミガメがいる！ すぐそばでじっとして網を切ろう' : d < 18 ? '近づいている…' : 'マップの金色の円の中のどこか', 'warn', 2);
+        c.toast(d < 8 ? '網に絡まったウミガメがいる！ すぐそばまで近づこう' : d < 18 ? '近づいている…' : 'マップの金色の円の中のどこか', 'warn', 2);
       }
     }
     if (a.kind === 'tag' && a.target) {
@@ -398,6 +444,7 @@ export class Missions {
     this.el.title.textContent = `依頼が来た！ ${text}`;
     this.el.prog.textContent = `${time}秒・報酬 ¥${reward.toLocaleString('ja-JP')}`;
     this.el.bar.style.width = '100%';
+    (this.el.bar.parentElement as HTMLElement).style.visibility = '';
     this.el.ask.classList.remove('hidden');
     this.el.root.classList.remove('hidden');
     c.chime(false);
@@ -471,10 +518,14 @@ export class Missions {
       }
       if (!spot) { this.end(false, true); return; }
       this.netMesh.position.copy(spot);
+      this.netMesh.scale.set(1, 1, 1);
+      this.netMesh.rotation.set(0, 0, 0);
+      (this.netMesh.material as THREE.LineBasicMaterial).opacity = 1;
       this.netMesh.visible = true;
+      this.rescuedThisDive = true;
       c.stage('turtle', { p: spot.clone(), yaw: Math.random() * 6, pitch: 0.15 });
       this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '網に絡まったウミガメ', spot, hold: 0, area: this.areaAround(spot) };
-      c.toast(`近くでウミガメが捨てられた網に絡まって動けなくなっている！ マップの金色の円の中のどこか。そばで${T.cut}秒じっとして網を切ってあげよう`, 'warn', 5);
+      c.toast('近くでウミガメが捨てられた網に絡まって動けなくなっている！ マップの金色の円の中のどこか。そばでボタンをタップして、ナイフで網を切ってあげよう', 'warn', 5);
     } else if (kind === 'survey') {
       const T = MISSION.survey;
       this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '生き物調査', seen: new Set() };
@@ -483,7 +534,8 @@ export class Missions {
       const T = MISSION.tag;
       const sp = sp0 ?? c.nearbyBig();
       if (!sp) { this.end(false, true); return; }
-      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: `${sp.name}の標識読み取り`, target: sp, hold: 0 };
+      // Phase 3: a circle around the place (taken on land), so the clock shows and runs only there
+      this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: `${sp.name}の標識読み取り`, target: sp, hold: 0, area: this.startAt ? { x: near.x, z: near.z, r: 22 } : undefined };
       c.toast(`このあたりに標識のついた${sp.name}がいる。${T.dist}m以内まで近づいて、照準に${T.hold}秒収め続けて番号を読み取ろう`, 'warn', 4.5);
     } else if (kind === 'treasure') {
       const T = MISSION.treasure;
@@ -525,9 +577,12 @@ export class Missions {
     const a = this.active!;
     this.el.title.textContent = a.title;
     // time first: on a narrow screen the tail may be cut, the countdown never is
-    const left = `残り${Math.ceil(a.t)}秒`;
+    // Phase 3: the countdown (text and bar) only while inside the circle
+    const inside = a.inside ?? true;
+    const left = inside ? `残り${Math.ceil(a.t)}秒` : '金色の円の中へ';
+    (this.el.bar.parentElement as HTMLElement).style.visibility = inside ? '' : 'hidden';
     const pct = (v: number, of: number) => `${Math.min(100, Math.round((v / of) * 100))}%`;
-    const detail = a.kind === 'rescue' ? (a.hold ? `網を切っている… ${pct(a.hold, MISSION.rescue.cut)}` : '')
+    const detail = a.kind === 'rescue' ? (a.cut !== undefined ? `網を切っている… ${pct(a.cut, MISSION.rescue.cutTime)}` : '')
       : a.kind === 'survey' ? `${a.got} / ${a.need}種類`
       : a.kind === 'tag' ? `読み取り ${pct(a.hold ?? 0, MISSION.tag.hold)}`
       : a.kind === 'urchin' ? `${Math.min(a.got, a.need)} / ${a.need}点${a.aka ? `（アカウニ×${a.aka}）` : ''}`

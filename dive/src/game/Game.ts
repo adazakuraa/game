@@ -1,13 +1,14 @@
 import * as THREE from 'three';
-import { Missions, type MissionCtx } from './missions';
+import { MISSION, Missions, type MissionCtx } from './missions';
 import { Kitchen, type LandSave } from './kitchen';
 import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } from './story';
 import { SCENE_AT, Scenes } from './scenes';
+import { SPOT, SPOTS, spotFocus, spotInView } from './spots';
 import { makeQuest, QUEST, type Quest } from './quests';
 import { FIND_NAME, FINDS, Finds, openFind, type FindKind } from './finds';
-import { buildBar, buildHandSpear, buildSpeargun } from './gearModels';
+import { buildBar, buildHandSpear, buildKnife, buildSpeargun } from './gearModels';
 import { BIG_KG, DISH, FISHING, PENALTY, STORY, edibleInfo, isFugu, isGoodCatch, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
-import { AIR_TANK, evaluateShot, LEGACY_NEED, LEGACY_NEED_PCT, PHOTO, SHOP, yen, type GearId } from './photoScore';
+import { AIR_TANK, evaluateShot, sAdvice, LEGACY_NEED, LEGACY_NEED_PCT, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
 import { Environment } from '../world/environment';
@@ -41,6 +42,8 @@ type Save = LandSave & {
   questsDone?: number;
   /** Phase 2: gear already in stock under the old dex-share (%) rule, kept in stock; and the migration mark */
   stocked?: string[]; p2?: 1;
+  /** Phase 3: chapters cleared whose reward has not been received yet; dive points swum into; photo spots already paid */
+  storyClaim?: number[]; visited?: string[]; spots?: string[];
  found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
@@ -108,12 +111,18 @@ export class Game {
   private finds = new Finds();
   private diveFinds: FindKind[] = [];
   private pendingScenes = new Map<SceneId, { photo: string; pay: number }>();
-  private storyMarks: { x: number; z: number; rare: boolean }[] = [];
+  /** the sight the story staged for this dive (its circle shows from the start; lucky ones only once sensed) */
+  private stagedScene: SceneId | null = null;
+  /** photo spots shot this dive (paid on surfacing, first time only) */
+  private pendingSpots = new Set<string>();
   /** first-person gear in hand */
   private vmHand!: THREE.Group;
   private vmGun!: THREE.Group;
   private vmGunShaft!: THREE.Mesh;
   private vmBar!: THREE.Group;
+  /** the diver's knife (Phase 3: cutting the net off a turtle) */
+  private vmKnife!: THREE.Group;
+  private cutReady = false;
   private pryIdx: number | null = null;
   private barJab = 0;
   /** first-dive tutorial: current step (-1 = off) */
@@ -202,7 +211,8 @@ export class Game {
     this.vmGun = gun.gun;
     this.vmGunShaft = gun.shaft;
     this.vmBar = buildBar();
-    for (const m of [this.vmHand, this.vmGun, this.vmBar]) {
+    this.vmKnife = buildKnife();
+    for (const m of [this.vmHand, this.vmGun, this.vmBar, this.vmKnife]) {
       m.position.set(0.14, -0.15, -0.28);
       m.rotation.set(0.05, 0.08, 0);
       m.visible = false;
@@ -314,6 +324,11 @@ export class Game {
           }
           sv.p2 = 1;
         }
+        // Phase 3: maps actually swum in (for the new-map banner): places where something was photographed, and the lagoon
+        if (!sv.visited) {
+          const zones = new Set(Object.keys(sv.found).map((id) => SPECIES_BY_ID.get(id)?.zone as string | undefined));
+          sv.visited = DIVE_POINTS.filter((dp) => dp.id === 'lagoon' || zones.has(dp.id) || (dp.id === 'dropoff' && zones.has('offshore'))).map((dp) => dp.id);
+        }
         if (sv.airLv === undefined) sv.airLv = sv.owned?.includes('tank') ? 4 : sv.dives > 0 ? 2 : 0;
         if (!sv.discovered) {
           // earlier saves: every place where something was already photographed counts as found
@@ -327,7 +342,7 @@ export class Game {
     } catch {
       /* storage unavailable */
     }
-    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p2: 1 };
+    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p2: 1 };
   }
 
   private writeSave(): void {
@@ -374,10 +389,7 @@ export class Game {
     this.writeSave();
     if (this.minimap) this.minimap.known = this.discovered;
     const dp = DIVE_POINTS.find((d) => d.id === id);
-    if (how === 'swim' && dp) {
-      this.audio.chime(true);
-      this.toast(`新しいダイブポイントを発見！「${dp.name}」— 次からボートで直接行ける`, '', 4);
-    }
+    void how; void dp; // the banner comes from exploreCheck (Phase 3)
     return true;
   }
 
@@ -392,7 +404,8 @@ export class Game {
       dives: this.save.dives,
       found: f.length,
       sCount: f.filter(([, v]) => (v.score ?? 0) >= PHOTO.grades[0].min).length,
-      nightFound: f.filter(([id]) => SPECIES_BY_ID.get(id)?.when === 'night').length,
+      // 「夜の魚」: fish-like kinds only (Phase 3)
+      nightFound: f.filter(([id]) => { const d = SPECIES_BY_ID.get(id); return d?.when === 'night' && (d.kind === 'fish' || d.kind === 'ray' || d.kind === 'gardenEel'); }).length,
       scenes: this.save.scenes ?? {},
       rare3S: f.filter(([id, v]) => SPECIES_BY_ID.get(id)?.rarity === 3 && (v.score ?? 0) >= PHOTO.grades[0].min).length,
     };
@@ -404,15 +417,15 @@ export class Game {
 
   private storyCleared: string[] = [];
 
-  /** Finish every chapter whose goal is met: pay, hand over charts, and move on. */
+  /** Finish every chapter whose goal is met: hand over charts and move on. The reward waits on the chapter card until received (Phase 3). */
   private advanceStory(): void {
     const st = this.storyState();
     while ((this.save.storyMain ?? 0) < CHAPTERS.length && CHAPTERS[this.save.storyMain ?? 0].done(st)) {
       const ch = CHAPTERS[this.save.storyMain ?? 0];
-      this.save.money = (this.save.money ?? 0) + ch.reward;
+      if (ch.reward) (this.save.storyClaim ??= []).push(this.save.storyMain ?? 0);
       if (ch.map) this.grantMap(ch.map);
       const mapName = ch.map ? DIVE_POINTS.find((d) => d.id === ch.map)?.name : '';
-      this.storyCleared.push(`第${(this.save.storyMain ?? 0) + 1}章「${ch.title}」クリア！ 写真家の評価：<b>${ch.title2}</b>${ch.reward ? `　報酬 <b>${yen(ch.reward)}</b>` : ''}${mapName ? `　海図「${mapName}」をもらった` : ''}${ch.praise ? `<div class="sc-praise">${ch.praise}</div>` : ''}`);
+      this.storyCleared.push(`第${(this.save.storyMain ?? 0) + 1}章「${ch.title}」クリア！ 写真家の評価：<b>${ch.title2}</b>${mapName ? `　海図「${mapName}」をもらった` : ''}${ch.praise ? `<div class="sc-praise">${ch.praise}</div>` : ''}`);
       this.save.storyMain = (this.save.storyMain ?? 0) + 1;
       this.writeSave();
       this.audio.chime(true);
@@ -420,12 +433,15 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ requests (taken on land)
+  /** Board + held make QUEST.board slots: only a cleared request frees one, and one new request is put up for it (Phase 3). */
   private fillBoard(): void {
     const b = (this.save.board ??= []);
-    const taken = [...b, ...(this.save.quests ?? [])].map((q) => q.kind);
-    for (let k = 0; b.length < QUEST.board && k < 10; k++) {
+    const held = this.save.quests ?? [];
+    const taken = [...b, ...held].map((q) => q.kind);
+    const first = !b.length && !held.length;
+    for (let k = 0; b.length + held.length < QUEST.board && k < 10; k++) {
       const q = makeQuest(this.discovered, Math.random, taken);
-      if (q) { b.push(q); taken.push(q.kind); }
+      if (q) { if (!first) q.fresh = true; b.push(q); taken.push(q.kind); }
     }
   }
 
@@ -436,23 +452,37 @@ export class Game {
     const intro = $('q-intro');
     intro.classList.toggle('hidden', !!this.save.boardIntro);
     if (!this.save.boardIntro) {
-      intro.innerHTML = `<b>依頼の掲示板</b>しおさい亭の女将さんが貼ってくれた、島の人からの頼みごと。<ul><li>「受ける」と、潜ったときのマップに場所が金色の円で出る</li><li>円の中に入ると依頼が始まる（写真や調査の依頼は、条件どおりに撮れば達成）</li><li>同時に受けられるのは${QUEST.maxHeld}件まで。達成すると、浮上したときに報酬がもらえる</li></ul><button type="button" class="btn sec" id="q-intro-ok">わかった</button>`;
+      intro.innerHTML = `<b>依頼の掲示板</b>しおさい亭の女将さんが貼ってくれた、島の人からの頼みごと。<ul><li>「受ける」と、潜ったときのマップに場所が金色の円で出る</li><li>円の中に入ると依頼が始まる（写真や調査の依頼は、条件どおりに撮れば達成）</li><li>同時に受けられるのは${QUEST.maxHeld}件まで。達成すると、浮上したときに報酬がもらえる</li><li>依頼を1つ達成すると、新しい依頼が1つ貼り出される。「やめる」と掲示板に戻る</li></ul><button type="button" class="btn sec" id="q-intro-ok">わかった</button>`;
       $('q-intro-ok').addEventListener('click', () => { this.save.boardIntro = true; this.writeSave(); this.renderQuests(); });
     }
-    const card = (q: Quest, act: string) => `<div class="k-item"><div><div class="who">${q.giver}　<span class="q-place">${ZONE_NAMES[q.zone]}</span></div><div class="what">${q.title}</div><div class="hint">${q.desc}</div><div class="pay">報酬 ${yen(q.reward)}</div></div><div class="acts">${act}</div></div>`;
+    const card = (q: Quest, act: string) => `<div class="k-item"><div><div class="who">${q.fresh ? '<span class="q-new">NEW</span>' : ''}${q.giver}　<span class="q-place">${ZONE_NAMES[q.zone]}</span></div><div class="what">${q.title}</div><div class="hint">${q.desc}</div><div class="pay">報酬 ${yen(q.reward)}</div></div><div class="acts">${act}</div></div>`;
     $('q-held').innerHTML = held.length ? held.map((q) => card(q, `<button type="button" class="btn sec" data-drop="${q.id}">やめる</button>`)).join('') : '<div class="k-empty">まだ依頼を受けていない。受けた依頼の場所は、潜ったときのマップに金色の円で出る。円に入ると始まる。</div>';
     const full = held.length >= QUEST.maxHeld;
-    $('q-board').innerHTML = (this.save.board ?? []).map((q) => card(q, `<button type="button" class="btn ${full ? 'sec' : 'pri'}" data-take="${q.id}" ${full ? 'disabled' : ''}>${full ? `同時に${QUEST.maxHeld}件まで` : '受ける'}</button>`)).join('');
+    const board = this.save.board ?? [];
+    $('q-board').innerHTML = (board.length ? board.map((q) => card(q, `<button type="button" class="btn ${full ? 'sec' : 'pri'}" data-take="${q.id}" ${full ? 'disabled' : ''}>${full ? `同時に${QUEST.maxHeld}件まで` : '受ける'}</button>`)).join('') : '<div class="k-empty">いま貼られている依頼はない。受けている依頼を達成すると、新しい依頼が貼り出される。</div>')
+      // Phase 3 (§9-B): the diner's orders are requests too — once the spear is in hand, show them here
+      + (this.has('spear') ? `<div class="k-item q-inn"><div><div class="who">しおさい亭</div><div class="what">しおさい亭の注文 ${this.save.orders?.length ?? 0}件</div><div class="hint">銛で獲った魚で料理を作る依頼。しおさい亭で受ける</div></div><div class="acts"><button type="button" class="btn sec" id="q-to-inn">しおさい亭へ</button></div></div>` : '');
+    document.getElementById('q-to-inn')?.addEventListener('click', () => { $('quests').classList.add('hidden'); this.audio.unlock(); this.kitchen.open(); });
+    // NEW marks last until the board has been seen once
+    if (board.some((q) => q.fresh)) { for (const q of board) delete q.fresh; this.writeSave(); }
     document.querySelectorAll<HTMLButtonElement>('[data-take]').forEach((b) => b.addEventListener('click', () => {
       const q = this.save.board!.find((x) => x.id === b.dataset.take);
       if (!q || (this.save.quests ?? []).length >= QUEST.maxHeld) return;
       this.save.board = this.save.board!.filter((x) => x !== q);
       (this.save.quests ??= []).push(q);
+      this.writeSave();
       this.audio.chime(false);
       this.renderQuests();
     }));
     document.querySelectorAll<HTMLButtonElement>('[data-drop]').forEach((b) => b.addEventListener('click', () => {
-      this.save.quests = (this.save.quests ?? []).filter((x) => x.id !== b.dataset.drop);
+      // Phase 3: dropping a request puts it back on the board as it was (it never vanishes)
+      const q = (this.save.quests ?? []).find((x) => x.id === b.dataset.drop);
+      if (!q) return;
+      this.save.quests = this.save.quests!.filter((x) => x !== q);
+      (this.save.board ??= []).unshift(q);
+      this.surveySeen.delete(q.id);
+      this.writeSave();
+      this.toast('依頼を掲示板に戻した', '', 1.8);
       this.renderQuests();
     }));
   }
@@ -478,6 +508,8 @@ export class Game {
     if (!q) return;
     this.save.quests = this.save.quests!.filter((x) => x !== q);
     this.save.questsDone = (this.save.questsDone ?? 0) + 1;
+    // one cleared, one new on the board (Phase 3)
+    this.fillBoard();
     if (label !== undefined) {
       this.bonuses.push({ label: `依頼達成：${label}`, value: q.reward });
       this.updateDexChip();
@@ -508,25 +540,54 @@ export class Game {
     const got = all.filter((id) => this.save.scenes?.[id]);
     $('album-body').innerHTML = `<div class="al-count">出会えた光景 <b>${got.length}</b> / ${all.length}</div><div class="sc-photos">${all.map((id) => this.save.scenes?.[id]
       ? `<figure><img src="${this.save.scenes[id]!.photo}" alt=""><figcaption><b>${SCENES[id].name}</b>${SCENES[id].desc}</figcaption></figure>`
-      : `<figure class="locked"><div>？</div><figcaption><b>？？？</b>${SCENES[id].hint}</figcaption></figure>`).join('')}</div>`;
+      : `<figure class="locked"><div>？</div><figcaption><b>？？？</b>${SCENES[id].hint}</figcaption></figure>`).join('')}</div>`
+      // Phase 3: photo spots (pay once, the first time)
+      + `<div class="al-count">写真スポット <b>${SPOTS.filter((s) => this.save.spots?.includes(s.id)).length}</b> / ${SPOTS.length}<small>（マップの水色の円の中で、見どころに向けて撮る。報酬は各スポット最初の1回だけ）</small></div><div class="al-spots">${SPOTS.map((s) => this.save.spots?.includes(s.id)
+        ? `<div class="al-spot done"><b>${s.name}</b><span>${DIVE_POINTS.find((d) => d.id === s.point)?.name ?? ''}・撮影済み</span></div>`
+        : `<div class="al-spot"><b>？？？</b><span>${this.discovered.has(s.point) ? DIVE_POINTS.find((d) => d.id === s.point)?.name ?? '' : '未発見のマップ'}・${yen(s.pay)}</span></div>`).join('')}</div>`;
+  }
+
+  /** Receive the editor's reward for a cleared chapter (Phase 3). */
+  private claimStory(idx: number): void {
+    const list = this.save.storyClaim ?? [];
+    if (!list.includes(idx)) return;
+    const ch = CHAPTERS[idx];
+    this.save.storyClaim = list.filter((x) => x !== idx);
+    this.save.money = (this.save.money ?? 0) + ch.reward;
+    this.writeSave();
+    this.audio.chime(true);
+    this.toast(`編集長から報酬 ${yen(ch.reward)} を受け取った！`, '', 3);
+    this.renderTitle();
+    const pop = document.createElement('div');
+    pop.className = 'money-pop';
+    pop.textContent = `+${yen(ch.reward)}`;
+    $('t-goal').appendChild(pop);
+    setTimeout(() => pop.remove(), 1600);
   }
 
   private renderStory(): void {
     const el = $('story-card');
     const i = this.save.storyMain ?? 0;
     const ch = CHAPTERS[i];
-    const cleared = this.storyCleared.length ? `<div class="sc-clear">${this.storyCleared.join('<br>')}</div>` : '';
+    const claims = (this.save.storyClaim ?? []).map((k) => `<div class="sc-claim"><span>第${k + 1}章「${CHAPTERS[k].title}」クリア！ 編集長からの報酬</span><button type="button" class="btn pri" data-claim="${k}">報酬 ${yen(CHAPTERS[k].reward)} を受け取る</button></div>`).join('');
+    const cleared = (this.storyCleared.length ? `<div class="sc-clear">${this.storyCleared.join('<br>')}</div>` : '') + claims;
     const album = '';
     if (!ch) {
       el.innerHTML = `<div class="sc-kicker">写真家の評価：表紙の写真家</div>${cleared}<div class="sc-intro">${ENDING}</div>${album}`;
+      this.bindClaims(el);
       return;
     }
     const st = this.storyState();
     const unread = (this.save.storyRead ?? -1) < i;
     el.innerHTML = `<div class="sc-kicker">第${i + 1}章　${i > 0 ? `写真家の評価：${CHAPTERS[i - 1].title2}` : '駆け出しの海中写真家'}</div>${cleared}<div class="sc-title">${ch.title}</div>` +
       (unread ? `<div class="sc-intro">${ch.intro}</div><button type="button" class="btn sec" id="sc-ok">了解</button>` : '') +
-      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? '<small class="sc-wait">ライトがまだない（図鑑を増やすと入荷する）</small>' : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${ch.scene && this.save.scenes?.[ch.scene] ? '' : ''}${album}`;
+      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? '<small class="sc-wait">ライトがまだない（図鑑を増やすと入荷する）</small>' : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${ch.tips ? `<details class="sc-tips"><summary>編集長の「Sを取るコツ」</summary><ul>${ch.tips.map((t) => `<li>${t}</li>`).join('')}</ul></details>` : ''}${album}`;
+    this.bindClaims(el);
     if (unread) document.getElementById('sc-ok')!.addEventListener('click', () => { this.save.storyRead = i; this.storyCleared = []; this.writeSave(); this.renderStory(); });
+  }
+
+  private bindClaims(el: HTMLElement): void {
+    el.querySelectorAll<HTMLButtonElement>('[data-claim]').forEach((b) => b.addEventListener('click', () => { this.audio.unlock(); this.claimStory(Number(b.dataset.claim)); }));
   }
 
   /** Species still needed before an item comes into stock (an absolute count: never divided by the dex size). */
@@ -631,7 +692,7 @@ export class Game {
     const spear = this.has('spear');
     $('open-kitchen').classList.toggle('hidden', !this.save.tutorial);
     $('open-quests').classList.toggle('hidden', !this.save.boardOn);
-    $('quest-badge').textContent = this.save.boardOn && !this.save.boardIntro ? 'NEW' : '';
+    $('quest-badge').textContent = this.save.boardOn && (!this.save.boardIntro || (this.save.board ?? []).some((q) => q.fresh)) ? 'NEW' : '';
     if (!spear) $('k-badge').textContent = nightOf(this.save.clock ?? 0) >= 0.5 ? '休む' : '';
     if (spear) {
       const ready = this.kitchen.readyCount();
@@ -649,7 +710,7 @@ export class Game {
         : gl.need > 0
           ? `「${gl.name}」まであと <b>${yen(gl.need)}</b>`
           : `<span class="ok">「${gl.name}」が買える！ ショップへ</span>`;
-    $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.foundCount}種</b><br>` + (goal ? goalText(goal) : '装備コンプリート');
+    $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.foundCount}種</b><br>` + (goal ? goalText(goal) : '装備コンプリート') + (this.save.storyClaim?.length ? '<br><span class="ok">編集長の報酬を受け取っていない（下の章カードで受け取れる）</span>' : '');
     if (!$('shop').classList.contains('hidden')) this.renderShop();
   }
 
@@ -969,7 +1030,8 @@ export class Game {
       }
       this.scenes.start(sceneIds, new THREE.Vector3(dp.x, 0, dp.z));
       const fixed = ch?.scene ? SCENE_AT[ch.scene] : undefined;
-      this.storyMarks = fixed && sceneIds.includes(ch!.scene!) ? [{ x: fixed.x, z: fixed.z, rare: true }] : [];
+      this.stagedScene = fixed && sceneIds.includes(ch!.scene!) ? ch!.scene! : null;
+      this.pendingSpots.clear();
       // now and then something lies on the floor
       if (this.ads || !this.save.tutorial) this.finds.clear();
       else this.finds.spawn(new THREE.Vector3(dp.x, 0, dp.z), (x, z) => !(zoneAt(x, z) === 'cave') && caveRoofAt(x, z) === null);
@@ -989,6 +1051,7 @@ export class Game {
       if (this.minimap) this.minimap.blips = [];
       this.coldWarned = -100;
       this.missions.reset();
+      this.missions.newDive();
       this.bonuses = [];
       $('btn-light').classList.toggle('on', this.env.lightOn);
       $('btn-light').classList.toggle('dim', !this.ads && !this.hasTorch());
@@ -1114,11 +1177,13 @@ export class Game {
     }) : [];
     // special sights are kept even after a blackout, like the dex
     for (const [id, v] of this.pendingScenes) (this.save.scenes ??= {})[id] = { photo: v.photo, t: Date.now() };
+    // photo spots pay only the first time: kept even after a blackout, like the sights
+    if (this.pendingSpots.size) this.save.spots = [...new Set([...(this.save.spots ?? []), ...this.pendingSpots])];
     if (this.tut.step >= 0) this.endTutorial();
     this.save.tutorial = true;
     this.scenes.stop();
     this.finds.clear();
-    this.storyMarks = [];
+    this.stagedScene = null;
     this.writeSave();
     this.setTool('camera');
     const after = this.foundCount;
@@ -1150,6 +1215,9 @@ export class Game {
       ? shots.map(([id, f]) => `<div class="res-card"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
     if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">${b.label}<b>${yen(b.value)}</b></div>`).join(''));
+    // Phase 3: the editor's chapter was cleared on this dive — the reward is received on the boat
+    const chNow = this.chapter;
+    if (chNow && chNow.reward && chNow.done(this.storyState())) list.insertAdjacentHTML('beforeend', `<div class="res-find"><span class="open">編集長の依頼「${chNow.title}」をクリア！</span>ボートの章カードで報酬 <b>${yen(chNow.reward)}</b> を受け取ろう</div>`);
     if (this.diveCatch.length) {
       list.insertAdjacentHTML('beforeend', reason === 'surface'
         ? caught.map((c) => `<div class="res-catch">獲物：${SPECIES_BY_ID.get(c.id)!.name}<b>${fmtKg(c.kg)}</b></div>`).join('')
@@ -1316,7 +1384,7 @@ export class Game {
     const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : this.buff === 'fugu' ? 0.9 : 1)
       * (1 + Math.min(PENALTY.carryAirMax, this.carryKg * PENALTY.carryAirPerKg)) * (this.tut.step >= 0 ? 0.5 : 1);
     this.air = Math.max(0, this.air - rate * dt);
-    if (this.frame % 20 === 0) this.exploreCheck(p);
+    if (this.frame % 10 === 0) this.exploreCheck(p);
     const picked = this.finds.update(this.time, p);
     if (picked) {
       this.diveFinds.push(picked);
@@ -1385,10 +1453,29 @@ export class Game {
     this.vmBar.visible = this.pryIdx !== null;
     this.barJab = Math.max(0, this.barJab - dt);
     this.vmBar.position.z = -0.28 - Math.sin((this.barJab / 0.25) * Math.PI) * 0.18;
+    // the netted turtle: within reach the shutter button cuts; the knife then makes its strokes on its own (Phase 3)
+    this.cutReady = this.tool === 'camera' && this.pryIdx === null && this.missions.cutReady(p);
+    const cutK = this.missions.cutProgress();
+    this.vmKnife.visible = cutK !== null || this.cutReady;
+    if (cutK !== null) {
+      // three diagonal slashes: raise, sweep down and across, back
+      const n = MISSION.rescue.strokes, ph = (cutK * n) % 1, s = Math.sin(ph * Math.PI);
+      this.vmKnife.position.set(0.16 - s * 0.14, -0.1 - s * 0.08 + (1 - s) * 0.04, -0.3 - s * 0.12);
+      this.vmKnife.rotation.set(0.35 - s * 0.9, 0.1, -0.5 + s * 1.3);
+      if (ph < 0.5) this.shake = Math.max(this.shake, 0.08);
+    } else {
+      this.vmKnife.position.set(0.15, -0.14, -0.28);
+      this.vmKnife.rotation.set(0.1, 0.1, -0.3 + Math.sin(this.time * 2) * 0.03);
+    }
     if (this.tool === 'spear') {
       this.spearT = this.creatures.findSpearTarget(cam, this.spearTool.range);
       this.updateSpearFx(dt);
       if (inp.consume('shutter')) this.fireSpear();
+    } else if (this.cutReady && inp.consume('shutter')) {
+      this.missions.startCut();
+      this.audio.chime(false);
+    } else if (cutK !== null && inp.consume('shutter')) {
+      // the strokes are already under way
     } else if (this.pryIdx !== null && inp.consume('shutter')) {
       // urchin harvest: the shutter button works the pry bar
       const fw = this.tmpDir.set(0, 0, -1).applyQuaternion(cam.quaternion);
@@ -1429,12 +1516,45 @@ export class Game {
     return this.bagKg + this.diveFinds.length * FINDS.kg;
   }
 
-  /** Reaching a place while diving makes it a dive point the boat can go to. */
+  /**
+   * Reaching a place while diving makes it a dive point the boat can go to. Phase 3: the first time the diver is
+   * actually in a map (even one known only from a chart, and the deep sea) always gets its own banner (never a toast,
+   * which the next toast would overwrite).
+   */
   private exploreCheck(p: THREE.Vector3): void {
-    if (this.ads) return;
     const z = zoneAt(p.x, p.z);
     const id = z === 'offshore' ? 'dropoff' : z;
-    if (DIVE_POINTS.some((d) => d.id === id) && id !== 'deep') this.discover(id, 'swim');
+    const dp = DIVE_POINTS.find((d) => d.id === id);
+    if (!dp) return;
+    const fromChart = this.discovered.has(id);
+    if (!this.ads && id !== 'deep') this.discover(id, 'swim');
+    const v = (this.save.visited ??= ['lagoon']);
+    if (v.includes(id)) return;
+    v.push(id);
+    this.writeSave();
+    this.audio.chime(true);
+    this.mapFoundQ.push({ name: dp.name, sub: fromChart ? '海図で知っていた場所に、はじめて来た' : id === 'deep' ? '大気圧潜水服で来られる場所' : '次からボートで直接行ける' });
+  }
+
+  /** banners waiting to be shown, and how long the current one stays */
+  private mapFoundQ: { name: string; sub: string }[] = [];
+  private mapFoundT = 0;
+  private updateMapFound(dt: number): void {
+    if (this.mapFoundT > 0) {
+      this.mapFoundT -= dt;
+      if (this.mapFoundT <= 0) $('map-found').classList.add('hidden');
+      return;
+    }
+    const n = this.mapFoundQ.shift();
+    if (!n) return;
+    $('mf-name').textContent = `「${n.name}」`;
+    $('mf-sub').textContent = n.sub;
+    const el = $('map-found');
+    el.classList.remove('hidden');
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = '';
+    this.mapFoundT = 3.8;
   }
 
   // ------------------------------------------------------------------ tutorial
@@ -1636,12 +1756,14 @@ export class Game {
     const staged = t && t.inRange ? this.scenes.sceneOf(t.rt.def.id, t.rt.agents.indexOf(t.agent)) : null;
     if (particle) this.sceneShot(particle, photo);
     else if (staged) this.sceneShot(staged, photo);
+    const spot = particle || staged ? false : this.spotShot(photo, !!t && t.inRange);
     if (!t) {
-      if (!this.pendingScenes.size) this.toast('何も写っていない…');
+      if (!this.pendingScenes.size && !spot) this.toast('何も写っていない…');
       return;
     }
     const def = t.rt.def;
     if (!t.inRange) {
+      if (spot) return;
       const msg: Record<string, string> = { small: '小さすぎて写っていない — もっと近づこう', murky: '濁りで霞んでしまった — もっと近づこう', dark: '暗くて写らなかった — ライトで照らそう', hidden: '岩陰に隠れて写らなかった', ok: '' };
       this.toast(msg[t.reason], 'warn');
       return;
@@ -1649,6 +1771,11 @@ export class Game {
     const known = !!this.save.found[def.id];
     const depth = -t.agent.p.y;
     const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2, this.env.night >= 0.5);
+    // the editor's advice while the chapter asks for an S (Phase 3)
+    if (this.chapter?.tips && this.tut.step < 0) {
+      const tip = sAdvice(ev);
+      this.toast(tip ? `Sまであと少し！ ${tip}` : '編集長「これがSだ！」', tip ? 'warn' : '', 3);
+    }
     this.missions.onPhoto(def.id, ev.grade.g);
     this.questPhoto(def.id, ev.grade.g, zoneAt(this.camera.position.x, this.camera.position.z));
     // a known species pays a share unless this beats the best photo on record
@@ -1674,8 +1801,8 @@ export class Game {
   private sceneShot(id: SceneId, photo: string): void {
     if (this.pendingScenes.has(id)) return;
     const first = !this.save.scenes?.[id];
-    const full = SCENES[id].pay * PHOTO.sceneShare;
-    const pay = Math.round((first ? full : full * PHOTO.repeatShare) / 10) * 10;
+    // Phase 3: the first photo of a sight is an achievement (1/3); repeats stay small (1/7 × repeatShare)
+    const pay = Math.round((first ? SCENES[id].pay * PHOTO.sceneFirstShare : SCENES[id].pay * PHOTO.sceneShare * PHOTO.repeatShare) / 10) * 10;
     this.pendingScenes.set(id, { photo, pay });
     this.bonuses.push({ label: `特別な光景「${SCENES[id].name}」`, value: pay });
     this.updateDexChip();
@@ -1691,6 +1818,51 @@ export class Game {
     $('disc-pay').textContent = `+${yen(pay)}`;
     $('disc-grade').classList.add('hidden');
     this.discoverTimer = 4.5;
+  }
+
+  /** Circles for the sights of this dive: the staged one from the start, lucky ones once sensed; gone once photographed. */
+  private sceneMarks(): { x: number; z: number; rare: boolean; r: number }[] {
+    const out: { x: number; z: number; rare: boolean; r: number }[] = [];
+    for (const [id, c] of this.scenes.centre) {
+      if (!this.scenes.active.has(id) || this.pendingScenes.has(id)) continue;
+      if (id !== this.stagedScene && !this.scenes.sensed.has(id)) continue;
+      out.push({ x: c.x, z: c.z, rare: true, r: SCENE_AT[id]?.r ?? 30 });
+    }
+    return out;
+  }
+
+  /** Aqua circles for the photo spots not yet shot, on known maps only. */
+  private spotMarks(): { x: number; z: number; rare: boolean; r: number; spot: boolean }[] {
+    const known = this.discovered;
+    const done = new Set([...(this.save.spots ?? []), ...this.pendingSpots]);
+    return SPOTS.filter((s) => !done.has(s.id) && (known.has(s.point) || (s.point === 'deep' && this.ads))).map((s) => ({ x: s.x, z: s.z, rare: false, r: s.r ?? SPOT.r, spot: true }));
+  }
+
+  /** A shot framing a photo spot: pays once, the first time (Phase 3). Returns whether a spot was in the frame. */
+  private spotShot(photo: string, creature: boolean): boolean {
+    if (this.tut.step >= 0) return false;
+    const s = spotInView(this.camera);
+    if (!s) return false;
+    if (this.save.spots?.includes(s.id) || this.pendingSpots.has(s.id)) {
+      if (!creature) this.toast(`撮影済みの写真スポット「${s.name}」（報酬は最初の1回だけ）`, '', 2.2);
+      return true;
+    }
+    this.pendingSpots.add(s.id);
+    this.bonuses.push({ label: `写真スポット「${s.name}」`, value: s.pay });
+    this.updateDexChip();
+    this.audio.chime(true);
+    if (creature) { this.toast(`写真スポット「${s.name}」も撮れた！ +${yen(s.pay)}（浮上すると受け取れる）`, '', 3.2); return true; }
+    this.freezeT = 0.2;
+    const el = $('discover');
+    el.classList.remove('hidden', 'known');
+    ($('disc-photo') as HTMLImageElement).src = photo;
+    $('disc-tag').textContent = '写真スポット';
+    $('disc-name').textContent = s.name;
+    $('disc-sci').textContent = s.desc;
+    $('disc-pay').textContent = `+${yen(s.pay)}`;
+    $('disc-grade').classList.add('hidden');
+    this.discoverTimer = 4;
+    return true;
   }
 
   private showDiscover(id: string, photo: string, isNew: boolean, ev?: ReturnType<typeof evaluateShot>, paid = 0, better?: Shot, record = false): void {
@@ -1735,7 +1907,7 @@ export class Game {
     $('narc').style.opacity = String(this.narc * 0.8);
     if (this.minimap && this.frame % 10 === 0) {
       if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
-      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.storyMarks, ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo' && q.id !== this.activeQuest).map((q) => ({ x: q.x, z: q.z, rare: true, r: QUEST.arrive }))];
+      this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.sceneMarks(), ...this.spotMarks(), ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo' && q.id !== this.activeQuest).map((q) => ({ x: q.x, z: q.z, rare: true, r: QUEST.arrive }))];
     }
     this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
@@ -1754,6 +1926,13 @@ export class Game {
     $('catch-val').textContent = `${this.bagKg.toFixed(1)}/${this.bagCap}kg`;
     cc.classList.toggle('full', this.bagKg >= this.bagCap - 0.05);
     $('btn-shutter').classList.toggle('reload', this.tool === 'spear' && this.reload > 0);
+    if (this.cutReady || this.missions.cutProgress() !== null) {
+      ret.classList.add('lock');
+      ret.classList.remove('far');
+      lab.innerHTML = `網に絡まったウミガメ<small>${this.cutReady ? 'タップで網を切る' : 'ナイフで網を切っている…'}</small>`;
+      $('btn-shutter').classList.toggle('ready', this.cutReady);
+      return this.updateToasts(dt);
+    }
     if (this.pryIdx !== null) {
       ret.classList.add('lock');
       ret.classList.remove('far');
@@ -1795,6 +1974,7 @@ export class Game {
   }
 
   private updateToasts(dt: number): void {
+    this.updateMapFound(dt);
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) $('toast').className = '';
@@ -1899,6 +2079,8 @@ export class Game {
     (window as unknown as Record<string, unknown>).__THREE_GAME_TEST_HOOKS__ = {
       game: this,
       offerMission: () => { this.missions.forceOffer = true; },
+      /** Phase 3: photo spots with their focus points */
+      spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r }; }),
       startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag') => { this.missions.force = k; },
       currents: () => this.currents,
       currentF: () => this.currentF,

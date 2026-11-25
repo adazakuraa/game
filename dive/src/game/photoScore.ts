@@ -37,6 +37,8 @@ export const PHOTO = {
   repeatShare: 0.2,
   /** 【光景の報酬】share of SCENES[].pay actually paid (Phase 2: photos earn about 1/7) */
   sceneShare: 1 / 7,
+  /** 【光景の初回報酬】share of SCENES[].pay for the first photo of a sight (Phase 3: an achievement should feel big; repeats stay at sceneShare × repeatShare) */
+  sceneFirstShare: 1 / 3,
   /** 【救助費用】share of the dive's earnings kept after a blackout */
   blackoutKeep: 0.3,
 };
@@ -48,6 +50,8 @@ export type ShotEval = {
   grade: Grade;
   value: number;
   bonus: string[];
+  /** Phase 3: the parts of the score (0..1 each), for the editor's advice */
+  parts: { size: number; side: number; centre: number; clear: number; fit: number; fill: number };
 };
 
 export function gradeOf(score: number): Grade {
@@ -74,7 +78,7 @@ export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCur
   const deep = 1 + depth / PHOTO.depthPerBonus;
   if (depth >= 20) bonus.push(`深度手当 ×${deep.toFixed(1)}`);
   const value = Math.round((PHOTO.base[t.rt.def.rarity] * mult * deep) / 10) * 10;
-  return { score, grade, value, bonus };
+  return { score, grade, value, bonus, parts: { size, side: t.side, centre: t.centred, clear: clarity, fit, fill } };
 }
 
 /**
@@ -131,3 +135,18 @@ export const LEGACY_NEED_PCT: Partial<Record<GearId, number>> = { fins: 3, drysu
 export const LEGACY_NEED: Partial<Record<GearId, number>> = { fins: 5, scooter: 22, ads: 35 };
 
 export const yen = (n: number) => '¥' + Math.round(n).toLocaleString('ja-JP');
+
+/** The one thing that kept a shot from an S (Phase 3: the editor's advice), or null if it is an S. */
+export function sAdvice(e: ShotEval): string | null {
+  if (e.grade.g === 'S') return null;
+  const p = e.parts;
+  if (p.fit < PHOTO.fitForS || p.fill > 0.92) return p.fill > PHOTO.fillMax ? '近すぎて体が枠からはみ出している。少し離れて全身を入れよう' : '体の一部が枠から切れている。全身を枠に入れよう';
+  const W = PHOTO.weight;
+  const lack = [
+    { k: 'size', v: (1 - p.size) * W.size, t: p.fill > PHOTO.fillMax ? '大きすぎる。少し離れよう' : 'もっと近づいて大きく写そう' },
+    { k: 'side', v: (1 - p.side) * W.side, t: 'もっと真横から撮ろう（回り込んで）' },
+    { k: 'centre', v: (1 - p.centre) * W.centre, t: '照準の真ん中に入れよう' },
+    { k: 'clear', v: (1 - p.clear) * W.clear, t: 'ぼやけている。もっと近くで撮るとくっきりする' },
+  ].sort((a, b) => b.v - a.v)[0];
+  return lack.t;
+}
