@@ -8,8 +8,8 @@ import type { PhotoTarget } from '../life/creatures';
 export const PHOTO = {
   /** 【1ダイブ1種1回】a species' photo pays only once per dive (the first shot's value is final; a better shot only upgrades the dex photo) */
   oncePerDive: true,
-  /** 【写真の基本報酬】by rarity ★1..★3, ★4 = legendary (yen) */
-  base: [0, 300, 900, 2400, 8000],
+  /** 【写真の基本報酬】by rarity ★1..★3, ★4 = legendary (yen). Phase 2: about 1/7 of the old 300/900/2400/8000 */
+  base: [0, 40, 130, 340, 1140],
   /** 【評価の重み】size in frame / side view / centring / clarity */
   weight: { size: 0.36, side: 0.26, centre: 0.16, clear: 0.22 },
   /** 【画面占有の目標】fraction of frame height at which size scores full marks */
@@ -35,6 +35,8 @@ export const PHOTO = {
   depthPerBonus: 60,
   /** 【撮り直し】re-shooting a known species pays this share, unless the grade improves */
   repeatShare: 0.2,
+  /** 【光景の報酬】share of SCENES[].pay actually paid (Phase 2: photos earn about 1/7) */
+  sceneShare: 1 / 7,
   /** 【救助費用】share of the dive's earnings kept after a blackout */
   blackoutKeep: 0.3,
 };
@@ -76,50 +78,54 @@ export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCur
 }
 
 /**
- * Gear: comes into stock when the dex reaches 【入荷に必要な図鑑の割合】need (%), then is bought with photo money.
+ * Gear: comes into stock when the dex holds 【入荷に必要な図鑑の種数】need species (an absolute count, never a share of
+ * the total, so adding species never makes the shop harder), then is bought with money. Ordered by need (= stock order).
  * Each item changes how you dive rather than just making numbers bigger.
  */
 export type ShopItem = { id: string; need: number; price: number; name: string; desc: string; icon: string; rep?: number; req?: string; map?: string };
 export const SHOP: readonly ShopItem[] = [
-  { id: 'torch', need: 0, price: 800, name: '水中ライト', desc: '暗い所や夜の海を照らせる（夜の海に潜るのに必要）', icon: '<path d="M9 3h6l-1 5h-4zM9 9h6v3l-1 1v8a2 2 0 0 1-4 0v-8l-1-1z"/>' },
-  { id: 'fins', need: 3, price: 1500, name: 'ロングフィン', desc: '泳ぐ速さ +30%', icon: '<path d="M7 3h4l1 8 4 8-3 2-5-7z"/>' },
-  { id: 'light', need: 5, price: 2500, req: 'torch', name: '強力ライト', desc: '暗い所でも遠くまで照らして撮れる', icon: '<path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/>' },
-  { id: 'spear', need: 4, price: 2500, name: '手銛', desc: '魚を獲れる（しおさい亭から頼まれごとが来る）', icon: '<path d="M3 21L18 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M15 3.5l5.5-1-1 5.5z"/>' },
-  { id: 'drysuit', need: 7, price: 4000, name: 'ドライスーツ', desc: '冷たい海でもエアが普通にもつ', icon: '<path d="M8 3h8l2 6-2 1v11h-3v-7h-2v7H8V10L6 9z"/>' },
-  { id: 'macro', need: 12, price: 6000, name: 'マクロレンズ', desc: '小さな生き物（20cm未満）を大きく写せる', icon: '<circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.6"/>' },
-  { id: 'rebreather', need: 16, price: 9000, name: 'リブリーザー', desc: '泡が出ず、魚に気づかれにくい', icon: '<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M5 15h14v3H5z"/>' },
-  { id: 'wide', need: 20, price: 8000, name: 'ワイドレンズ', desc: '大物（1m以上）を離れた所から撮れる', icon: '<path d="M3 12c4-6 14-6 18 0-4 6-14 6-18 0z"/><circle cx="12" cy="12" r="3" fill="#0b2a3a"/>' },
-  { id: 'shield', need: 24, price: 12000, name: 'シャークシールド', desc: '突進してくるサメ・ゴマモンガラを追い払う', icon: '<path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/>' },
-  { id: 'scooter', need: 28, price: 18000, name: '水中スクーター', desc: '高速移動ボタン', icon: '<path d="M3 12l7-5v3h8l3 2-3 2h-8v3z"/>' },
-  { id: 'sonar', need: 32, price: 15000, name: '魚群探知機', desc: '近くの未撮影の生き物がマップに出る', icon: '<path d="M12 21a9 9 0 0 1-9-9h3a6 6 0 0 0 12 0h3a9 9 0 0 1-9 9z"/><circle cx="12" cy="12" r="2"/>' },
-  { id: 'ads', need: 36, price: 30000, name: '大気圧潜水服', desc: '深海へ潜れる', icon: '<circle cx="12" cy="7" r="4"/><path d="M6 21v-6a6 6 0 0 1 12 0v6z"/>' },
+  { id: 'fins', need: 10, price: 1500, name: 'ロングフィン', desc: '泳ぐ速さ +30%', icon: '<path d="M7 3h4l1 8 4 8-3 2-5-7z"/>' },
+  { id: 'drysuit', need: 25, price: 4000, name: 'ドライスーツ', desc: '冷たい海でもエアが普通にもつ', icon: '<path d="M8 3h8l2 6-2 1v11h-3v-7h-2v7H8V10L6 9z"/>' },
+  { id: 'float', need: 30, price: 3000, name: 'シグナルフロート', desc: 'どこからでも浮上の合図を出して、ボートに拾ってもらえる', icon: '<path d="M12 2l3 9h-6z"/><rect x="10.5" y="11" width="3" height="9" rx="1"/><path d="M4 21c2-1.5 4-1.5 6 0s4 1.5 6 0 4-1.5 4-1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' },
+  { id: 'torch', need: 45, price: 800, name: '水中ライト', desc: '暗い所や夜の海を照らせる（夜の海に潜るのに必要）', icon: '<path d="M9 3h6l-1 5h-4zM9 9h6v3l-1 1v8a2 2 0 0 1-4 0v-8l-1-1z"/>' },
+  { id: 'light', need: 55, price: 2500, req: 'torch', name: '強力ライト', desc: '暗い所でも遠くまで照らして撮れる', icon: '<path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/>' },
+  { id: 'spear', need: 60, price: 2500, name: '手銛', desc: '魚を獲れる（しおさい亭から頼まれごとが来る）', icon: '<path d="M3 21L18 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M15 3.5l5.5-1-1 5.5z"/>' },
+  { id: 'macro', need: 70, price: 6000, name: 'マクロレンズ', desc: '小さな生き物（20cm未満）を大きく写せる', icon: '<circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.6"/>' },
+  { id: 'map_bluehole', map: 'bluehole', need: 80, price: 9000, name: '海図：ブルーホール', desc: 'ブルーホールの場所が分かり、直接行ける', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="11" r="3"/>' },
+  { id: 'rebreather', need: 85, price: 9000, name: 'リブリーザー', desc: '泡が出ず、魚に気づかれにくい', icon: '<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M5 15h14v3H5z"/>' },
+  { id: 'wide', need: 100, price: 8000, name: 'ワイドレンズ', desc: '大物（1m以上）を離れた所から撮れる', icon: '<path d="M3 12c4-6 14-6 18 0-4 6-14 6-18 0z"/><circle cx="12" cy="12" r="3" fill="#0b2a3a"/>' },
+  { id: 'map_cave', map: 'cave', need: 100, price: 9000, name: '海図：水中洞窟', desc: 'セノーテの入口の場所が分かり、直接行ける', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 15a4 4 0 0 1 8 0z"/>' },
+  { id: 'shield', need: 110, price: 12000, name: 'シャークシールド', desc: '突進してくるサメ・ゴマモンガラを追い払う', icon: '<path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/>' },
+  { id: 'scooter', need: 120, price: 18000, name: '水中スクーター', desc: '高速移動ボタン', icon: '<path d="M3 12l7-5v3h8l3 2-3 2h-8v3z"/>' },
+  { id: 'sonar', need: 135, price: 15000, name: '魚群探知機', desc: '近くの未撮影の生き物がマップに出る', icon: '<path d="M12 21a9 9 0 0 1-9-9h3a6 6 0 0 0 12 0h3a9 9 0 0 1-9 9z"/><circle cx="12" cy="12" r="2"/>' },
+  { id: 'map_deep', map: 'deep', need: 145, price: 8000, name: '海図：深海', desc: '深海の熱水噴出孔への降下地点（要 大気圧潜水服）', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v8M9 12l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8"/>' },
+  { id: 'ads', need: 150, price: 30000, name: '大気圧潜水服', desc: '深海へ潜れる', icon: '<circle cx="12" cy="7" r="4"/><path d="M6 21v-6a6 6 0 0 1 12 0v6z"/>' },
   // fishing gear: comes into stock as the diner's reputation grows (【入荷に必要な評判】rep)
   { id: 'cooler', need: 0, rep: 2, price: 3000, name: 'クーラーボックス', desc: '獲物を15kgまで持ち帰れる', icon: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M8 8V5h8v3" fill="none" stroke="currentColor" stroke-width="2"/>' },
   { id: 'license', need: 0, rep: 3, price: 8000, name: '漁業権（遊漁承認）', desc: '水中銃を使ってよい許可', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5" stroke="#0b2a3a" stroke-width="1.6"/>' },
   { id: 'speargun', need: 0, rep: 3, req: 'license', price: 12000, name: '水中銃', desc: '射程6m・大物も獲れる（要 漁業権）', icon: '<path d="M2 12h14l2-2h4v4h-4l-2-2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 12v5h3v-5z"/>' },
   { id: 'powerhead', need: 0, rep: 5, req: 'speargun', price: 25000, name: '大物用水中銃', desc: 'サメも仕留められる強力な銃', icon: '<path d="M1 12h15l3-3h4v6h-4l-3-3" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M5 12v6h4v-6z"/>' },
-  // charts of places that are hard to find by swimming around
-  { id: 'map_bluehole', map: 'bluehole', need: 14, price: 9000, name: '海図：ブルーホール', desc: 'ブルーホールの場所が分かり、直接行ける', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="11" r="3"/>' },
-  { id: 'map_cave', map: 'cave', need: 22, price: 9000, name: '海図：水中洞窟', desc: 'セノーテの入口の場所が分かり、直接行ける', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 15a4 4 0 0 1 8 0z"/>' },
-  { id: 'map_deep', map: 'deep', need: 34, price: 8000, name: '海図：深海', desc: '深海の熱水噴出孔への降下地点（要 大気圧潜水服）', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v8M9 12l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8"/>' },
   { id: 'bigcooler', need: 0, rep: 4, price: 12000, name: '大型クーラー', desc: '獲物を40kgまで持ち帰れる', icon: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M7 7V4h10v3M2 12h20" fill="none" stroke="currentColor" stroke-width="2"/>' },
 ];
 export type GearId = string;
 
 /**
- * 【エアタンクの強化】The one tank is upgraded step by step instead of buying new ones. Capacity in bar
- * (the first one lasts about 3 minutes at 8-10 m). After the spear is in hand, the shop also takes fish
+ * 【エアタンクの強化】The one tank is upgraded step by step instead of buying new ones. Capacity in bar only
+ * (the first one is sized for about 3 minutes at 2 m while swimming: 0.42 × 1.2 × 1.15 bar/s × 180 s ≈ 105; see PHASE2-DESIGN §1.2). After the spear is in hand, the shop also takes fish
  * (kg from the cooler) in place of half the money.
  */
 export const AIR_TANK = [
-  { cap: 140, price: 0, kg: 0 },
-  { cap: 170, price: 2000, kg: 1 },
-  { cap: 200, price: 4000, kg: 2 },
-  { cap: 240, price: 7000, kg: 3 },
-  { cap: 280, price: 11000, kg: 5 },
-  { cap: 330, price: 16000, kg: 8 },
+  { cap: 105, price: 0, kg: 0 },
+  { cap: 140, price: 2000, kg: 1 },
+  { cap: 170, price: 4000, kg: 2 },
+  { cap: 210, price: 7000, kg: 3 },
+  { cap: 260, price: 11000, kg: 5 },
+  { cap: 320, price: 16000, kg: 8 },
   { cap: 400, price: 24000, kg: 12 },
 ];
+
+/** Phase 2 moved stock from a dex share (%) to a species count: what those % rules had already stocked stays stocked. */
+export const LEGACY_NEED_PCT: Partial<Record<GearId, number>> = { fins: 3, drysuit: 7, torch: 0, light: 5, spear: 4, macro: 12, map_bluehole: 14, rebreather: 16, wide: 20, map_cave: 22, shield: 24, scooter: 28, sonar: 32, map_deep: 34, ads: 36 };
 
 /** Earlier saves unlocked gear by species count: keep what those players already had. */
 export const LEGACY_NEED: Partial<Record<GearId, number>> = { fins: 5, scooter: 22, ads: 35 };
