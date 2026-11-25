@@ -1,6 +1,6 @@
 import { SPECIES, SPECIES_BY_ID, type SpeciesDef } from '../life/species';
 import { runFuguExam } from './kitchenGames';
-import { CAT_NAME, DISH, FISHING, FUGU_EXAM, PENALTY, STORY, dishFor, edibleInfo, fits, isFugu, isGoodCatch, poisonFor, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
+import { CAT_NAME, DISH, FISHING, FUGU_EXAM, PENALTY, STORY, nightOf, dishFor, edibleInfo, fits, isFugu, isGoodCatch, poisonFor, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
 import { yen } from './photoScore';
 
 /** The land half of the game lives in the save next to the dex. */
@@ -21,6 +21,35 @@ export type LandSave = {
   story?: number;
   /** day on which the urchin sorting was last done */
   uniDay?: number;
+  /** the landlady: how far her talk about the island has got, and what just happened (back from a dive / a new morning) */
+  okami?: { lore: number; ev?: 'back' | 'morning' };
+  /** the notice board has been mentioned by the landlady */
+  boardOn?: boolean;
+};
+
+type Progress = { found: number; chapter: number; spear: boolean };
+
+/**
+ * The landlady's talk about the island, told a little at a time, one piece per visit (never all at once).
+ * The gear hint only says what works, never that something will be sold later.
+ */
+const LORE: { ok: (p: Progress) => boolean; text: string }[] = [
+  { ok: () => true, text: 'あんたが編集長さんの言ってた写真家さんだね。あたしはハル、ここの女将さ。部屋は二階を使っておくれ。好きなだけ泊まっていきな' },
+  { ok: () => true, text: 'この島はね、不思議と世界中の魚が集まってくるんだよ。南の派手な魚も、北の海の魚もね。理由？ 島の年寄りでも誰も知らないのさ' },
+  { ok: (p) => p.found >= 10, text: 'ちょっと泳いだら寒い海にもいけるんだよ。流氷が流れ着く入り江まであるんだから、おかしな島だろう？' },
+  { ok: (p) => p.found >= 15, text: 'すばしっこい魚はね、気づかれにくい格好で潜ると、近くまで寄らせてくれるって。昔泊まってたダイバーさんが言ってたよ' },
+  { ok: (p) => p.chapter >= 3, text: '沖の深い所には、昔の町が沈んでるって言い伝えがあってね。石の柱を見たって漁師もいるんだよ。……まあ、酒の席の話だけどね' },
+];
+
+const pick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+const LINES = {
+  back: ['おかえり。今日の海はどうだった？', 'おかえり、冷えたろう。あったかいお茶があるよ', 'おかえり。無事に帰ってくるのが一番さ', 'おかえり。ほら、髪がまだ濡れてるよ'],
+  backNew: ['いい顔してるね。いい写真が撮れたんだろう？', 'おかえり。その顔は、何か珍しいのに会ったね？'],
+  morning: ['おはよう。今日もいい凪だよ', 'おはよう。朝ごはん、しっかり食べていきな', 'おはよう。今日はどこに潜るんだい？'],
+  nightDark: ['夜の海は暗くて危ないよ。今日はもうゆっくり休みな', 'もう日が暮れたね。続きはまた明日さ'],
+  day: ['気をつけて行っておいで', 'ここはいつでも開いてるからね', '潜る前は、ちゃんと水を飲んでおくんだよ'],
+  toNight: ['夜の海に行くのかい？ ライトを忘れずにね', '夜は昼と別の魚が起きてくるからね。気をつけて'],
+  board: ['おはよう。そうそう、島の人から依頼が来ているよ。ボートの「依頼の掲示板」に貼っておいたから、見てごらん'],
 };
 
 type Host = {
@@ -35,6 +64,8 @@ type Host = {
   grantMap: (id: string) => void;
   /** go diving straight away for the urchin harvest */
   urchinDive: () => void;
+  hasTorch: () => boolean;
+  progress: () => Progress;
 };
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -43,7 +74,42 @@ const $ = (id: string) => document.getElementById(id)!;
 export class Kitchen {
   constructor(private host: Host) {
     $('k-close').addEventListener('click', () => this.close());
-    $('k-sleep').addEventListener('click', () => this.sleep());
+    $('k-sleep').addEventListener('click', () => this.timeButton());
+  }
+
+  /** what the landlady said on this visit (kept while the diner stays open) */
+  private line = '';
+
+  /** One word from the landlady: a piece of the island's story if one is due, else a greeting for the moment. */
+  private say(ev?: 'back' | 'morning' | 'toNight'): void {
+    const s = this.host.save;
+    const o = (s.okami ??= { lore: 0 });
+    const p = this.host.progress();
+    if (ev === 'morning' && !s.boardOn) { s.boardOn = true; this.line = LINES.board[0]; this.host.write(); return; }
+    const L = LORE[o.lore];
+    if (L && L.ok(p) && (o.lore === 0 || ev === 'back' || ev === 'morning')) {
+      this.line = L.text;
+      o.lore++;
+      this.host.write();
+      return;
+    }
+    const night = nightOf(s.clock ?? 0) >= 0.5;
+    this.line = pick(ev === 'toNight' ? LINES.toNight : ev === 'back' ? (this.newToday ? LINES.backNew : LINES.back) : ev === 'morning' ? LINES.morning : night && !this.host.hasTorch() ? LINES.nightDark : LINES.day);
+  }
+
+  /** set by the game after a dive that found something new */
+  newToday = false;
+
+  /** The one time button: at night it is "sleep till morning", by day (with a light) it is "go out at night". */
+  private timeButton(): void {
+    const s = this.host.save;
+    if (nightOf(s.clock ?? 0) >= 0.5) { this.sleep(); return; }
+    if (!this.host.hasTorch()) return;
+    s.clock = FISHING.duskAt + FISHING.duskLen;
+    this.host.write();
+    this.host.toast('日が暮れた。夜の海に潜れる', '', 2.5);
+    this.say('toNight');
+    this.render();
   }
 
   /** Species that can turn up in an order: edible and found in waters a scuba diver can reach. */
@@ -77,6 +143,11 @@ export class Kitchen {
 
   open(): void {
     this.ensureOrders();
+    const o = (this.host.save.okami ??= { lore: 0 });
+    const ev = o.ev;
+    o.ev = undefined;
+    this.say(ev);
+    this.newToday = false;
     $('kitchen').classList.remove('hidden');
     this.render();
   }
@@ -97,12 +168,16 @@ export class Kitchen {
     const next = FISHING.repLevels[lv];
     const prev = FISHING.repLevels[lv - 1];
     const stars = '★'.repeat(lv) + '☆'.repeat(FISHING.repLevels.length - lv);
-    $('k-status').innerHTML = `<span>評判 <span class="stars">${stars}</span> Lv<b>${lv}</b></span><span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` +
+    // before the hand spear the diner is only where the diver stays: no orders, no cooler yet
+    const inn = !this.host.progress().spear;
+    $('kitchen').classList.toggle('inn', inn);
+    $('k-okami').innerHTML = `<b>女将のハルさん</b>「${this.line}」`;
+    $('k-status').innerHTML = inn ? `<span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` : `<span>評判 <span class="stars">${stars}</span> Lv<b>${lv}</b></span><span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` +
       (next !== undefined ? `<span>次のLvまで評判 <b>${next - rep}</b></span><div class="k-bar"><i style="width:${((rep - prev) / (next - prev)) * 100}%"></i></div>` : '<span>評判 最高！</span>');
 
     // story: one chapter per reputation level, shown until read
     const story = $('k-story');
-    const unread = (s.story ?? 0) < lv;
+    const unread = !inn && (s.story ?? 0) < lv;
     story.classList.toggle('hidden', !unread);
     if (unread) {
       const ch = STORY[(s.story ?? 0)];
@@ -147,10 +222,11 @@ export class Kitchen {
     $('k-work').innerHTML = work.join('');
     document.getElementById('k-sort')?.addEventListener('click', () => this.playSort());
     document.getElementById('k-exam')?.addEventListener('click', () => this.playExam());
-    // the shop closes only after dark
-    const night = (s.clock ?? 0) >= FISHING.duskAt + FISHING.duskLen * 0.5;
-    $('k-sleep').classList.toggle('hidden', !night);
-    $('k-sleep').textContent = `店を閉めて休む（${(s.day ?? 1) + 1}日目の朝へ）`;
+    // one button, by the hour: sleep till morning at night; by day, go out at night once the diver has a light
+    const night = nightOf(s.clock ?? 0) >= 0.5;
+    $('k-sleep').className = `btn ${night ? 'pri' : 'sec'} k-time`;
+    $('k-sleep').classList.toggle('hidden', !night && !this.host.hasTorch());
+    $('k-sleep').innerHTML = night ? `☾→☀ 朝にする<small>${inn ? '部屋で寝る' : '店を閉めて寝る'}（${(s.day ?? 1) + 1}日目の朝へ）</small>` : '☀→☾ 夜にする<small>夜の海に潜れるようにする</small>';
 
     $('k-orders').querySelectorAll<HTMLButtonElement>('[data-serve]').forEach((b) => b.addEventListener('click', () => this.serve(b.dataset.serve!)));
     $('k-cooler').querySelectorAll<HTMLButtonElement>('[data-eat]').forEach((b) => b.addEventListener('click', () => this.eat(+b.dataset.eat!)));
@@ -285,7 +361,7 @@ export class Kitchen {
   /** End of the day: leftovers go to the market, the clock returns to morning, new guests come tomorrow. */
   sleep(): void {
     const s = this.host.save;
-    if ((s.clock ?? 0) < FISHING.duskAt + FISHING.duskLen * 0.5) return;
+    if (nightOf(s.clock ?? 0) < 0.5) return;
     const left = s.cooler ?? [];
     const v = left.reduce((a, c) => a + marketPrice(SPECIES_BY_ID.get(c.id)!, c.kg), 0);
     s.money = (s.money ?? 0) + v;
@@ -294,7 +370,8 @@ export class Kitchen {
     s.clock = 0;
     s.orders = makeOrders(this.level, this.pool(this.level), Math.random, this.licensed);
     this.host.write();
-    this.host.toast(`${s.day}日目の朝。新しい注文が届いた${left.length ? `（残りの魚は市場へ +${yen(v)}）` : ''}`, '', 3.5);
+    this.host.toast(`${s.day}日目の朝。${this.host.progress().spear ? '新しい注文が届いた' : 'よく眠れた'}${left.length ? `（残りの魚は市場へ +${yen(v)}）` : ''}`, '', 3.5);
+    this.say('morning');
     this.render();
   }
 }

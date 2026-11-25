@@ -48,6 +48,8 @@ export type Chapter = {
   done: (s: StoryState) => boolean;
   progress?: (s: StoryState) => string;
   reward: number;
+  /** what the editor says when the chapter is cleared */
+  praise?: string;
   /** a chart handed over when the chapter is finished */
   map?: string;
   /** a special sight that is staged while this chapter is the current one */
@@ -57,34 +59,40 @@ export type Chapter = {
 
 export const CHAPTERS: Chapter[] = [
   {
-    title: 'はじめての海', title2: '駆け出しの写真家',
-    intro: '海洋雑誌『月刊うみなか』の編集長から連絡が来た。「島に着いたね。まずは浅瀬で体を慣らして。泳ぎ方とエアの見方、それに写真の撮り方を覚えたら、仕事を頼むよ」',
-    goal: '浅瀬ラグーンで最初のダイブをして、生き物を撮って帰る', done: (s) => s.dives >= 1, reward: 0,
+    title: 'はじめての海', title2: '腕利きの趣味ダイバー',
+    intro: 'あなたは長年、趣味で海に潜っては海の中の写真を撮ってきたダイバー。ネットに載せていたその写真が、海洋雑誌『月刊うみなか』の編集長の目に留まった。「あなたの腕を見せてほしい。島の宿は、港の食堂『しおさい亭』に頼んである」——そうして呼ばれた島の、最初の海。まずは浅瀬ラグーンで試し撮りだ。',
+    goal: '浅瀬ラグーンで試し撮りをして、生き物を撮って帰る', done: (s) => s.dives >= 1, reward: 1000,
+    praise: '編集長「流石だな。噂どおりの腕だ。今日の写真は全部買わせてもらうよ。試し撮りのお礼も入れておいた」',
   },
   {
     title: '編集長の課題', title2: '新人写真家',
-    intro: '編集長「いい滑り出し。次は数だ。いろんな生き物を撮ってきて」',
+    intro: '編集長「あの腕なら任せられる。正式に仕事を頼みたい。まずは数だ。いろんな生き物を撮ってきてほしい。写真の代金とは別に、課題をこなすたびに報酬を払うよ」',
     goal: '図鑑を15種にする', done: (s) => s.found >= 15, progress: (s) => `${Math.min(15, s.found)}/15種`, reward: 3000,
+    praise: '編集長「15種、もう揃えたのか。仕事が早いね」',
   },
   {
     title: 'S評価の一枚', title2: '期待の新人',
     intro: '編集長「誌面に載せるなら一枚の質だ。近くで、真横から、全身が入るように。評価Sの写真を見せてほしい」',
     goal: 'S評価の写真を1枚撮る', done: (s) => s.sCount >= 1, reward: 5000,
+    praise: '編集長「これだよ、これ。誌面で映える一枚だ」',
   },
   {
     title: '夜の海', title2: '夜を知る写真家',
     intro: '編集長「夜の海は別の世界だよ。ライトを頼りに、夜にしか会えない生き物を撮ってきて」',
     goal: '夜行性の生き物を撮る（夜の海で）', done: (s) => s.nightFound >= 1, reward: 6000, map: 'cave',
+    praise: '編集長「夜の海でも落ち着いて撮れている。さすがだ。お礼に、漁師さんから聞いた洞窟の場所を教えるよ」',
   },
   {
     title: '眠る巨人', title2: '巨人を撮った写真家', scene: 'whalesleep',
     intro: '編集長「漁師さんから珍しい話を聞いた。沖の大海原で、マッコウクジラが縦になって眠っているらしい。地図に印をつけておく。驚かさないように、そっと近づいて」',
-    goal: '沖で縦になって眠るマッコウクジラを撮る', done: (s) => !!s.scenes.whalesleep, reward: 0,
+    goal: '沖で縦になって眠るマッコウクジラを撮る', done: (s) => !!s.scenes.whalesleep, reward: 8000,
+    praise: '編集長「眠る巨人…！ 編集部がざわついているよ」',
   },
   {
     title: '海の満月', title2: '海の神秘を撮る写真家', scene: 'spawning',
     intro: '編集長「今夜は満月。サンゴ礁でサンゴの一斉産卵が始まるかもしれない。夜のサンゴ礁へ行って、その瞬間を撮って」',
-    goal: '夜のサンゴ礁でサンゴの一斉産卵を撮る', done: (s) => !!s.scenes.spawning, reward: 0,
+    goal: '夜のサンゴ礁でサンゴの一斉産卵を撮る', done: (s) => !!s.scenes.spawning, reward: 8000,
+    praise: '編集長「あの一瞬をよく撮った。特集が組めるよ」',
   },
   {
     title: '表紙を飾れ', title2: '表紙の写真家',
@@ -96,18 +104,21 @@ export const CHAPTERS: Chapter[] = [
 export const ENDING = '『月刊うみなか』の表紙に、あなたの写真が載った。編集長「おめでとう。もう立派な海中写真家だ。海はまだまだ広い。図鑑の空欄、全部埋めてみせて」';
 
 /**
- * First dive tutorial: one thing at a time, learned by doing, each step praised the moment it is done.
- * The coach panel shows only the current step.
+ * First dive tutorial (the test dive the editor asked for): one thing at a time, learned by doing, each step
+ * praised the moment it is done. Order: move, look, descend, shoot, photos are money, the second-photo rule,
+ * air, surface. The coach panel shows only the current step.
  */
-export type TutStep = { text: string; done: (t: TutCtx) => boolean; praise: string; hold?: number };
-export type TutCtx = { moved: number; looked: number; depth: number; airShown: number; shots: number; species: number; surfaceNear: boolean; t: number; alt: number };
+export type TutStep = { text: string; done: (t: TutCtx) => boolean; praise: string; hold?: number; hl?: 'air' | 'surface' };
+export type TutCtx = { moved: number; looked: number; depth: number; depth0: number; down: number; airShown: number; shots: number; species: number; repeat: number; surfaceNear: boolean; t: number; alt: number };
 
 export const TUTORIAL: TutStep[] = [
   { text: '画面の左側をドラッグして、前へ泳いでみよう', done: (t) => t.moved > 4, praise: 'いいね！' },
   { text: '右側をドラッグして、まわりを見回そう', done: (t) => t.looked > 1.6, praise: 'その調子！' },
-  { text: '▼ボタンで、海底の近くまで潜ってみよう', done: (t) => t.alt < 1.6 || t.depth > 6, praise: '上手！' },
-  { text: '右上の丸いメーターがエア（空気）の残り。深く潜るほど、速く泳ぐほど早く減る。0になると気絶して救助され、稼ぎが減ってしまう。半分を切ったら戻り始めよう', done: (t) => t.airShown > 7, praise: 'エアはいつも気にしておこう', hold: 7 },
+  // needs the ▼ button itself: in the shallow lagoon the floor may already be close when this step begins
+  { text: '▼ボタンを押して、海底の近くまで潜ってみよう', done: (t) => t.down >= 0.6 && (t.alt < 1.2 || t.depth >= t.depth0 + 1.5), praise: '上手！' },
   { text: '生き物を照準の枠に入れて、カメラボタンで撮ろう。近く・真横から・全身が入ると高評価', done: (t) => t.shots >= 1, praise: 'ナイスショット！' },
-  { text: 'あと2種類、ちがう生き物を撮ってみよう', done: (t) => t.species >= 3, praise: 'すばらしい！' },
-  { text: 'ボートへ戻ろう。▲で水面近く（水深1.6mより浅く）まで上がると「浮上」ボタンが出る', done: (t) => t.surfaceNear, praise: '浮上ボタンを押してダイブ終了！' },
+  { text: '撮った写真は、浮上したときに雑誌社が買い取ってくれる。評価が高いほど高く売れる。あと2種類、ちがう生き物を撮ってみよう', done: (t) => t.species >= 3, praise: 'すばらしい！' },
+  { text: '同じ生き物の2枚目からは、より良い評価なら図鑑の写真が差し替わる。ただし売れるのは1回のダイブで1種1枚だけ。また売るには潜り直そう', done: (t) => t.repeat >= 1 || t.t > 9, praise: '次はエアの見方だ', hold: 9 },
+  { text: '右上の丸いメーターがエア（空気）の残り。深く潜るほど、速く泳ぐほど早く減る。0になると気絶して救助され、稼ぎが減ってしまう。半分を切ったら戻り始めよう', done: (t) => t.airShown > 7, praise: 'エアはいつも気にしておこう', hold: 7, hl: 'air' },
+  { text: 'ボートへ戻ろう。▲で水面近く（水深1.6mより浅く）まで上がると「浮上」ボタンが出る', done: (t) => t.surfaceNear, praise: '浮上ボタンを押してダイブ終了！', hl: 'surface' },
 ];
