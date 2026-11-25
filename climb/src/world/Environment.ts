@@ -133,6 +133,10 @@ export class Environment {
   private readonly moonDir = new THREE.Vector3(-0.55, 0.45, 0.35).normalize();
   private readonly lightDir = new THREE.Vector3();
   cloudY: number;
+  private distantSeed = 0;
+  private distantMobile = false;
+  private distantKosci: THREE.Mesh | null = null;
+  private distantKosciMat: THREE.Material | null = null;
   /** cirrus cover 0..1, varies by day */
   cirrus = 0.6;
   private readonly baseCloudY: number;
@@ -230,6 +234,8 @@ export class Environment {
     this.group.add(clouds);
     this.cloudMesh = clouds;
 
+    this.distantSeed = seed;
+    this.distantMobile = mobile;
     this.distant = this.buildDistantRange(seed, mobile);
     this.group.add(this.distant);
 
@@ -317,9 +323,126 @@ export class Environment {
     return mesh;
   }
 
+  /**
+   * Switch the skyline: the Himalayan one (default) or the rounded snowy Main Range seen from Kosciuszko.
+   * North is +z (the sun passes +z at noon and rises at +x); the summit is the origin.
+   */
+  setDistantStyle(style: 'himalaya' | 'kosciuszko', altToWorldY?: (alt: number) => number): void {
+    const kosci = style === 'kosciuszko' && !!altToWorldY;
+    if (kosci && !this.distantKosci) {
+      this.distantKosci = this.buildKosciuszkoRange(altToWorldY!, this.distantSeed, this.distantMobile);
+      this.distantKosci.material = this.hazeFreeCopy(this.distant.material as THREE.Material);
+      this.group.add(this.distantKosci);
+    }
+    this.distant.visible = !kosci;
+    if (this.distantKosci) this.distantKosci.visible = kosci;
+  }
+
+  /**
+   * Winter Kosciuszko skyline in absolute world heights: the Main Range to the north (Townsend, Twynam,
+   * Carruthers: broad snow domes, no spires), the Ramshead range to the south-east, a low cloud sea over
+   * the Geehi valley to the west, a dark snow-gum band just above the cloud, Bogong far to the south-west.
+   */
+  private buildKosciuszkoRange(toY: (alt: number) => number, seed: number, mobile: boolean): THREE.Mesh {
+    const noise = new Noise2D(seed + 123);
+    const segA = mobile ? 128 : 192;
+    const segR = 40;
+    const r0 = 1400;
+    const r1 = 15000;
+    // Ridge lines as [east m, north m, altitude m]; broad profile either side.
+    const ridges: { pts: [number, number, number][]; w: number }[] = [
+      { pts: [[-1300, 3300, 2209], [-1700, 5200, 2060], [-2100, 7000, 2195], [-1900, 8400, 2090], [-1500, 9600, 2145], [-1100, 12500, 2020]], w: 2000 },
+      { pts: [[2300, -3300, 2190], [3600, -5200, 2120], [4600, -7600, 1980]], w: 1900 },
+      { pts: [[-9800, -10200, 1986], [-11200, -11000, 1900]], w: 2600 },
+    ];
+    const positions: number[] = [];
+    const alts: number[] = [];
+    const idx: number[] = [];
+    for (let j = 0; j <= segR; j++) {
+      const r = r0 + (r1 - r0) * Math.pow(j / segR, 1.5);
+      for (let i = 0; i <= segA; i++) {
+        const a = (i / segA) * Math.PI * 2;
+        const x = Math.cos(a) * r;
+        const z = Math.sin(a) * r;
+        // the west (Western Falls, Geehi valley) drops below the cloud sea
+        const west = smoothstep(-0.1, 0.8, -Math.cos(a));
+        let alt = 1995 - 450 * west + noise.fbm(x * 0.0008, z * 0.0008, 3) * 55;
+        for (const rg of ridges) {
+          let best = 1e9, ra = alt;
+          for (let k = 0; k < rg.pts.length - 1; k++) {
+            const [ax, az, aa] = rg.pts[k];
+            const [bx, bz, ba] = rg.pts[k + 1];
+            const dx = bx - ax, dz = bz - az;
+            const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
+            const d = Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+            if (d < best) { best = d; ra = aa + (ba - aa) * t; }
+          }
+          const kf = 1 - smoothstep(rg.w * 0.25, rg.w, best);
+          if (kf > 0 && ra > alt) {
+            alt += (ra - alt) * kf * kf * (3 - 2 * kf) + kf * Math.max(0, noise.ridged(x * 0.004, z * 0.004, 2) - 0.55) * 28;
+          }
+        }
+        // the stage's vertical scale flattens everything; stretch the domes above the rolling snow (the plain stays below eye level, or it would be seen from underneath)
+        // the inner rim sinks below the cloud sea, so no open edge shows under the nearest hills
+        alt -= 330 * (1 - smoothstep(1900, 3200, r));
+        const y = alt > 2020 ? toY(2020) + (toY(alt) - toY(2020)) * 2.8 : toY(alt);
+        positions.push(x, y, z);
+        alts.push(alt);
+      }
+    }
+    for (let j = 0; j < segR; j++) {
+      for (let i = 0; i < segA; i++) {
+        const a = j * (segA + 1) + i;
+        const c = a + segA + 1;
+        idx.push(a, a + 1, c, a + 1, c + 1, c);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const nrm = geo.getAttribute('normal');
+    const col = new Float32Array(nrm.count * 3);
+    for (let k = 0; k < nrm.count; k++) {
+      const alt = alts[k];
+      // snow almost everywhere, granite only on the steepest faces, snow gums just above the cloud
+      const rockAmt = smoothstep(0.93, 0.8, nrm.getY(k)) * smoothstep(1950, 2100, alt) * 0.8;
+      const gum = (1 - smoothstep(1930, 2000, alt)) * smoothstep(1860, 1920, alt);
+      let rr = 0.8, gg = 0.86, bb = 0.96;
+      rr += (0.4 - rr) * rockAmt; gg += (0.4 - gg) * rockAmt; bb += (0.41 - bb) * rockAmt;
+      rr += (0.2 - rr) * gum * 0.7; gg += (0.25 - gg) * gum * 0.7; bb += (0.21 - bb) * gum * 0.7;
+      // baked aerial perspective: a little blue with distance
+      const dist = Math.hypot(positions[k * 3], positions[k * 3 + 2]);
+      const hz = smoothstep(3000, 15000, dist) * 0.45;
+      col[k * 3] = rr + (0.66 - rr) * hz; col[k * 3 + 1] = gg + (0.77 - gg) * hz; col[k * 3 + 2] = bb + (0.93 - bb) * hz;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aAO', new THREE.BufferAttribute(new Float32Array(nrm.count).fill(1), 1));
+    geo.setAttribute('aCrev', new THREE.BufferAttribute(new Float32Array(nrm.count), 1));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
+    mesh.name = 'distantRangeKosciuszko';
+    return mesh;
+  }
+
   /** Share the stage's rock/snow terrain material with the distant skyline. */
   setDistantMaterial(m: THREE.Material): void {
     this.distant.material = m;
+    if (this.distantKosci) this.distantKosci.material = this.hazeFreeCopy(m);
+  }
+
+  /**
+   * The Kosciuszko skyline would vanish into the scene fog (it is only 3-9 km away and almost as bright as the
+   * sky), so it uses a copy of the terrain material without scene fog; its aerial perspective is baked into
+   * the vertex colours instead.
+   */
+  private hazeFreeCopy(m: THREE.Material): THREE.Material {
+    const c = m.clone();
+    (c as THREE.MeshStandardMaterial).fog = false;
+    c.onBeforeCompile = m.onBeforeCompile;
+    c.customProgramCacheKey = () => 'kosciuszko-distant';
+    (this.distantKosciMat as THREE.Material | null)?.dispose();
+    this.distantKosciMat = c;
+    return c;
   }
 
   /** Move the cloud sea (and the distant skyline that rises out of it) for a new stage. */

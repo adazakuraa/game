@@ -230,6 +230,9 @@ h1 span { color: transparent; -webkit-text-stroke: 2px var(--ink); }
   box-shadow: 0 8px 30px rgba(255, 106, 26, 0.25);
 }
 .primary:active { transform: translateY(1px); filter: brightness(0.92); }
+/* title: practice (ice blue) and expedition (orange) must not look like the same button */
+#tutorial-btn.primary { background: var(--o2); box-shadow: 0 8px 30px rgba(95, 200, 255, 0.2); }
+#continue-btn, #start-btn { margin-top: 10px; }
 .controls { margin-top: 14px; font-size: 12.5px; color: var(--ink-dim); max-width: 720px; }
 .controls summary { cursor: pointer; color: var(--ink); }
 .ctl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px; line-height: 1.8; }
