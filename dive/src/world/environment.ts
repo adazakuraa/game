@@ -387,9 +387,14 @@ export class Environment {
     const su = this.snowMat.uniforms;
     su.uCam.value.copy(cp);
     cam.getWorldDirection(su.uCamDir.value);
-    su.uAmb.value = (0.1 + 0.32 * Math.exp(-depth / 30) + (depth > 150 ? 0.05 : 0)) * (1 - D * 0.85);
+    // marine snow is a deep-sea sight: the white motes fade in only below 120 m
+    // (the blue plankton glow, uGlow, is a different effect and stays — PHASE5-DESIGN §5)
+    const sk = Math.min(1, Math.max(0, (depth - 120) / 50));
+    const snowK = sk * sk * (3 - 2 * sk);
+    su.uAmb.value = 0.15 * snowK * (1 - D * 0.85);
     su.uGlow.value = lerp(su.uGlow.value, this.night * this.plankton, 1 - Math.exp(-dt * 4));
-    su.uLight.value = (this.diverLight.intensity / 30) * 0.9;
+    su.uLight.value = (this.diverLight.intensity / 30) * 0.9 * snowK;
+    this.snow.visible = snowK > 0 || su.uGlow.value > 0.01;
     su.uScale.value = renderer.domElement.height / 2;
 
     // bubbles

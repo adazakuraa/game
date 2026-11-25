@@ -15,9 +15,10 @@ import { Environment } from '../world/environment';
 import { Flora } from '../world/flora';
 import { Creatures, OCTO, type PhotoTarget } from '../life/creatures';
 import { BAIT, eatsBait, type BaitId } from './bait';
+import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
-import { caveRoofAt, DIVE_POINTS, heightAt, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
+import { BLUEHOLE, caveRoofAt, DIVE_POINTS, heightAt, RUINS, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
@@ -46,6 +47,8 @@ type Save = LandSave & {
   stocked?: string[]; p2?: 1;
   /** Phase 3: chapters cleared whose reward has not been received yet; dive points swum into; photo spots already paid */
   storyClaim?: number[]; visited?: string[]; spots?: string[];
+  /** Phase 5: treasure chests opened, and sights named by a chest's notebook page */
+  chests?: string[]; sceneHints?: SceneId[];
  found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
@@ -87,6 +90,8 @@ export class Game {
   private titleT = 0;
   private narc = 0;
   private lastWarn = 0;
+  /** Phase 5: last time the world's edge said "no further" */
+  private lastEdgeWarn = -100;
   /** down-current cells for this dive (drop-off / blue water): centre, radius, sink speed m/s */
   private currents: { x: number; z: number; r: number; s: number }[] = [];
   private currentF = 0;
@@ -130,6 +135,9 @@ export class Game {
   /** the diver's knife (Phase 3: cutting the net off a turtle) */
   private vmKnife!: THREE.Group;
   private cutReady = false;
+  /** Phase 5: permanent treasure chests, and the one within reach right now */
+  private chests = new Chests();
+  private chestReady: string | null = null;
   private pryIdx: number | null = null;
   private barJab = 0;
   /** first-dive tutorial: current step (-1 = off) */
@@ -192,6 +200,7 @@ export class Game {
     this.scene.add(this.creatures.group);
     this.missions = new Missions();
     this.scene.add(this.missions.group);
+    this.scene.add(this.chests.group);
     this.missions.onRelease = () => this.creatures.stage.delete('turtle');
     this.missions.onEnd = (_kind, ok) => {
       if (this.activeQuest) {
@@ -364,7 +373,7 @@ export class Game {
     return Object.keys(this.save.found).length;
   }
 
-  private has(id: GearId): boolean {
+  private has(id: GearId | ChestGearId): boolean {
     // the strong light implies a torch (old saves bought it before the torch existed)
     if (id === 'torch') return !!this.save.owned?.includes('torch') || !!this.save.owned?.includes('light');
     return !!this.save.owned?.includes(id);
@@ -547,11 +556,13 @@ export class Game {
     const got = all.filter((id) => this.save.scenes?.[id]);
     $('album-body').innerHTML = `<div class="al-count">出会えた光景 <b>${got.length}</b> / ${all.length}</div><div class="sc-photos">${all.map((id) => this.save.scenes?.[id]
       ? `<figure><img src="${this.save.scenes[id]!.photo}" alt=""><figcaption><b>${SCENES[id].name}</b>${SCENES[id].desc}</figcaption></figure>`
-      : `<figure class="locked"><div>？</div><figcaption><b>？？？</b>${SCENES[id].hint}</figcaption></figure>`).join('')}</div>`
+      : (this.save.sceneHints ?? []).includes(id)
+        ? `<figure class="locked"><div>？</div><figcaption><b>${SCENES[id].name}</b>手記のヒント：${SCENES[id].note}</figcaption></figure>`
+        : `<figure class="locked"><div>？</div><figcaption><b>？？？</b>${SCENES[id].hint}</figcaption></figure>`).join('')}</div>`
       // Phase 3: photo spots (pay once, the first time)
-      + `<div class="al-count">写真スポット <b>${SPOTS.filter((s) => this.save.spots?.includes(s.id)).length}</b> / ${SPOTS.length}<small>（マップの水色の円の中で、見どころに向けて撮る。報酬は各スポット最初の1回だけ）</small></div><div class="al-spots">${SPOTS.map((s) => this.save.spots?.includes(s.id)
+      + `<div class="al-count">写真スポット <b>${SPOTS.filter((s) => this.save.spots?.includes(s.id)).length}</b> / ？<small>（マップの水色の円の中で、見どころに向けて撮る。報酬は各スポット最初の1回だけ）</small></div><div class="al-spots">${SPOTS.filter((s) => this.save.spots?.includes(s.id) || this.discovered.has(s.point)).map((s) => this.save.spots?.includes(s.id)
         ? `<div class="al-spot done"><b>${s.name}</b><span>${DIVE_POINTS.find((d) => d.id === s.point)?.name ?? ''}・撮影済み</span></div>`
-        : `<div class="al-spot"><b>？？？</b><span>${this.discovered.has(s.point) ? DIVE_POINTS.find((d) => d.id === s.point)?.name ?? '' : '未発見のマップ'}・${yen(s.pay)}</span></div>`).join('')}</div>`;
+        : `<div class="al-spot"><b>？？？</b><span>${DIVE_POINTS.find((d) => d.id === s.point)?.name ?? ''}・${yen(s.pay)}</span></div>`).join('')}</div>`;
   }
 
   /** Receive the editor's reward for a cleared chapter (Phase 3). */
@@ -668,18 +679,14 @@ export class Game {
 
   private renderTitle(): void {
     const n = this.foundCount;
-    $('t-dex').textContent = `${n}/${SPECIES.length}`;
     this.advanceStory();
     this.renderStory();
     const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70', kelp: '#8ab060' };
     const pts = $('points');
     pts.innerHTML = '';
     const known = this.discovered;
-    let hiddenN = 0;
     for (const dp of DIVE_POINTS) {
-      if (!known.has(dp.id)) { hiddenN++; continue; }
-      const zoneSpecies = SPECIES.filter((s) => (dp.id === 'dropoff' ? s.zone === 'dropoff' || s.zone === 'offshore' : s.zone === dp.id));
-      const got = zoneSpecies.filter((s) => this.save.found[s.id]).length;
+      if (!known.has(dp.id)) continue;
       const locked = dp.requires === 'ads' && !this.has('ads');
       const b = document.createElement('button');
       b.className = 'pt';
@@ -687,14 +694,15 @@ export class Game {
       b.disabled = locked;
       b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : dp.id === 'kelp' ? '森' : '12m'}</span>
         <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `写真の稼ぎで「大気圧潜水服」を買うと行ける` : dp.sub}</div></span>
-        <span class="pr"><b>${got}</b>/${zoneSpecies.length}<span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
+        <span class="pr"><span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
       b.addEventListener('click', () => this.startDive(dp));
       pts.appendChild(b);
     }
-    if (hiddenN) {
+    {
+      // always shown, and never with a count: the sea may always hide one more place (§1.4)
       const d = document.createElement('div');
       d.className = 'pt unknown';
-      d.innerHTML = `<span class="ico" style="background:#2a3a44;color:#8aa">？</span><span><div class="nm">未発見のポイント ×${hiddenN}</div><div class="sb">まだ知らない海がある</div></span><span></span>`;
+      d.innerHTML = `<span class="ico" style="background:#2a3a44;color:#8aa">？</span><span><div class="nm">未発見のポイント ×？</div><div class="sb">海は広い。まだ何かあるかもしれない</div></span><span></span>`;
       pts.appendChild(d);
     }
     this.renderDaytime();
@@ -787,6 +795,10 @@ export class Game {
       const show = stocked || on || !!u.rep;
       return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi">${show ? `<svg viewBox="0 0 24 24">${u.icon}</svg>` : '<b class="gq">？</b>'}</div>${show ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${show ? u.desc : '図鑑を埋めると入荷する'}</span></button>`;
     }).join('');
+    const tg = $('treasure-gear');
+    const mine = (Object.keys(CHEST_GEAR) as ChestGearId[]).filter((id) => this.has(id));
+    tg.classList.toggle('hidden', mine.length === 0);
+    tg.innerHTML = mine.length ? `<div class="tg-head">宝箱で見つけた装備</div>` + mine.map((id) => `<div class="tg-item"><b>${CHEST_GEAR[id].name}</b><span>${CHEST_GEAR[id].desc}</span></div>`).join('') : '';
     gear.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((b) =>
       b.addEventListener('click', () => {
         const id = b.dataset.buy as GearId;
@@ -831,8 +843,6 @@ export class Game {
     this.state = 'dex';
     $('pause').classList.add('hidden');
     $('dex').classList.remove('hidden');
-    $('dx-count').textContent = String(this.foundCount + [...this.pending.keys()].filter((k) => !this.save.found[k]).length);
-    $('dx-total').textContent = String(SPECIES.length);
     const grid = $('dex-grid');
     grid.innerHTML = '';
     const zones = ZONE_ORDER;
@@ -842,7 +852,7 @@ export class Game {
       const got = list.filter((s) => this.save.found[s.id] || this.pending.has(s.id)).length;
       const title = document.createElement('div');
       title.className = 'dz-title';
-      title.innerHTML = `${ZONE_NAMES[z]} <small>${got}/${list.length}</small>`;
+      title.innerHTML = `${ZONE_NAMES[z]}`;
       grid.appendChild(title);
       const g = document.createElement('div');
       g.className = 'dz-grid';
@@ -1073,6 +1083,7 @@ export class Game {
       this.coldWarned = -100;
       this.missions.reset();
       this.missions.newDive();
+      this.chests.build(new Set(this.save.chests ?? []));
       this.bonuses = [];
       $('btn-light').classList.toggle('on', this.env.lightOn);
       $('btn-light').classList.toggle('dim', !this.ads && !this.hasTorch());
@@ -1081,7 +1092,6 @@ export class Game {
       $('result').classList.add('hidden');
       $('hud').classList.remove('hidden');
       $('mask').classList.add('on');
-      $('dex-total').textContent = String(SPECIES.length);
       this.updateDexChip();
       this.state = 'diving';
       this.paused = false;
@@ -1375,7 +1385,6 @@ export class Game {
 
   private updateDexChip(): void {
     const newOnes = [...this.pending.keys()].filter((k) => !this.save.found[k]).length;
-    $('dex-count').textContent = String(this.foundCount + newOnes);
     const earn = [...this.pending.values()].reduce((a, f) => a + f.value, 0) + this.bonuses.reduce((a, b) => a + b.value, 0);
     $('cash-val').textContent = yen(earn);
     const n = $('dex-new');
@@ -1409,7 +1418,7 @@ export class Game {
     const fwd = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const boosting = inp.boost && this.has('scooter');
-    let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.buff === 'shioyaki' ? 1.15 : this.buff === 'fugu' ? 1.1 : 1) * (1 - Math.min(0.3, this.carryKg / 120));
+    let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.has('goldfins') ? 1.1 : 1) * (this.buff === 'shioyaki' ? 1.15 : this.buff === 'fugu' ? 1.1 : 1) * (1 - Math.min(0.3, this.carryKg / 120));
     if (boosting) speed = 6;
     if (this.creatures.grab) speed *= 0.25; // Phase 4: an octopus on the arms — barely able to swim
     const want = new THREE.Vector3().addScaledVector(fwd, inp.moveY * speed).addScaledVector(right, inp.moveX * speed * 0.7);
@@ -1448,8 +1457,25 @@ export class Game {
         this.lastWarn = this.time;
       }
     }
+    // Phase 5: near the edge the current pushes back; touching it says why (design §1.5c)
+    const edgeD = Math.min(p.x - WORLD.minX, WORLD.maxX - p.x, p.z - WORLD.minZ, WORLD.maxZ - p.z);
+    let edgePushed = false, edgeShore = false;
+    if (edgeD < 12) {
+      const k = Math.max(0.05, edgeD / 12);
+      if (p.x - WORLD.minX < 12 && this.vel.x < 0) { this.vel.x *= k; edgePushed = true; }
+      if (WORLD.maxX - p.x < 12 && this.vel.x > 0) { this.vel.x *= k; edgePushed = true; }
+      if (p.z - WORLD.minZ < 12 && this.vel.z < 0) { this.vel.z *= k; edgePushed = true; edgeShore = true; }
+      if (WORLD.maxZ - p.z < 12 && this.vel.z > 0) { this.vel.z *= k; edgePushed = true; }
+    }
+    const preX = p.x, preZ = p.z;
     p.x = clamp(p.x, WORLD.minX, WORLD.maxX);
     p.z = clamp(p.z, WORLD.minZ, WORLD.maxZ);
+    // the pushback alone stops the player asymptotically, so the clamp rarely
+    // bites: being held at the wall by the pushback counts as touching it too
+    if (((p.x !== preX || p.z !== preZ) || (edgePushed && edgeD < 3)) && this.time - this.lastEdgeWarn > 4) {
+      this.lastEdgeWarn = this.time;
+      this.toast(edgeShore || preZ < WORLD.minZ ? 'ここから先は浜。これ以上は進めない' : '潮の流れが強い。これ以上は進めない（ボートに戻れなくなる）', 'warn', 3);
+    }
     // corals, rocks and sponges are solid: slide around or over them instead of swimming through
     resolveSphere(p, 0.4, this.vel);
     this.flora.collideDynamic(p, 0.4, this.vel);
@@ -1508,7 +1534,7 @@ export class Game {
       this.toast(this.buff === 'nitsuke' ? '水温2℃！ まかないの煮付けのおかげで少しはましだが、エアの減りが1.5倍に' : '水温2℃！ 寒さで震えてエアの減りが3倍に（ドライスーツがあれば平気）', 'danger', 3.5);
     }
     const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : this.buff === 'fugu' ? 0.9 : 1)
-      * (1 + Math.min(PENALTY.carryAirMax, this.carryKg * PENALTY.carryAirPerKg)) * (this.tut.step >= 0 ? 0.5 : 1);
+      * (1 + Math.min(PENALTY.carryAirMax, this.carryKg * PENALTY.carryAirPerKg)) * (this.tut.step >= 0 ? 0.5 : 1) * (!this.ads && this.has('oldreg') ? 0.9 : 1);
     this.air = Math.max(0, this.air - rate * dt);
     if (this.frame % 10 === 0) this.exploreCheck(p);
     const picked = this.finds.update(this.time, p);
@@ -1581,6 +1607,9 @@ export class Game {
     this.vmBar.position.z = -0.28 - Math.sin((this.barJab / 0.25) * Math.PI) * 0.18;
     // the netted turtle: within reach the shutter button cuts; the knife then makes its strokes on its own (Phase 3)
     this.cutReady = this.tool === 'camera' && this.pryIdx === null && this.missions.cutReady(p);
+    // Phase 5: treasure chests — the shutter button opens one within reach
+    const nearChest = this.chests.update(p, dt);
+    this.chestReady = this.tool === 'camera' && this.pryIdx === null && !this.cutReady ? nearChest : null;
     const cutK = this.missions.cutProgress();
     this.vmKnife.visible = cutK !== null || this.cutReady;
     if (cutK !== null) {
@@ -1612,6 +1641,8 @@ export class Game {
     } else if (this.cutReady && inp.consume('shutter')) {
       this.missions.startCut();
       this.audio.chime(false);
+    } else if (this.chestReady && inp.consume('shutter')) {
+      this.openChest(this.chestReady);
     } else if (cutK !== null && inp.consume('shutter')) {
       // the strokes are already under way
     } else if (this.pryIdx !== null && inp.consume('shutter')) {
@@ -1949,7 +1980,7 @@ export class Game {
     this.shake = Math.max(this.shake, 0.5);
     const el = $('discover');
     el.classList.remove('hidden', 'known');
-    ($('disc-photo') as HTMLImageElement).src = photo;
+    const dp = $('disc-photo') as HTMLImageElement; dp.style.display = ''; dp.src = photo;
     $('disc-tag').textContent = first ? '実績解除！ 特別な光景' : '特別な光景';
     $('disc-name').textContent = SCENES[id].name;
     $('disc-sci').textContent = first ? 'めったに見られない瞬間を撮った！' : 'また出会えた！';
@@ -1993,7 +2024,7 @@ export class Game {
     this.freezeT = 0.2;
     const el = $('discover');
     el.classList.remove('hidden', 'known');
-    ($('disc-photo') as HTMLImageElement).src = photo;
+    const dp = $('disc-photo') as HTMLImageElement; dp.style.display = ''; dp.src = photo;
     $('disc-tag').textContent = '写真スポット';
     $('disc-name').textContent = s.name;
     $('disc-sci').textContent = s.desc;
@@ -2001,6 +2032,51 @@ export class Game {
     $('disc-grade').classList.add('hidden');
     this.discoverTimer = 4;
     return true;
+  }
+
+  /** Phase 5: open a permanent treasure chest. Saved at once, like sights and the dex. */
+  private openChest(id: string): void {
+    const def = CHESTS.find((c) => c.id === id);
+    if (!def || (this.save.chests ?? []).includes(id)) return;
+    this.save.chests = [...(this.save.chests ?? []), id];
+    this.chests.open(id);
+    this.audio.chime(true);
+    this.freezeT = 0.25;
+    this.shake = Math.max(this.shake, 0.4);
+    if (def.gear) {
+      this.save.owned = [...new Set([...(this.save.owned ?? []), def.gear])];
+      const g = CHEST_GEAR[def.gear];
+      this.chestCard('宝箱で見つけた装備', g.name, g.desc, '');
+    } else {
+      // a page of an old notebook: an unphotographed sight, this map's first, unhinted first
+      const unshot = (Object.keys(SCENES) as SceneId[]).filter((x) => !this.save.scenes?.[x]);
+      const hinted = new Set(this.save.sceneHints ?? []);
+      const pick = unshot.find((x) => SCENES[x].points.includes(def.map) && !hinted.has(x))
+        ?? unshot.find((x) => SCENES[x].points.includes(def.map))
+        ?? unshot.find((x) => !hinted.has(x))
+        ?? unshot[0];
+      if (pick) {
+        this.save.sceneHints = [...hinted, pick];
+        this.chestCard('古い手記の切れはし', SCENES[pick].name, SCENES[pick].note, '');
+      } else {
+        this.save.money = (this.save.money ?? 0) + CHEST.silver;
+        this.chestCard('宝箱', '古い銀貨', '手記はもう残っていなかった。代わりに古い銀貨が入っていた', `+${yen(CHEST.silver)}`);
+      }
+    }
+    this.writeSave();
+  }
+
+  /** The discover card, without a photo (treasure contents). */
+  private chestCard(tag: string, name: string, text: string, pay: string): void {
+    const el = $('discover');
+    el.classList.remove('hidden', 'known');
+    ($('disc-photo') as HTMLImageElement).style.display = 'none';
+    $('disc-tag').textContent = tag;
+    $('disc-name').textContent = name;
+    $('disc-sci').textContent = text;
+    $('disc-pay').textContent = pay;
+    $('disc-grade').classList.add('hidden');
+    this.discoverTimer = 5;
   }
 
   private showDiscover(id: string, photo: string, isNew: boolean, ev?: ReturnType<typeof evaluateShot>, paid = 0, better?: Shot, record = false): void {
@@ -2047,7 +2123,7 @@ export class Game {
       if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
       this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.sceneMarks(), ...this.spotMarks(), ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo' && q.id !== this.activeQuest).map((q) => ({ x: q.x, z: q.z, rare: true, r: QUEST.arrive }))];
     }
-    this.minimap?.update(p.x, p.z, this.yaw, this.boatPos());
+    this.minimap?.update(p.x, p.z, this.yaw, this.boatPos(), false, this.has('compass'));
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
 
     this.refreshBaitUi();
@@ -2070,6 +2146,13 @@ export class Game {
       ret.classList.add('lock');
       ret.classList.remove('far');
       lab.innerHTML = `${g.rt.def.name}に絡まれた！<small>シャッター連打で振りほどく（あと${Math.max(0, g.need - g.taps)}回）</small>`;
+      $('btn-shutter').classList.add('ready');
+      return this.updateToasts(dt);
+    }
+    if (this.chestReady) {
+      ret.classList.add('lock');
+      ret.classList.remove('far');
+      lab.innerHTML = `宝箱<small>タップで開ける</small>`;
       $('btn-shutter').classList.add('ready');
       return this.updateToasts(dt);
     }
@@ -2218,7 +2301,7 @@ export class Game {
       offshore: { x: 0, y: -12, z: 520, yaw: Math.PI, pitch: 0.05 },
       cold: { x: -300, y: -7, z: 170, yaw: Math.PI * 0.9, pitch: -0.2 },
       ruins: { x: -330, y: -12, z: 445, yaw: Math.PI, pitch: -0.15 },
-      bluehole: { x: -330, y: -9, z: 652, yaw: Math.PI, pitch: -0.45 },
+      bluehole: { x: BLUEHOLE.x, y: -9, z: BLUEHOLE.z - 55, yaw: Math.PI, pitch: -0.45 },
       cave: { x: -326, y: -20, z: 856, yaw: Math.PI * 0.82, pitch: -0.05 },
       kelp: { x: 330, y: -8, z: 150, yaw: Math.PI, pitch: 0.1 },
       surface: { x: 0, y: -4, z: 480, yaw: Math.PI, pitch: 0.75 },
@@ -2231,6 +2314,16 @@ export class Game {
       spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r }; }),
       startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag') => { this.missions.force = k; },
       currents: () => this.currents,
+      /** Phase 5: treasure chests (id, position, opened) */
+      chests: () => this.chests.list(),
+      openChest: (id: string) => { this.openChest(id); },
+      goChest: (id: string) => {
+        const c = this.chests.list().find((x) => x.id === id);
+        if (!c) return null;
+        this.camera.position.set(c.x + 1.2, c.y + 0.7, c.z);
+        this.terrain.prime(c.x, c.z, 80);
+        return c;
+      },
       currentF: () => this.currentF,
       showcase: (id: string, dist = 2, side = 1) => {
         const cam = this.camera;

@@ -41,7 +41,6 @@
           </div>
           <button id="dex-chip" class="glass chip" type="button" aria-label="図鑑">
             <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-4.5A2.5 2.5 0 0 0 13 6.5V20a2.5 2.5 0 0 1 2.5-2.5H20z"/></svg>
-            <span><b id="dex-count">0</b>/<span id="dex-total">33</span></span>
             <i id="dex-new" class="hidden">+0</i>
           </button>
           <div id="cash" class="glass chip" aria-label="今回のダイブの写真の売上"><b id="cash-val">¥0</b></div>
@@ -121,7 +120,7 @@
           <div class="row-actions">
             <button id="open-dex" type="button" class="btn sec">
               <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-4.5A2.5 2.5 0 0 0 13 6.5V20a2.5 2.5 0 0 1 2.5-2.5H20z"/></svg>
-              図鑑 <b id="t-dex">0/33</b>
+              図鑑
             </button>
             <button id="toggle-sound" type="button" class="btn sec icon-only" aria-label="サウンド">
               <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="snd-wave" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>
@@ -166,6 +165,7 @@
           <div id="shop-status" class="k-status"></div>
           <div class="panel tank" id="tank"></div>
           <div class="panel gear" id="gear"></div>
+          <div class="panel hidden" id="treasure-gear"></div>
           <p class="note">装備は図鑑を埋めると入荷し、写真や料理で稼いだお金で買う。漁具はしおさい亭の評判で入荷する。</p>
         </div>
       </section>
@@ -225,7 +225,6 @@
         <div class="dex-wrap">
           <header class="dex-head">
             <h2>海の生き物図鑑</h2>
-            <span class="dex-prog"><b id="dx-count">0</b> / <span id="dx-total">33</span></span>
             <button id="dex-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" fill="none"/></svg></button>
           </header>
           <div id="dex-grid"></div>

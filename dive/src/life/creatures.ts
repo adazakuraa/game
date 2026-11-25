@@ -6,7 +6,7 @@ import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
-import { caveRoofAt, heightFast, VENT } from '../world/layout';
+import { caveRoofAt, caveTopAt, heightFast, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
 import { resolveCapsule, resolveSphere, segmentBlocked } from '../world/colliders';
@@ -424,6 +424,7 @@ export class Creatures {
     else if (reg === 'bommieSpots') p = fromList(homes.bommieSpots);
     else if (reg === 'coldSpots') p = fromList(homes.coldSpots);
     else if (reg === 'caveSpots') p = fromList(homes.caveSpots);
+    else if (reg === 'caveTopSpots') p = fromList(homes.caveTopSpots);
     else if (reg === 'kelpSpots') p = fromList(homes.kelpSpots);
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
@@ -506,8 +507,13 @@ export class Creatures {
     }
     if (b.anchor === 'home') out.y = g.home.y + rnd(b.lo, b.hi);
     else if (b.anchor === 'abs') out.y = rnd(b.lo, b.hi);
-    else out.y = Math.min(heightFast(out.x, out.z) + rnd(b.lo, b.hi), -0.8);
+    else out.y = Math.min(this.groundY(def, out.x, out.z) + rnd(b.lo, b.hi), -0.8);
     return true;
+  }
+
+  /** Ground under an animal: cave-top sand species stand on the plateau, not in the trench below. */
+  private groundY(def: SpeciesDef, x: number, z: number): number {
+    return def.region === 'caveTopSpots' ? (caveTopAt(x, z) ?? heightFast(x, z)) : heightFast(x, z);
   }
 
   /** Animals that live on the bottom and must sit on it (sand, rock or coral), never hover. */
@@ -518,7 +524,7 @@ export class Creatures {
 
   /** Height at which a benthic animal rests on the real surface (terrain or rock / coral top). */
   private restY(def: SpeciesDef, x: number, z: number, s: number): number {
-    const base = surfaceAt(x, z);
+    const base = def.region === 'caveTopSpots' ? (caveTopAt(x, z) ?? surfaceAt(x, z)) : surfaceAt(x, z);
     return base + (def.kind === 'fish' ? s * 0.1 : def.kind === 'octopus' ? s * 0.08 : 0.005);
   }
 
@@ -585,7 +591,7 @@ export class Creatures {
         } else {
           // goby hovering over its burrow (or a tube worm fixed on coral)
           a.p.set(g.home.x + (r() - 0.5) * 1.2, 0, g.home.z + (r() - 0.5) * 1.2);
-          a.p.y = def.anchorHome ? g.home.y + (r() - 0.5) * 0.2 : heightFast(a.p.x, a.p.z) + 0.12 + a.s * 0.3;
+          a.p.y = def.anchorHome ? g.home.y + (r() - 0.5) * 0.2 : this.groundY(def, a.p.x, a.p.z) + 0.12 + a.s * 0.3;
           if (def.anchorHome) a.fixed = true;
         }
       } else if (def.behavior === 'crevice') {
@@ -1389,11 +1395,11 @@ export class Creatures {
         // keep a minimum cruising speed for pelagics so they never hover
         if (def.behavior === 'pelagic' && vl < def.speed * 0.4) a.v.add(_v2.set(Math.sin(a.yaw), 0, Math.cos(a.yaw)).multiplyScalar(def.speed * 0.4 * dt * 3));
         a.p.addScaledVector(a.v, dt);
-        const gy = heightFast(a.p.x, a.p.z);
+        const gy = this.groundY(def, a.p.x, a.p.z);
         const minY = gy + Math.max(0.06, def.behavior === 'bottom' ? this.altitude(def) : def.hab === 'sandForage' ? a.s * 0.15 : a.s * 0.3);
         if (a.p.y < minY) { a.p.y = minY; a.v.y = Math.max(a.v.y, 0); }
         if (a.p.y > -0.4) { a.p.y = -0.4; a.v.y = Math.min(a.v.y, 0); }
-        if (a.p.x < -240 && a.p.z > 820) {
+        if (a.p.x < -240 && a.p.z > 820 && def.region !== 'caveTopSpots') {
           const rf = caveRoofAt(a.p.x, a.p.z);
           if (rf !== null && a.p.y > rf - 0.3 && a.p.y < -2) { a.p.y = rf - 0.3; a.v.y = Math.min(a.v.y, 0); }
         }
