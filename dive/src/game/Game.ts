@@ -89,6 +89,11 @@ export class Game {
   private frame = 0;
   private titleT = 0;
   private narc = 0;
+  /** Phase 6: seconds spent in the narcosis blackout band (narc >= 0.83) */
+  private narcDeepT = 0;
+  /** Phase 6: narcosis stage-2 disorientation: time left of the current instrument blur, and until the next */
+  private narcBlur = 0;
+  private narcBlurT = 0;
   private lastWarn = 0;
   /** Phase 5: last time the world's edge said "no further" */
   private lastEdgeWarn = -100;
@@ -150,7 +155,7 @@ export class Game {
   /** species photographed (B or better) in each zone this dive, for surveys */
   private surveySeen = new Map<string, Set<string>>();
   /** diner urchin harvest: a short dive that returns straight to the diner */
-  private quick: { kind: 'urchin'; started: boolean; done?: boolean; ok?: boolean } | null = null;
+  private quick: { kind: 'urchin'; started: boolean; done?: boolean; ok?: boolean; night0?: boolean } | null = null;
   private missions!: Missions;
   /** request rewards earned this dive */
   private bonuses: { label: string; value: number }[] = [];
@@ -907,7 +912,7 @@ export class Game {
     if (open) {
       this.input.reset();
       const p = this.camera.position;
-      this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
+      this.minimap.drawBig(p.x, p.z, this.displayYaw(), this.boatPos());
     }
   }
 
@@ -965,7 +970,7 @@ export class Game {
   private quickUrchin(): void {
     const dp = DIVE_POINTS.find((d) => d.id === 'rocky')!;
     $('kitchen').classList.add('hidden');
-    this.quick = { kind: 'urchin', started: false };
+    this.quick = { kind: 'urchin', started: false, night0: nightOf(this.save.clock ?? 0) >= 0.5 };
     this.startDive(dp, true);
   }
 
@@ -1255,7 +1260,7 @@ export class Game {
     }
   }
 
-  private endDive(reason: 'surface' | 'blackout'): void {
+  private endDive(reason: 'surface' | 'blackout' | 'narcosis'): void {
     if (this.state !== 'diving' && this.state !== 'paused') return;
     const before = this.foundCount;
     const shots = [...this.pending.entries()];
@@ -1317,8 +1322,8 @@ export class Game {
     if (this.minimap) this.minimap.open = false;
     $('mask').classList.remove('on');
     $('result').classList.remove('hidden');
-    $('res-kicker').textContent = reason === 'surface' ? 'SURFACED' : 'BLACKOUT';
-    $('res-title').textContent = reason === 'surface' ? '無事に浮上しました' : 'エア切れで気絶… 救助されました';
+    $('res-kicker').textContent = reason === 'surface' ? 'SURFACED' : reason === 'narcosis' ? 'NARCOSIS' : 'BLACKOUT';
+    $('res-title').textContent = reason === 'surface' ? '無事に浮上しました' : reason === 'narcosis' ? '窒素酔いで意識を失った… 救助されました' : 'エア切れで気絶… 救助されました';
     const m = Math.floor(this.diveTime / 60);
     const s = Math.floor(this.diveTime % 60);
     $('res-stats').innerHTML = `<div>潜水時間<b>${m}:${String(s).padStart(2, '0')}</b></div><div>新種<b>${after - before}</b></div><div>写真の売上<b id="res-earn">¥0</b></div>`;
@@ -1346,7 +1351,7 @@ export class Game {
     }
     if (seized.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">漁協の見回りに見つかった！ 保護されている${seized.map((c) => SPECIES_BY_ID.get(c.id)!.name).join('・')}は没収、罰金 ${yen(fine)}。しおさい亭の評判も下がってしまった…</div>`);
     for (const { k, loot } of opened) list.insertAdjacentHTML('beforeend', `<div class="res-find">拾った「${FIND_NAME[k]}」を開けてみると…<span class="open">${loot.text}${loot.yen ? `　<b>+${yen(loot.yen)}</b>` : ''}</span></div>`);
-    if (reason === 'blackout' && this.diveFinds.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">拾った物は気絶したときに落としてしまった。</div>`);
+    if (reason !== 'surface' && this.diveFinds.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">拾った物は気絶したときに落としてしまった。</div>`);
     this.diveCatch = [];
     this.diveFinds = [];
     const ready = this.kitchen.readyCount();
@@ -1354,6 +1359,7 @@ export class Game {
     $('res-kitchen').textContent = ready ? `しおさい亭で料理する（${ready}件の注文が作れる！）` : 'しおさい亭で料理する';
     if (!shots.length && !this.bonuses.length && caught.length) list.querySelector('.res-empty')?.remove();
     this.missions.reset();
+    if (reason === 'narcosis' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">窒素酔いで意識を失い、救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。55mより深く長く潜りすぎないようにしよう。</div>`);
     if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
     const stockedNow = SHOP.filter((g) => !this.has(g.id) && !g.rep && !this.save.stocked?.includes(g.id) && g.need > before && this.stockGap(g) === 0);
     const affordable = SHOP.filter((g) => !this.has(g.id) && this.stockGap(g) === 0 && this.save.money! >= g.price && (moneyBefore < g.price || stockedNow.includes(g)));
@@ -1364,14 +1370,20 @@ export class Game {
     ].join('<br>') || (goal ? `<span class="res-goal">所持金 ${yen(this.save.money!)}　次の目標${goal.species > 0 ? `「？」入荷まで図鑑あと${goal.species}種` : `「${goal.name}」まであと${yen(goal.need)}`}</span>` : '');
     if (affordable.length || stockedNow.length || earn > 0) this.audio.chime(affordable.length + stockedNow.length > 0);
     if (this.quick) {
-      // the diner's harvest: no result screen, straight back to the shop
+      // the diner's harvest: no result screen, straight back to the shop — unless the
+      // time of day changed during the dive, then back to the menu (tracker Phase 6)
       const ok = !!this.quick.ok;
+      const dayChanged = (nightOf(this.save.clock ?? 0) >= 0.5) !== (this.quick.night0 ?? false);
       this.quick = null;
       if (ok) { this.save.rep = (this.save.rep ?? 0) + 1; this.writeSave(); }
       $('result').classList.add('hidden');
       this.toTitle();
-      this.kitchen.open();
-      this.kitchen.harvestResult(ok, earn);
+      if (dayChanged) {
+        this.toast(ok ? 'ウニ漁は成功した。時間帯が変わったのでメニューに戻る' : 'ウニ漁は失敗だった。時間帯が変わったのでメニューに戻る', ok ? '' : 'warn', 3.5);
+      } else {
+        this.kitchen.open();
+        this.kitchen.harvestResult(ok, earn);
+      }
     }
   }
 
@@ -1525,7 +1537,7 @@ export class Game {
     }
 
     // air
-    const d = Math.max(0, -p.y);
+    const d = this.bodyDepth();
     const moving = this.vel.length() > 0.5 ? 1.15 : 1;
     // cold cove without a drysuit: shivering triples air use
     const inCold = !this.ads && zoneAt(p.x, p.z) === 'cold';
@@ -1570,6 +1582,16 @@ export class Game {
     this.diveMaxDepth = Math.max(this.diveMaxDepth, d);
     this.narc = this.ads ? 0 : clamp((d - 40) / 18, 0, 1);
     this.env.narcosis = this.narc;
+    // Phase 6: stage 2 — the instruments lie briefly (disorientation); stage 3 — blackout
+    if (!this.ads && this.narc >= 0.55) {
+      this.narcBlurT -= dt;
+      if (this.narcBlurT <= 0) { this.narcBlur = 0.4; this.narcBlurT = 2.2 + Math.random() * 1.6; }
+    }
+    if (this.narcBlur > 0) this.narcBlur -= dt;
+    if (!this.ads && this.narc >= 0.83) {
+      this.narcDeepT += dt;
+      if (this.narcDeepT >= 10) { this.narcDeepT = 0; this.endDive('narcosis'); }
+    } else this.narcDeepT = Math.max(0, this.narcDeepT - 2 * dt);
     if (this.air <= 0) this.endDive('blackout');
     else if (this.air < 50 && this.time - this.lastWarn > 6) {
       this.audio.warn();
@@ -2103,17 +2125,28 @@ export class Game {
     this.discoverTimer = isNew ? 4.5 : 2.5;
   }
 
+  private static readonly _fwd = new THREE.Vector3();
+  /** Phase 6: the depth of the centre of the (horizontal, ~1.7 m) body, not the head:
+      the centre sits 0.85 m behind the eyes along the look axis. */
+  private bodyDepth(): number {
+    const p = this.camera.position;
+    this.camera.getWorldDirection(Game._fwd);
+    return Math.max(0, -p.y + Game._fwd.y * 0.85);
+  }
+  /** Phase 6: the heading the instruments show — narcosis stage 2 falsifies it briefly. */
+  private displayYaw(): number { return this.yaw + (this.narcBlur > 0 ? 2.2 : 0); }
+
   private updateHud(dt: number): void {
     const p = this.camera.position;
-    const d = Math.max(0, -p.y);
+    const d = this.bodyDepth();
     $('depth-value').textContent = d.toFixed(1);
     $('max-depth').textContent = this.diveMaxDepth.toFixed(0);
     $('zone-name').textContent = ZONE_NAMES[zoneAt(p.x, p.z)];
-    const hdg = ((-this.yaw * 180) / Math.PI + 180 + 720) % 360; // 0 = offshore(+z)
+    const hdg = ((-this.displayYaw() * 180) / Math.PI + 180 + 720) % 360; // 0 = offshore(+z)
     const dirs = ['沖', '沖東', '東', '岸東', '岸', '岸西', '西', '沖西'];
     $('heading').textContent = `${dirs[Math.round(hdg / 45) % 8]} ${Math.round(hdg)}°`;
     $('depth-warn').classList.toggle('hidden', this.ads || (d < 40 && this.currentF < 0.1 && !this.cold));
-    $('depth-warn').textContent = this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い注意';
+    $('depth-warn').textContent = this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い：エア消費増・視界が揺れる';
     const frac = this.air / this.airMax;
     $('air-value').textContent = String(Math.ceil(this.air));
     $('air-ring').style.strokeDashoffset = String(169.6 * (1 - frac));
@@ -2121,11 +2154,12 @@ export class Game {
     air.classList.toggle('low', frac < 0.35 && this.air >= 50);
     air.classList.toggle('crit', this.air < 50);
     $('narc').style.opacity = String(this.narc * 0.8);
+    $('narc').classList.toggle('deep', this.narcDeepT >= 5);
     if (this.minimap && this.frame % 10 === 0) {
       if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
       this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.sceneMarks(), ...this.spotMarks(), ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo' && q.id !== this.activeQuest).map((q) => ({ x: q.x, z: q.z, rare: true, r: QUEST.arrive }))];
     }
-    this.minimap?.update(p.x, p.z, this.yaw, this.boatPos(), false, this.has('compass'));
+    this.minimap?.update(p.x, p.z, this.displayYaw(), this.boatPos(), false, this.has('compass'));
     if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
 
     this.refreshBaitUi();

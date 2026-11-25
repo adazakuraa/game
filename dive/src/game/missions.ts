@@ -21,7 +21,7 @@ export const MISSION = {
   checkEvery: 10,
   chance: 0.3,
   /** 【ウニ漁】points needed (ムラサキウニ 1, アカウニ 2), bonus yen per high-grade アカウニ */
-  urchin: { need: 8, time: 80, reward: 1500, coldReward: 2200, akaBonus: 400 },
+  urchin: { need: 8, time: 150, reward: 1500, coldReward: 2200, akaBonus: 400 },
   trash: { spawn: 8, need: 6, time: 80, reward: 1200 },
   photo: { time: 90, rewardMult: 4, minGrade: ['S', 'A', 'B'] },
   lost: { time: 100, reward: 2500, radius: 22 },
@@ -47,10 +47,10 @@ export const MISSION = {
  * prized grade and only a little shorter-spined and warmer in colour); two must not be touched.
  */
 export const URCHINS = [
-  { id: 'murasaki', name: 'ムラサキウニ', edible: true, pts: 1, n: 6, geo: { spine: 0.62, n: 90, thin: 0.03 }, color: 0x2a1832, emissive: 0x12061a, scale: 0.16, sting: 0, text: '' },
-  { id: 'aka', name: 'アカウニ', edible: true, pts: 2, n: 3, geo: { spine: 0.46, n: 110, thin: 0.03 }, color: 0x4e2422, emissive: 0x1a0806, scale: 0.17, sting: 0, text: '' },
-  { id: 'gangaze', name: 'ガンガゼ', edible: false, pts: 0, n: 4, geo: { spine: 1.7, n: 70, thin: 0.016 }, color: 0x141018, emissive: 0x06040a, scale: 0.15, sting: 10, text: 'ガンガゼの長いトゲが刺さった！ 痛い…（エア -10）' },
-  { id: 'rappa', name: 'ラッパウニ', edible: false, pts: 0, n: 3, geo: { spine: 0.2, n: 170, thin: 0.045 }, color: 0xc8a0ac, emissive: 0x2a1418, scale: 0.17, sting: 14, text: 'ラッパウニの毒でしびれる！（エア -14）' },
+  { id: 'murasaki', name: 'ムラサキウニ', edible: true, pts: 1, n: 12, geo: { spine: 0.62, n: 90, thin: 0.03 }, color: 0x2a1832, emissive: 0x12061a, scale: 0.16, sting: 0, text: '' },
+  { id: 'aka', name: 'アカウニ', edible: true, pts: 2, n: 6, geo: { spine: 0.46, n: 110, thin: 0.03 }, color: 0x4e2422, emissive: 0x1a0806, scale: 0.17, sting: 0, text: '' },
+  { id: 'gangaze', name: 'ガンガゼ', edible: false, pts: 0, n: 5, geo: { spine: 1.7, n: 70, thin: 0.016 }, color: 0x141018, emissive: 0x06040a, scale: 0.15, sting: 10, text: 'ガンガゼの長いトゲが刺さった！ 痛い…（エア -10）' },
+  { id: 'rappa', name: 'ラッパウニ', edible: false, pts: 0, n: 4, geo: { spine: 0.2, n: 170, thin: 0.045 }, color: 0xc8a0ac, emissive: 0x2a1418, scale: 0.17, sting: 14, text: 'ラッパウニの毒でしびれる！（エア -14）' },
 ] as const;
 
 export type Kind = 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag';
@@ -468,7 +468,7 @@ export class Missions {
           let x = ahead.x, z = ahead.z, a = 0;
           for (let tr = 0; tr < 40; tr++) {
             a = Math.random() * Math.PI * 2;
-            const d = 3 + Math.sqrt(Math.random()) * 24;
+            const d = 3 + Math.sqrt(Math.random()) * 32;
             x = ahead.x + Math.cos(a) * d; z = ahead.z + Math.sin(a) * d;
             if (this.items.every((q) => Math.hypot(q.x - x, q.z - z) > 3.2)) break;
           }
