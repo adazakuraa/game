@@ -36,6 +36,7 @@ svg { fill: currentColor; }
 #mask.on { opacity: 1; }
 #narc { position: absolute; inset: 0; pointer-events: none; opacity: 0;
   background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 30%, rgba(30,60,20,0.55) 100%); mix-blend-mode: multiply; }
+#narc.deep { background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 6%, rgba(8,26,6,0.92) 100%); }
 #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 #flash.go { animation: flash 0.45s ease-out; }
 #flash.hurt { background: #c0141e; }

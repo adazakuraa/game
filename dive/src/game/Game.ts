@@ -89,6 +89,11 @@ export class Game {
   private frame = 0;
   private titleT = 0;
   private narc = 0;
+  /** Phase 6: seconds spent in the narcosis blackout band (narc >= 0.83) */
+  private narcDeepT = 0;
+  /** Phase 6: narcosis stage-2 disorientation: time left of the current instrument blur, and until the next */
+  private narcBlur = 0;
+  private narcBlurT = 0;
   private lastWarn = 0;
   /** Phase 5: last time the world's edge said "no further" */
   private lastEdgeWarn = -100;
@@ -265,13 +270,29 @@ export class Game {
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
     $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
-    $('reset-save').addEventListener('click', () => {
-      if (!window.confirm('図鑑・お金・装備・ストーリーなど、すべての進行度を消して最初からやり直します。よろしいですか？')) return;
+    // Phase 7: two-tap confirm on the button itself — window.confirm is blocked
+    // inside the artifact iframe, which made these buttons look dead.
+    const armTap = (id: string, armedLabel: string, run: () => void) => {
+      const b = $<HTMLButtonElement>(id);
+      const label = b.textContent;
+      let armed = false;
+      let timer = 0;
+      b.addEventListener('click', () => {
+        if (!armed) {
+          armed = true;
+          b.textContent = armedLabel;
+          timer = window.setTimeout(() => { armed = false; b.textContent = label; }, 3500);
+          return;
+        }
+        window.clearTimeout(timer);
+        run();
+      });
+    };
+    armTap('reset-save', '本当にリセットする？', () => {
       try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ }
       window.location.reload();
     });
-    $('unlock-all').addEventListener('click', () => {
-      if (!window.confirm('デバッグ用：装備・漁具・海図・免許・ストーリー・評判・タンクをすべて解禁した状態にします（図鑑と実績はそのまま）。よろしいですか？')) return;
+    armTap('unlock-all', '本当に全解禁する？', () => {
       const sv = this.save;
       sv.owned = [...new Set([...(sv.owned ?? []), ...SHOP.map((g) => g.id), 'fugulicense'])];
       sv.discovered = DIVE_POINTS.map((d) => d.id);
@@ -663,6 +684,12 @@ export class Game {
     $('dex-chip').addEventListener('click', () => this.openDex());
     $('open-dex').addEventListener('click', () => this.openDex());
     $('dex-close').addEventListener('click', () => this.closeDex());
+    $('discover').addEventListener('click', () => {
+      const id = $('discover').dataset.dex;
+      if (!id) return;
+      $('discover').classList.add('hidden');
+      this.openDex(id);
+    });
     $('dd-close').addEventListener('click', () => $('dex-detail').classList.add('hidden'));
     $('surface-btn').addEventListener('click', () => this.endDive('surface'));
     $('res-ok').addEventListener('click', () => this.toTitle());
@@ -725,7 +752,7 @@ export class Game {
       gl.species > 0
         ? `「？」入荷まで図鑑あと <b>${gl.species}種</b>`
         : gl.need > 0
-          ? `「${gl.name}」まであと <b>${yen(gl.need)}</b>`
+          ? `「？」まであと <b>${yen(gl.need)}</b>`
           : `<span class="ok">「${gl.name}」が買える！ ショップへ</span>`;
     $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.foundCount}種</b><br>` + (goal ? goalText(goal) : '装備コンプリート') + (this.save.storyClaim?.length ? '<br><span class="ok">編集長の報酬を受け取っていない（下の章カードで受け取れる）</span>' : '');
     if (!$('shop').classList.contains('hidden')) this.renderShop();
@@ -836,7 +863,7 @@ export class Game {
     this.toastTimer = dur;
   }
 
-  private openDex(): void {
+  private openDex(at?: string): void {
     if (this.state === 'dex') return;
     this.stateBeforeDex = this.state;
     if (this.state === 'diving') this.paused = true;
@@ -868,6 +895,8 @@ export class Game {
       }
       grid.appendChild(g);
     }
+    // Phase 7: opened from a photo (result card / discover card) — go straight to the page
+    if (at && (this.save.found[at] || this.pending.has(at))) this.showDetail(at);
   }
 
   private showDetail(id: string): void {
@@ -907,7 +936,7 @@ export class Game {
     if (open) {
       this.input.reset();
       const p = this.camera.position;
-      this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
+      this.minimap.drawBig(p.x, p.z, this.displayYaw(), this.boatPos());
     }
   }
 
@@ -987,6 +1016,9 @@ export class Game {
       this.airMax = (this.ads ? 220 : AIR_TANK[this.save.airLv ?? 0].cap) * (this.buff === 'nabe' ? 1.2 : 1);
       this.air = this.airMax;
       this.diveTime = 0;
+      this.narcDeepT = 0;
+      this.narcBlur = 0;
+      this.narcBlurT = 0;
       this.diveMaxDepth = 0;
       this.diveShots = 0;
       this.pending.clear();
@@ -1255,7 +1287,7 @@ export class Game {
     }
   }
 
-  private endDive(reason: 'surface' | 'blackout'): void {
+  private endDive(reason: 'surface' | 'blackout' | 'narcosis'): void {
     if (this.state !== 'diving' && this.state !== 'paused') return;
     const before = this.foundCount;
     const shots = [...this.pending.entries()];
@@ -1317,8 +1349,8 @@ export class Game {
     if (this.minimap) this.minimap.open = false;
     $('mask').classList.remove('on');
     $('result').classList.remove('hidden');
-    $('res-kicker').textContent = reason === 'surface' ? 'SURFACED' : 'BLACKOUT';
-    $('res-title').textContent = reason === 'surface' ? '無事に浮上しました' : 'エア切れで気絶… 救助されました';
+    $('res-kicker').textContent = reason === 'surface' ? 'SURFACED' : reason === 'narcosis' ? 'NARCOSIS' : 'BLACKOUT';
+    $('res-title').textContent = reason === 'surface' ? '無事に浮上しました' : reason === 'narcosis' ? '窒素酔いで意識を失った… 救助されました' : 'エア切れで気絶… 救助されました';
     const m = Math.floor(this.diveTime / 60);
     const s = Math.floor(this.diveTime % 60);
     $('res-stats').innerHTML = `<div>潜水時間<b>${m}:${String(s).padStart(2, '0')}</b></div><div>新種<b>${after - before}</b></div><div>写真の売上<b id="res-earn">¥0</b></div>`;
@@ -1333,7 +1365,7 @@ export class Game {
     requestAnimationFrame(step);
     const list = $('res-list');
     list.innerHTML = shots.length
-      ? shots.map(([id, f]) => `<div class="res-card"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
+      ? shots.map(([id, f]) => `<div class="res-card" data-dex="${id}"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
     if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">${b.label}<b>${yen(b.value)}</b></div>`).join(''));
     // Phase 3: the editor's chapter was cleared on this dive — the reward is received on the boat
@@ -1346,14 +1378,16 @@ export class Game {
     }
     if (seized.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">漁協の見回りに見つかった！ 保護されている${seized.map((c) => SPECIES_BY_ID.get(c.id)!.name).join('・')}は没収、罰金 ${yen(fine)}。しおさい亭の評判も下がってしまった…</div>`);
     for (const { k, loot } of opened) list.insertAdjacentHTML('beforeend', `<div class="res-find">拾った「${FIND_NAME[k]}」を開けてみると…<span class="open">${loot.text}${loot.yen ? `　<b>+${yen(loot.yen)}</b>` : ''}</span></div>`);
-    if (reason === 'blackout' && this.diveFinds.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">拾った物は気絶したときに落としてしまった。</div>`);
+    if (reason !== 'surface' && this.diveFinds.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">拾った物は気絶したときに落としてしまった。</div>`);
     this.diveCatch = [];
     this.diveFinds = [];
     const ready = this.kitchen.readyCount();
     $('res-kitchen').classList.toggle('hidden', !caught.length);
     $('res-kitchen').textContent = ready ? `しおさい亭で料理する（${ready}件の注文が作れる！）` : 'しおさい亭で料理する';
     if (!shots.length && !this.bonuses.length && caught.length) list.querySelector('.res-empty')?.remove();
+    list.querySelectorAll<HTMLElement>('.res-card').forEach((c) => c.addEventListener('click', () => this.openDex(c.dataset.dex)));
     this.missions.reset();
+    if (reason === 'narcosis' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">窒素酔いで意識を失い、救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。55mより深く長く潜りすぎないようにしよう。</div>`);
     if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
     const stockedNow = SHOP.filter((g) => !this.has(g.id) && !g.rep && !this.save.stocked?.includes(g.id) && g.need > before && this.stockGap(g) === 0);
     const affordable = SHOP.filter((g) => !this.has(g.id) && this.stockGap(g) === 0 && this.save.money! >= g.price && (moneyBefore < g.price || stockedNow.includes(g)));
@@ -1364,7 +1398,8 @@ export class Game {
     ].join('<br>') || (goal ? `<span class="res-goal">所持金 ${yen(this.save.money!)}　次の目標${goal.species > 0 ? `「？」入荷まで図鑑あと${goal.species}種` : `「${goal.name}」まであと${yen(goal.need)}`}</span>` : '');
     if (affordable.length || stockedNow.length || earn > 0) this.audio.chime(affordable.length + stockedNow.length > 0);
     if (this.quick) {
-      // the diner's harvest: no result screen, straight back to the shop
+      // the diner's harvest: no result screen, straight back to the shop. After a
+      // harvest, changing the time of day leaves the diner for the menu (Phase 6).
       const ok = !!this.quick.ok;
       this.quick = null;
       if (ok) { this.save.rep = (this.save.rep ?? 0) + 1; this.writeSave(); }
@@ -1372,6 +1407,7 @@ export class Game {
       this.toTitle();
       this.kitchen.open();
       this.kitchen.harvestResult(ok, earn);
+      this.kitchen.leaveOnTimeChange = true;
     }
   }
 
@@ -1525,7 +1561,7 @@ export class Game {
     }
 
     // air
-    const d = Math.max(0, -p.y);
+    const d = this.bodyDepth();
     const moving = this.vel.length() > 0.5 ? 1.15 : 1;
     // cold cove without a drysuit: shivering triples air use
     const inCold = !this.ads && zoneAt(p.x, p.z) === 'cold';
@@ -1570,6 +1606,16 @@ export class Game {
     this.diveMaxDepth = Math.max(this.diveMaxDepth, d);
     this.narc = this.ads ? 0 : clamp((d - 40) / 18, 0, 1);
     this.env.narcosis = this.narc;
+    // Phase 6: stage 2 — the instruments lie briefly (disorientation); stage 3 — blackout
+    if (!this.ads && this.narc >= 0.55) {
+      this.narcBlurT -= dt;
+      if (this.narcBlurT <= 0) { this.narcBlur = 0.4; this.narcBlurT = 2.2 + Math.random() * 1.6; }
+    }
+    if (this.narcBlur > 0) this.narcBlur -= dt;
+    if (!this.ads && this.narc >= 0.83) {
+      this.narcDeepT += dt;
+      if (this.narcDeepT >= 10) { this.narcDeepT = 0; this.endDive('narcosis'); }
+    } else this.narcDeepT = Math.max(0, this.narcDeepT - 2 * dt);
     if (this.air <= 0) this.endDive('blackout');
     else if (this.air < 50 && this.time - this.lastWarn > 6) {
       this.audio.warn();
@@ -2027,6 +2073,7 @@ export class Game {
     const el = $('discover');
     el.classList.remove('hidden', 'known');
     const dp = $('disc-photo') as HTMLImageElement; dp.style.display = ''; dp.src = photo;
+    delete el.dataset.dex;
     $('disc-tag').textContent = '写真スポット';
     $('disc-name').textContent = s.name;
     $('disc-sci').textContent = s.desc;
@@ -2071,6 +2118,7 @@ export class Game {
   /** The discover card, without a photo (treasure contents). */
   private chestCard(tag: string, name: string, text: string, pay: string): void {
     const el = $('discover');
+    delete el.dataset.dex;
     el.classList.remove('hidden', 'known');
     ($('disc-photo') as HTMLImageElement).style.display = 'none';
     $('disc-tag').textContent = tag;
@@ -2084,6 +2132,7 @@ export class Game {
   private showDiscover(id: string, photo: string, isNew: boolean, ev?: ReturnType<typeof evaluateShot>, paid = 0, better?: Shot, record = false): void {
     const s = SPECIES_BY_ID.get(id)!;
     const el = $('discover');
+    el.dataset.dex = id;
     el.classList.remove('hidden');
     el.classList.toggle('known', !isNew);
     el.style.animation = 'none';
@@ -2103,17 +2152,28 @@ export class Game {
     this.discoverTimer = isNew ? 4.5 : 2.5;
   }
 
+  private static readonly _fwd = new THREE.Vector3();
+  /** Phase 6: the depth of the centre of the (horizontal, ~1.7 m) body, not the head:
+      the centre sits 0.85 m behind the eyes along the look axis. */
+  private bodyDepth(): number {
+    const p = this.camera.position;
+    this.camera.getWorldDirection(Game._fwd);
+    return Math.max(0, -p.y + Game._fwd.y * 0.85);
+  }
+  /** Phase 6: the heading the instruments show — narcosis stage 2 falsifies it briefly. */
+  private displayYaw(): number { return this.yaw + (this.narcBlur > 0 ? 2.2 : 0); }
+
   private updateHud(dt: number): void {
     const p = this.camera.position;
-    const d = Math.max(0, -p.y);
+    const d = this.bodyDepth();
     $('depth-value').textContent = d.toFixed(1);
     $('max-depth').textContent = this.diveMaxDepth.toFixed(0);
     $('zone-name').textContent = ZONE_NAMES[zoneAt(p.x, p.z)];
-    const hdg = ((-this.yaw * 180) / Math.PI + 180 + 720) % 360; // 0 = offshore(+z)
+    const hdg = ((-this.displayYaw() * 180) / Math.PI + 180 + 720) % 360; // 0 = offshore(+z)
     const dirs = ['沖', '沖東', '東', '岸東', '岸', '岸西', '西', '沖西'];
     $('heading').textContent = `${dirs[Math.round(hdg / 45) % 8]} ${Math.round(hdg)}°`;
     $('depth-warn').classList.toggle('hidden', this.ads || (d < 40 && this.currentF < 0.1 && !this.cold));
-    $('depth-warn').textContent = this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い注意';
+    $('depth-warn').textContent = this.narcDeepT > 0 ? '窒素酔い：このままでは意識を失う' : this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い：エア消費増・視界が揺れる';
     const frac = this.air / this.airMax;
     $('air-value').textContent = String(Math.ceil(this.air));
     $('air-ring').style.strokeDashoffset = String(169.6 * (1 - frac));
@@ -2121,12 +2181,13 @@ export class Game {
     air.classList.toggle('low', frac < 0.35 && this.air >= 50);
     air.classList.toggle('crit', this.air < 50);
     $('narc').style.opacity = String(this.narc * 0.8);
+    $('narc').classList.toggle('deep', this.narcDeepT >= 5);
     if (this.minimap && this.frame % 10 === 0) {
       if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
       this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.sceneMarks(), ...this.spotMarks(), ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo' && q.id !== this.activeQuest).map((q) => ({ x: q.x, z: q.z, rare: true, r: QUEST.arrive }))];
     }
-    this.minimap?.update(p.x, p.z, this.yaw, this.boatPos(), false, this.has('compass'));
-    if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
+    this.minimap?.update(p.x, p.z, this.displayYaw(), this.boatPos(), false, this.has('compass'));
+    if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.displayYaw(), this.boatPos());
 
     this.refreshBaitUi();
     const sb = $('surface-btn');
