@@ -36,6 +36,8 @@ type Save = LandSave & {
   /** requests on the notice board, and the ones taken */
   board?: Quest[];
   quests?: Quest[];
+  /** the notice board has been mentioned by the landlady (shown on the boat), and its how-to has been read */
+  boardOn?: boolean; boardIntro?: boolean;
   questsDone?: number;
  found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
@@ -113,7 +115,7 @@ export class Game {
   private pryIdx: number | null = null;
   private barJab = 0;
   /** first-dive tutorial: current step (-1 = off) */
-  private tut = { step: -1, t: 0, moved: 0, looked: 0, praise: 0, from: new THREE.Vector3() };
+  private tut = { step: -1, t: 0, moved: 0, looked: 0, praise: 0, down: 0, depth0: 0, repeat: 0, from: new THREE.Vector3() };
   private nightAnnounced = 0;
   private lastDt = 0;
   private questT = 0;
@@ -206,6 +208,15 @@ export class Game {
       this.camera.add(m);
     }
     $('coach-skip').addEventListener('click', () => this.endTutorial());
+    $('pr-go').addEventListener('click', () => {
+      this.audio.unlock();
+      $('prologue').classList.add('hidden');
+      this.save.storyRead = Math.max(this.save.storyRead ?? -1, 0);
+      this.writeSave();
+      this.paused = false;
+      this.clock.getDelta();
+      this.showCoach();
+    });
     this.kitchen = new Kitchen({
       save: this.save,
       write: () => this.writeSave(),
@@ -215,6 +226,8 @@ export class Game {
       known: (id) => !!this.save.found[id],
       grantMap: (id) => this.grantMap(id),
       urchinDive: () => this.quickUrchin(),
+      hasTorch: () => this.hasTorch(),
+      progress: () => ({ found: this.foundCount, chapter: this.save.storyMain ?? 0, spear: this.has('spear') }),
     });
     this.kitchen.ensureOrders();
     this.audio.onExhale = () => {
@@ -241,6 +254,7 @@ export class Game {
       sv.storyRead = CHAPTERS.length;
       sv.airLv = AIR_TANK.length - 1;
       sv.tutorial = true;
+      sv.boardOn = true;
       sv.dives = Math.max(sv.dives, 1);
       this.writeSave();
       window.location.reload();
@@ -287,6 +301,8 @@ export class Game {
           sv.owned = SHOP.filter((g) => n >= (LEGACY_NEED[g.id] ?? 1e9)).map((g) => g.id);
           sv.money = 0;
         }
+        // Phase 1: saves from before the inn and the board intro keep the board, and skip the landlady's first hello
+        if (sv.dives > 0) { sv.boardOn ??= true; sv.okami ??= { lore: 1 }; }
         if (sv.airLv === undefined) sv.airLv = sv.owned?.includes('tank') ? 4 : sv.dives > 0 ? 2 : 0;
         if (!sv.discovered) {
           // earlier saves: every place where something was already photographed counts as found
@@ -385,7 +401,7 @@ export class Game {
       this.save.money = (this.save.money ?? 0) + ch.reward;
       if (ch.map) this.grantMap(ch.map);
       const mapName = ch.map ? DIVE_POINTS.find((d) => d.id === ch.map)?.name : '';
-      this.storyCleared.push(`第${(this.save.storyMain ?? 0) + 1}章「${ch.title}」クリア！ 写真家の評価：<b>${ch.title2}</b>${ch.reward ? `　報酬 ${yen(ch.reward)}` : ''}${mapName ? `　海図「${mapName}」をもらった` : ''}`);
+      this.storyCleared.push(`第${(this.save.storyMain ?? 0) + 1}章「${ch.title}」クリア！ 写真家の評価：<b>${ch.title2}</b>${ch.reward ? `　報酬 <b>${yen(ch.reward)}</b>` : ''}${mapName ? `　海図「${mapName}」をもらった` : ''}${ch.praise ? `<div class="sc-praise">${ch.praise}</div>` : ''}`);
       this.save.storyMain = (this.save.storyMain ?? 0) + 1;
       this.writeSave();
       this.audio.chime(true);
@@ -406,6 +422,12 @@ export class Game {
     this.fillBoard();
     this.writeSave();
     const held = this.save.quests ?? [];
+    const intro = $('q-intro');
+    intro.classList.toggle('hidden', !!this.save.boardIntro);
+    if (!this.save.boardIntro) {
+      intro.innerHTML = `<b>依頼の掲示板</b>しおさい亭の女将さんが貼ってくれた、島の人からの頼みごと。<ul><li>「受ける」と、潜ったときのマップに場所が金色の円で出る</li><li>円の中に入ると依頼が始まる（写真や調査の依頼は、条件どおりに撮れば達成）</li><li>同時に受けられるのは${QUEST.maxHeld}件まで。達成すると、浮上したときに報酬がもらえる</li></ul><button type="button" class="btn sec" id="q-intro-ok">わかった</button>`;
+      $('q-intro-ok').addEventListener('click', () => { this.save.boardIntro = true; this.writeSave(); this.renderQuests(); });
+    }
     const card = (q: Quest, act: string) => `<div class="k-item"><div><div class="who">${q.giver}　<span class="q-place">${ZONE_NAMES[q.zone]}</span></div><div class="what">${q.title}</div><div class="hint">${q.desc}</div><div class="pay">報酬 ${yen(q.reward)}</div></div><div class="acts">${act}</div></div>`;
     $('q-held').innerHTML = held.length ? held.map((q) => card(q, `<button type="button" class="btn sec" data-drop="${q.id}">やめる</button>`)).join('') : '<div class="k-empty">まだ依頼を受けていない。受けた依頼の場所は、潜ったときのマップに金色の円で出る。円に入ると始まる。</div>';
     const full = held.length >= QUEST.maxHeld;
@@ -492,7 +514,7 @@ export class Game {
     const unread = (this.save.storyRead ?? -1) < i;
     el.innerHTML = `<div class="sc-kicker">第${i + 1}章　${i > 0 ? `写真家の評価：${CHAPTERS[i - 1].title2}` : '駆け出しの海中写真家'}</div>${cleared}<div class="sc-title">${ch.title}</div>` +
       (unread ? `<div class="sc-intro">${ch.intro}</div><button type="button" class="btn sec" id="sc-ok">了解</button>` : '') +
-      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}</div>${ch.scene && this.save.scenes?.[ch.scene] ? '' : ''}${album}`;
+      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${ch.scene && this.save.scenes?.[ch.scene] ? '' : ''}${album}`;
     if (unread) document.getElementById('sc-ok')!.addEventListener('click', () => { this.save.storyRead = i; this.storyCleared = []; this.writeSave(); this.renderStory(); });
   }
 
@@ -600,7 +622,10 @@ export class Game {
     }
     this.renderDaytime();
     const spear = this.has('spear');
-    $('open-kitchen').classList.toggle('hidden', !spear);
+    $('open-kitchen').classList.toggle('hidden', !this.save.tutorial);
+    $('open-quests').classList.toggle('hidden', !this.save.boardOn);
+    $('quest-badge').textContent = this.save.boardOn && !this.save.boardIntro ? 'NEW' : '';
+    if (!spear) $('k-badge').textContent = nightOf(this.save.clock ?? 0) >= 0.5 ? '休む' : '';
     if (spear) {
       const ready = this.kitchen.readyCount();
       const lv = repLevel(this.save.rep ?? 0);
@@ -699,32 +724,20 @@ export class Game {
     );
   }
 
-  /** Time of day on the boat: night falls with time spent diving; later the player may choose. */
+  /** Time of day on the boat: shown here, changed in the diner (sleep till morning / go out at night). */
   private renderDaytime(): void {
     const c = this.save.clock ?? 0;
-    const free = repLevel(this.save.rep ?? 0) >= FISHING.nightFreeLevel;
-    const left = Math.max(0, FISHING.duskAt - c);
     const el = $('daytime');
     const now = `<span class="dt-now">${this.save.day ?? 1}日目・<b>${timeLabel(c)}</b></span>`;
-    const night0 = nightOf(c) >= 0.5 && !this.hasTorch();
-    const rest = night0 ? `<small>夜の海はライトがないと潜れない（ショップで水中ライト ¥800）</small><button type="button" class="btn sec" data-rest="1">朝まで休む（${(this.save.day ?? 1) + 1}日目の朝へ）</button>` : '';
+    const night = nightOf(c) >= 0.5;
+    const torch = this.hasTorch();
     const buff = this.save.buff ? `<small>まかない：${DISH[this.save.buff].name}（${DISH[this.save.buff].short}）が次のダイブに効く</small>` : '';
-    if (free) {
-      const night = nightOf(c) >= 0.5;
-      el.innerHTML = `${now}<button type="button" class="btn sec" data-time="day" aria-pressed="${!night}">☀ 昼の海</button><button type="button" class="btn sec" data-time="night" aria-pressed="${night}">☾ 夜の海</button>${buff}${rest}`;
-      el.querySelectorAll<HTMLButtonElement>('[data-time]').forEach((b) => b.addEventListener('click', () => {
-        this.save.clock = b.dataset.time === 'night' ? FISHING.duskAt + FISHING.duskLen : Math.min(this.save.clock ?? 0, 0);
-        this.writeSave();
-        this.renderTitle();
-      }));
-    } else {
-      el.innerHTML = `${now}${buff}${rest}`;
-      void left;
-    }
-    el.querySelector<HTMLButtonElement>('[data-rest]')?.addEventListener('click', () => {
-      this.kitchen.sleep();
-      this.renderTitle();
-    });
+    const note = night
+      ? torch ? '<small>夜の海。しおさい亭で休むと朝になる</small>' : '<small>夜の海はライトがないと潜れない。しおさい亭で休むと朝になる</small>'
+      : torch ? '<small>しおさい亭で「夜にする」と、夜の海に潜れる</small>' : '';
+    const inn = night && this.save.tutorial ? '<button type="button" class="btn sec" data-inn="1">しおさい亭へ帰る</button>' : '';
+    el.innerHTML = `${now}${buff}${note}${inn}`;
+    el.querySelector<HTMLButtonElement>('[data-inn]')?.addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
   }
 
   private toast(text: string, kind: '' | 'warn' | 'danger' = '', dur = 2.2): void {
@@ -830,7 +843,12 @@ export class Game {
     mark('terrainPrime');
     $('loading').classList.add('hidden');
     this.state = 'title';
-    this.renderTitle();
+    // a new game opens under water in the shallow lagoon (the test dive), without the boat screen first
+    const fresh = this.save.dives === 0 && !this.save.tutorial;
+    if (fresh) {
+      $('title').classList.add('hidden');
+      this.startDive(DIVE_POINTS.find((d) => d.id === 'lagoon')!, false, true);
+    } else this.renderTitle();
     mark('firstRender');
     this.renderer.setAnimationLoop(() => this.tick());
     // build the bathymetric chart while the player is on the title screen
@@ -860,9 +878,9 @@ export class Game {
     this.startDive(dp, true);
   }
 
-  private startDive(dp: DivePoint, quick = false): void {
+  private startDive(dp: DivePoint, quick = false, prologue = false): void {
     if (dp.requires !== 'ads' && this.nightBlocked()) {
-      this.toast('夜の海はライトがないと潜れない。ショップで水中ライト（¥800）を買おう', 'warn', 3.5);
+      this.toast('夜の海はライトがないと潜れない。しおさい亭で休んで朝を待とう（ショップの水中ライトがあれば夜も潜れる）', 'warn', 3.5);
       return;
     }
     if (!quick) this.quick = null;
@@ -947,7 +965,7 @@ export class Game {
       else this.finds.spawn(new THREE.Vector3(dp.x, 0, dp.z), (x, z) => !(zoneAt(x, z) === 'cave') && caveRoofAt(x, z) === null);
       // the first dive is the tutorial
       this.tut.step = this.save.tutorial || this.ads ? -1 : 0;
-      this.tut.t = 0; this.tut.moved = 0; this.tut.looked = 0; this.tut.praise = 0;
+      this.tut.t = 0; this.tut.moved = 0; this.tut.looked = 0; this.tut.praise = 0; this.tut.down = 0; this.tut.repeat = 0; this.tut.depth0 = -this.camera.position.y;
       this.tut.from.copy(this.camera.position);
       $('coach').classList.toggle('hidden', this.tut.step < 0);
       $('hud').classList.remove('hl-air', 'hl-surface');
@@ -975,6 +993,14 @@ export class Game {
       this.paused = false;
       this.clock.getDelta();
       fade.classList.remove('on');
+      if (prologue) {
+        // the opening story sits over the first view of the sea; the dive (and the tutorial) waits for a tap
+        this.paused = true;
+        $('coach').classList.add('hidden');
+        $('pr-text').textContent = CHAPTERS[0].intro;
+        $('zone-name').textContent = ZONE_NAMES[zoneAt(dp.x, dp.z)];
+        $('prologue').classList.remove('hidden');
+      }
       if (!this.helpShown && this.tut.step < 0) {
         this.helpShown = true;
         $('help').classList.remove('hidden');
@@ -1051,6 +1077,10 @@ export class Game {
     this.save.money = moneyBefore + earn;
     this.save.earned = (this.save.earned ?? 0) + earn;
     this.save.dives += 1;
+    if (!this.quick) {
+      this.save.clock = Math.max(this.save.clock ?? 0, FISHING.duskAt + FISHING.duskLen);
+      (this.save.okami ??= { lore: 0 }).ev = 'back';
+    }
     this.save.maxDepth = Math.max(this.save.maxDepth, this.diveMaxDepth);
     // the catch goes into the cooler at the diner; a blackout loses it to the sea
     let caught = reason === 'surface' ? this.diveCatch : [];
@@ -1082,6 +1112,7 @@ export class Game {
     this.writeSave();
     this.setTool('camera');
     const after = this.foundCount;
+    this.kitchen.newToday = after > before;
     this.state = 'result';
     this.paused = true;
     $('pause').classList.add('hidden');
@@ -1408,13 +1439,17 @@ export class Game {
       if (T.praise <= 0) {
         T.step++;
         T.t = 0;
+        T.down = 0;
+        T.depth0 = -p.y;
+        T.repeat = 0;
         if (T.step >= TUTORIAL.length) { this.endTutorial(); return; }
         this.showCoach();
       }
       return;
     }
     T.t += dt;
-    const ctx = { moved: T.moved, looked: T.looked, depth: -p.y, airShown: T.t, shots: [...this.pending.values()].length, species: this.pending.size, surfaceNear: this.canSurface(), t: T.t, alt: p.y - heightAt(p.x, p.z) };
+    if (this.input.down) T.down += dt;
+    const ctx = { moved: T.moved, looked: T.looked, depth: -p.y, depth0: T.depth0, down: T.down, repeat: T.repeat, airShown: T.t, shots: [...this.pending.values()].length, species: this.pending.size, surfaceNear: this.canSurface(), t: T.t, alt: p.y - heightAt(p.x, p.z) };
     this.showCoach();
     if (step.done(ctx)) {
       T.praise = 1.4;
@@ -1431,8 +1466,8 @@ export class Game {
     $('coach').classList.remove('praise', 'hidden');
     $('coach-step').textContent = `チュートリアル ${T.step + 1}/${TUTORIAL.length}`;
     if ($('coach-text').textContent !== step.text) $('coach-text').textContent = step.text;
-    $('hud').classList.toggle('hl-air', T.step === 3);
-    $('hud').classList.toggle('hl-surface', T.step === TUTORIAL.length - 1);
+    $('hud').classList.toggle('hl-air', step.hl === 'air');
+    $('hud').classList.toggle('hl-surface', step.hl === 'surface');
   }
 
   private endTutorial(): void {
@@ -1605,6 +1640,7 @@ export class Game {
     const best = this.save.found[def.id]?.score ?? -1;
     const value = known && ev.score <= best ? Math.round((ev.value * PHOTO.repeatShare) / 10) * 10 : ev.value;
     const prev = this.pending.get(def.id);
+    if (prev && this.tut.step >= 0) this.tut.repeat++;
     // one sale per species per dive (PHOTO.oncePerDive): the first shot's value is final; a later, better shot only
     // upgrades the photo kept in the dex. Diving again resets it (pending is cleared at the start of a dive).
     const shot: Shot = { photo, depth, score: ev.score, grade: ev.grade.g, value, isNew: !known };
@@ -1656,7 +1692,7 @@ export class Game {
       gEl.className = 'disc-grade g' + ev.grade.g;
       gEl.innerHTML = `<b>${ev.grade.g}</b><span>${ev.grade.word}</span>`;
       gEl.classList.remove('hidden');
-      $('disc-pay').textContent = paid > 0 ? `+${yen(paid)}${ev.bonus.length ? '　' + ev.bonus.join(' ') : ''}` : better ? 'このダイブでは売上済み（潜り直すとまた売れる）' : '';
+      $('disc-pay').textContent = paid > 0 ? `+${yen(paid)}${ev.bonus.length ? '　' + ev.bonus.join(' ') : ''}` : better ? '売上済み（1ダイブ1種1回）' : '';
     } else gEl.classList.add('hidden');
     $('disc-name').textContent = s.name;
     $('disc-sci').textContent = s.sci;

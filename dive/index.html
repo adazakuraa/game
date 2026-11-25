@@ -49,6 +49,7 @@
           <div id="catch-chip" class="glass chip hidden" aria-label="クーラーの中の獲物の重さ"><svg viewBox="0 0 24 24"><path d="M2 12c3-5 9-6 14-3l5-3v12l-5-3c-5 3-11 2-14-3z"/></svg><b id="catch-val">0</b></div>
         </div>
         <div id="reticle"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div id="ret-label"></div></div>
+        <div id="prologue" class="hidden"><div class="pr-kicker">PROLOGUE　月刊うみなか</div><div id="pr-text"></div><button id="pr-go" type="button" class="btn pri">潜りはじめる</button></div>
         <div id="coach" class="hidden"><div class="coach-head"><span id="coach-step"></span><button id="coach-skip" type="button">チュートリアルを飛ばす</button></div><div id="coach-text"></div></div>
         <div id="mission" class="hidden"><div id="ms-title"></div><div id="ms-prog"></div><div class="ms-bar"><i id="ms-bar-fill"></i></div><div id="ms-ask" class="hidden"><button id="ms-yes" type="button">受ける</button><button id="ms-no" type="button">断る</button></div></div>
         <button id="surface-btn" class="hidden" type="button">
@@ -135,6 +136,7 @@
             <div><div class="res-kicker">NOTICE BOARD</div><h2>依頼の掲示板</h2></div>
             <button id="quests-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4"/></svg></button>
           </div>
+          <div id="q-intro" class="q-intro hidden"></div>
           <h3 class="k-h">受けている依頼</h3>
           <div id="q-held" class="k-list"></div>
           <h3 class="k-h">掲示板</h3>
@@ -199,16 +201,17 @@
             <div><div class="res-kicker">港の食堂</div><h2>しおさい亭</h2></div>
             <button id="k-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4"/></svg></button>
           </div>
+          <div id="k-okami" class="k-okami"></div>
           <div id="k-status" class="k-status"></div>
           <div id="k-story" class="k-story hidden"></div>
-          <h3 class="k-h">今日の注文（伝票）</h3>
-          <div id="k-orders" class="k-list k-slips"></div>
-          <h3 class="k-h">クーラーの中</h3>
-          <div id="k-cooler" class="k-list k-ice"></div>
-          <h3 class="k-h">店の仕事</h3>
-          <div id="k-work" class="k-list k-board"></div>
-          <div id="k-buff" class="k-buff"></div>
-          <button id="k-sleep" type="button" class="btn sec">店を閉めて休む（翌朝へ）</button>
+          <button id="k-sleep" type="button" class="btn sec k-time">朝にする</button>
+          <h3 class="k-h k-shop">今日の注文（伝票）</h3>
+          <div id="k-orders" class="k-list k-slips k-shop"></div>
+          <h3 class="k-h k-shop">クーラーの中</h3>
+          <div id="k-cooler" class="k-list k-ice k-shop"></div>
+          <h3 class="k-h k-shop">店の仕事</h3>
+          <div id="k-work" class="k-list k-board k-shop"></div>
+          <div id="k-buff" class="k-buff k-shop"></div>
         </div>
         <div id="mg" class="hidden"><div class="mg-box" id="mg-box"></div></div>
         <div id="cook-pop" class="hidden"><div class="cp-dish" id="cp-dish"></div><div class="cp-sub" id="cp-sub"></div></div>
