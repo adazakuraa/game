@@ -618,8 +618,9 @@ export class Props {
         q.setFromEuler(e);
         m4.compose(new THREE.Vector3(Math.cos(a) * rr, 0.115 + c * 0.215, Math.sin(a) * rr), q, new THREE.Vector3(sx, sy, sz));
         stones.setMatrixAt(n, m4);
-        const t = 0.27 + rnd() * 0.16;
-        stones.setColorAt(n, col.setRGB(t * 1.02, t, t * 0.95));
+        // granite: mid-to-dark grey, each stone a little warmer or cooler than its neighbours
+        const t = 0.22 + rnd() * 0.24, w = (rnd() - 0.5) * 0.1;
+        stones.setColorAt(n, col.setRGB(t * (1 + w), t, t * (1 - w)));
         n++;
       }
     }
