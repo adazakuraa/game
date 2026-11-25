@@ -52,6 +52,8 @@ export type Chapter = {
   praise?: string;
   /** a chart handed over when the chapter is finished */
   map?: string;
+  /** the chapter needs a light (night sea): until one is in stock, the boat says so (Phase 2) */
+  needsLight?: boolean;
   /** a special sight that is staged while this chapter is the current one */
   scene?: SceneId;
   title2: string;
@@ -79,7 +81,7 @@ export const CHAPTERS: Chapter[] = [
   {
     title: '夜の海', title2: '夜を知る写真家',
     intro: '編集長「夜の海は別の世界だよ。ライトを頼りに、夜にしか会えない生き物を撮ってきて」',
-    goal: '夜行性の生き物を撮る（夜の海で）', done: (s) => s.nightFound >= 1, reward: 6000, map: 'cave',
+    goal: '夜行性の生き物を撮る（夜の海で）', done: (s) => s.nightFound >= 1, reward: 6000, map: 'cave', needsLight: true,
     praise: '編集長「夜の海でも落ち着いて撮れている。さすがだ。お礼に、漁師さんから聞いた洞窟の場所を教えるよ」',
   },
   {
