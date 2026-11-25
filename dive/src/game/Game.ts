@@ -155,7 +155,7 @@ export class Game {
   /** species photographed (B or better) in each zone this dive, for surveys */
   private surveySeen = new Map<string, Set<string>>();
   /** diner urchin harvest: a short dive that returns straight to the diner */
-  private quick: { kind: 'urchin'; started: boolean; done?: boolean; ok?: boolean; night0?: boolean } | null = null;
+  private quick: { kind: 'urchin'; started: boolean; done?: boolean; ok?: boolean } | null = null;
   private missions!: Missions;
   /** request rewards earned this dive */
   private bonuses: { label: string; value: number }[] = [];
@@ -270,13 +270,29 @@ export class Game {
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
     $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
-    $('reset-save').addEventListener('click', () => {
-      if (!window.confirm('図鑑・お金・装備・ストーリーなど、すべての進行度を消して最初からやり直します。よろしいですか？')) return;
+    // Phase 7: two-tap confirm on the button itself — window.confirm is blocked
+    // inside the artifact iframe, which made these buttons look dead.
+    const armTap = (id: string, armedLabel: string, run: () => void) => {
+      const b = $<HTMLButtonElement>(id);
+      const label = b.textContent;
+      let armed = false;
+      let timer = 0;
+      b.addEventListener('click', () => {
+        if (!armed) {
+          armed = true;
+          b.textContent = armedLabel;
+          timer = window.setTimeout(() => { armed = false; b.textContent = label; }, 3500);
+          return;
+        }
+        window.clearTimeout(timer);
+        run();
+      });
+    };
+    armTap('reset-save', '本当にリセットする？', () => {
       try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ }
       window.location.reload();
     });
-    $('unlock-all').addEventListener('click', () => {
-      if (!window.confirm('デバッグ用：装備・漁具・海図・免許・ストーリー・評判・タンクをすべて解禁した状態にします（図鑑と実績はそのまま）。よろしいですか？')) return;
+    armTap('unlock-all', '本当に全解禁する？', () => {
       const sv = this.save;
       sv.owned = [...new Set([...(sv.owned ?? []), ...SHOP.map((g) => g.id), 'fugulicense'])];
       sv.discovered = DIVE_POINTS.map((d) => d.id);
@@ -668,6 +684,12 @@ export class Game {
     $('dex-chip').addEventListener('click', () => this.openDex());
     $('open-dex').addEventListener('click', () => this.openDex());
     $('dex-close').addEventListener('click', () => this.closeDex());
+    $('discover').addEventListener('click', () => {
+      const id = $('discover').dataset.dex;
+      if (!id) return;
+      $('discover').classList.add('hidden');
+      this.openDex(id);
+    });
     $('dd-close').addEventListener('click', () => $('dex-detail').classList.add('hidden'));
     $('surface-btn').addEventListener('click', () => this.endDive('surface'));
     $('res-ok').addEventListener('click', () => this.toTitle());
@@ -730,7 +752,7 @@ export class Game {
       gl.species > 0
         ? `「？」入荷まで図鑑あと <b>${gl.species}種</b>`
         : gl.need > 0
-          ? `「${gl.name}」まであと <b>${yen(gl.need)}</b>`
+          ? `「？」まであと <b>${yen(gl.need)}</b>`
           : `<span class="ok">「${gl.name}」が買える！ ショップへ</span>`;
     $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.foundCount}種</b><br>` + (goal ? goalText(goal) : '装備コンプリート') + (this.save.storyClaim?.length ? '<br><span class="ok">編集長の報酬を受け取っていない（下の章カードで受け取れる）</span>' : '');
     if (!$('shop').classList.contains('hidden')) this.renderShop();
@@ -841,7 +863,7 @@ export class Game {
     this.toastTimer = dur;
   }
 
-  private openDex(): void {
+  private openDex(at?: string): void {
     if (this.state === 'dex') return;
     this.stateBeforeDex = this.state;
     if (this.state === 'diving') this.paused = true;
@@ -873,6 +895,8 @@ export class Game {
       }
       grid.appendChild(g);
     }
+    // Phase 7: opened from a photo (result card / discover card) — go straight to the page
+    if (at && (this.save.found[at] || this.pending.has(at))) this.showDetail(at);
   }
 
   private showDetail(id: string): void {
@@ -970,7 +994,7 @@ export class Game {
   private quickUrchin(): void {
     const dp = DIVE_POINTS.find((d) => d.id === 'rocky')!;
     $('kitchen').classList.add('hidden');
-    this.quick = { kind: 'urchin', started: false, night0: nightOf(this.save.clock ?? 0) >= 0.5 };
+    this.quick = { kind: 'urchin', started: false };
     this.startDive(dp, true);
   }
 
@@ -992,6 +1016,9 @@ export class Game {
       this.airMax = (this.ads ? 220 : AIR_TANK[this.save.airLv ?? 0].cap) * (this.buff === 'nabe' ? 1.2 : 1);
       this.air = this.airMax;
       this.diveTime = 0;
+      this.narcDeepT = 0;
+      this.narcBlur = 0;
+      this.narcBlurT = 0;
       this.diveMaxDepth = 0;
       this.diveShots = 0;
       this.pending.clear();
@@ -1338,7 +1365,7 @@ export class Game {
     requestAnimationFrame(step);
     const list = $('res-list');
     list.innerHTML = shots.length
-      ? shots.map(([id, f]) => `<div class="res-card"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
+      ? shots.map(([id, f]) => `<div class="res-card" data-dex="${id}"><img src="${f.photo}" alt=""><i class="rg g${f.grade}">${f.grade}</i>${f.isNew ? '<i class="rnew">NEW</i>' : ''}<div>${SPECIES_BY_ID.get(id)!.name}<small>${yen(f.value)}</small></div></div>`).join('')
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
     if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">${b.label}<b>${yen(b.value)}</b></div>`).join(''));
     // Phase 3: the editor's chapter was cleared on this dive — the reward is received on the boat
@@ -1358,6 +1385,7 @@ export class Game {
     $('res-kitchen').classList.toggle('hidden', !caught.length);
     $('res-kitchen').textContent = ready ? `しおさい亭で料理する（${ready}件の注文が作れる！）` : 'しおさい亭で料理する';
     if (!shots.length && !this.bonuses.length && caught.length) list.querySelector('.res-empty')?.remove();
+    list.querySelectorAll<HTMLElement>('.res-card').forEach((c) => c.addEventListener('click', () => this.openDex(c.dataset.dex)));
     this.missions.reset();
     if (reason === 'narcosis' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">窒素酔いで意識を失い、救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。55mより深く長く潜りすぎないようにしよう。</div>`);
     if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
@@ -1370,20 +1398,16 @@ export class Game {
     ].join('<br>') || (goal ? `<span class="res-goal">所持金 ${yen(this.save.money!)}　次の目標${goal.species > 0 ? `「？」入荷まで図鑑あと${goal.species}種` : `「${goal.name}」まであと${yen(goal.need)}`}</span>` : '');
     if (affordable.length || stockedNow.length || earn > 0) this.audio.chime(affordable.length + stockedNow.length > 0);
     if (this.quick) {
-      // the diner's harvest: no result screen, straight back to the shop — unless the
-      // time of day changed during the dive, then back to the menu (tracker Phase 6)
+      // the diner's harvest: no result screen, straight back to the shop. After a
+      // harvest, changing the time of day leaves the diner for the menu (Phase 6).
       const ok = !!this.quick.ok;
-      const dayChanged = (nightOf(this.save.clock ?? 0) >= 0.5) !== (this.quick.night0 ?? false);
       this.quick = null;
       if (ok) { this.save.rep = (this.save.rep ?? 0) + 1; this.writeSave(); }
       $('result').classList.add('hidden');
       this.toTitle();
-      if (dayChanged) {
-        this.toast(ok ? 'ウニ漁は成功した。時間帯が変わったのでメニューに戻る' : 'ウニ漁は失敗だった。時間帯が変わったのでメニューに戻る', ok ? '' : 'warn', 3.5);
-      } else {
-        this.kitchen.open();
-        this.kitchen.harvestResult(ok, earn);
-      }
+      this.kitchen.open();
+      this.kitchen.harvestResult(ok, earn);
+      this.kitchen.leaveOnTimeChange = true;
     }
   }
 
@@ -2049,6 +2073,7 @@ export class Game {
     const el = $('discover');
     el.classList.remove('hidden', 'known');
     const dp = $('disc-photo') as HTMLImageElement; dp.style.display = ''; dp.src = photo;
+    delete el.dataset.dex;
     $('disc-tag').textContent = '写真スポット';
     $('disc-name').textContent = s.name;
     $('disc-sci').textContent = s.desc;
@@ -2093,6 +2118,7 @@ export class Game {
   /** The discover card, without a photo (treasure contents). */
   private chestCard(tag: string, name: string, text: string, pay: string): void {
     const el = $('discover');
+    delete el.dataset.dex;
     el.classList.remove('hidden', 'known');
     ($('disc-photo') as HTMLImageElement).style.display = 'none';
     $('disc-tag').textContent = tag;
@@ -2106,6 +2132,7 @@ export class Game {
   private showDiscover(id: string, photo: string, isNew: boolean, ev?: ReturnType<typeof evaluateShot>, paid = 0, better?: Shot, record = false): void {
     const s = SPECIES_BY_ID.get(id)!;
     const el = $('discover');
+    el.dataset.dex = id;
     el.classList.remove('hidden');
     el.classList.toggle('known', !isNew);
     el.style.animation = 'none';
@@ -2146,7 +2173,7 @@ export class Game {
     const dirs = ['沖', '沖東', '東', '岸東', '岸', '岸西', '西', '沖西'];
     $('heading').textContent = `${dirs[Math.round(hdg / 45) % 8]} ${Math.round(hdg)}°`;
     $('depth-warn').classList.toggle('hidden', this.ads || (d < 40 && this.currentF < 0.1 && !this.cold));
-    $('depth-warn').textContent = this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い：エア消費増・視界が揺れる';
+    $('depth-warn').textContent = this.narcDeepT > 0 ? '窒素酔い：このままでは意識を失う' : this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い：エア消費増・視界が揺れる';
     const frac = this.air / this.airMax;
     $('air-value').textContent = String(Math.ceil(this.air));
     $('air-ring').style.strokeDashoffset = String(169.6 * (1 - frac));
@@ -2160,7 +2187,7 @@ export class Game {
       this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.sceneMarks(), ...this.spotMarks(), ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo' && q.id !== this.activeQuest).map((q) => ({ x: q.x, z: q.z, rare: true, r: QUEST.arrive }))];
     }
     this.minimap?.update(p.x, p.z, this.displayYaw(), this.boatPos(), false, this.has('compass'));
-    if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.yaw, this.boatPos());
+    if (this.minimap?.open && this.frame % 6 === 0) this.minimap.drawBig(p.x, p.z, this.displayYaw(), this.boatPos());
 
     this.refreshBaitUi();
     const sb = $('surface-btn');

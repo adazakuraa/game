@@ -112,18 +112,23 @@ function check(name, ok, detail = '') {
     const g = h.game;
     h.teleport(300, -56, 600);
     g.vel.set(0, 0, 0);
+    let bandWarn = null;
+    for (let i = 0; i < 30; i++) g.updateDiver(0.05);
+    g.updateHud(0.05);
+    bandWarn = document.getElementById('depth-warn').textContent;
     let deepAt5 = null;
-    for (let i = 0; i < 110; i++) g.updateDiver(0.05);
+    for (let i = 30; i < 110; i++) g.updateDiver(0.05);
     g.updateHud(0.05);
     deepAt5 = document.getElementById('narc').classList.contains('deep');
     let steps = 110;
     while (g.state === 'diving' && steps < 260) { g.updateDiver(0.05); steps++; }
     return {
-      deepAt5, steps, state: g.state,
+      bandWarn, deepAt5, steps, state: g.state,
       kicker: document.getElementById('res-kicker').textContent,
       title: document.getElementById('res-title').textContent,
     };
   });
+  check('narcosis stage 3: the band itself warns in text', /窒素酔い：このままでは意識を失う/.test(blackout.bandWarn ?? ''), JSON.stringify(blackout.bandWarn));
   check('narcosis stage 3: vignette closes in after 5 s in the band', blackout.deepAt5 === true, JSON.stringify(blackout));
   check('narcosis stage 3: blackout rescue at ~10 s with its own result text', blackout.state !== 'diving' && blackout.kicker === 'NARCOSIS' && /窒素酔い/.test(blackout.title), JSON.stringify(blackout));
 
@@ -156,30 +161,28 @@ function check(name, ok, detail = '') {
 
   const flowA = await ev(() => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game;
+    g.save.owned = [...new Set([...(g.save.owned ?? []), 'torch'])];
+    g.save.clock = 0;
     g.quick.ok = true;
-    g.save.clock = 800; // night falls during the dive
     g.endDive('surface');
+    const backAtDiner = !document.getElementById('kitchen').classList.contains('hidden');
+    document.getElementById('k-sleep').click(); // "make night" right after the harvest
     return {
+      backAtDiner,
       kitchenHidden: document.getElementById('kitchen').classList.contains('hidden'),
-      titleHidden: document.getElementById('title').classList.contains('hidden'),
-      toast: document.getElementById('toast').textContent,
+      clock: g.save.clock,
     };
   });
-  check('urchin end: time-of-day changed -> back to the menu, not the diner', flowA.kitchenHidden && !flowA.titleHidden && /メニューに戻る/.test(flowA.toast), JSON.stringify(flowA));
+  check('urchin end: back at the diner first, then the time button returns to the menu', flowA.backAtDiner && flowA.kitchenHidden && flowA.clock >= 780, JSON.stringify(flowA));
 
-  await ev(() => {
-    const g = window.__THREE_GAME_TEST_HOOKS__.game;
-    g.save.owned = [...new Set([...(g.save.owned ?? []), 'torch'])];
-    g.quickUrchin();
-  });
-  await page.waitForTimeout(3000);
   const flowB = await ev(() => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game;
-    g.quick.ok = true;
-    g.endDive('surface');
-    return { kitchenHidden: document.getElementById('kitchen').classList.contains('hidden'), state: g.state };
+    g.save.clock = 0;
+    g.kitchen.open(); // an ordinary diner visit, not after a harvest
+    document.getElementById('k-sleep').click();
+    return { kitchenHidden: document.getElementById('kitchen').classList.contains('hidden'), clock: g.save.clock };
   });
-  check('urchin end: same time of day -> back to the diner as before', flowB.kitchenHidden === false, JSON.stringify(flowB));
+  check('urchin end: an ordinary diner visit stays in the diner on the time button', flowB.kitchenHidden === false && flowB.clock >= 780, JSON.stringify(flowB));
 
   // 7. pause menu surfacing
   await ev(() => window.__THREE_GAME_TEST_HOOKS__.setState('reef'));

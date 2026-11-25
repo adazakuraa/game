@@ -83,6 +83,9 @@ export class Kitchen {
 
   /** what the landlady said on this visit (kept while the diner stays open) */
   private line = '';
+  /** Phase 6: set right after an urchin harvest — using the time button then
+      leaves the diner and returns to the menu, as the tracker asks. */
+  leaveOnTimeChange = false;
 
   /** One word from the landlady: a piece of the island's story if one is due, else a greeting for the moment. */
   private say(ev?: 'back' | 'morning' | 'toNight'): void {
@@ -125,6 +128,7 @@ export class Kitchen {
     this.host.write();
     this.host.toast('日が暮れた。夜の海に潜れる', '', 2.5);
     this.say('toNight');
+    if (this.leaveOnTimeChange) { this.leaveOnTimeChange = false; this.close(); this.host.changed(); return; }
     this.render();
   }
 
@@ -228,7 +232,7 @@ export class Kitchen {
       : '<div class="k-empty">クーラーは空っぽ。ボートから潜って、銛ボタンで魚を獲ってこよう。</div>';
     $('k-buff').innerHTML = buffNow
       ? `次のダイブ：まかないの<b>${DISH[buffNow].name}</b>で「${DISH[buffNow].buff}」`
-      : 'まかない（自分で食べる料理）を食べると、次のダイブが少し楽になる。';
+      : '';
     const lv2 = this.level;
     const sortDone = s.uniDay === s.day;
     const work: string[] = [];
@@ -410,6 +414,7 @@ export class Kitchen {
     this.host.write();
     this.host.toast(`${s.day}日目の朝。${this.host.progress().spear ? '新しい注文が届いた' : 'よく眠れた'}${left.length ? `（残りの魚は市場へ +${yen(v)}）` : ''}`, '', 3.5);
     this.say('morning');
+    if (this.leaveOnTimeChange) { this.leaveOnTimeChange = false; this.close(); this.host.changed(); return; }
     this.render();
   }
 }
