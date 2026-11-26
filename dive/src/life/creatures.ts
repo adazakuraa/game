@@ -85,8 +85,8 @@ const _sc = new THREE.Vector3();
 
 /** PHASE8-DESIGN §1.1 / BG: triangle budgets of a generated fish — L0 by body length, and its L1. */
 export const FISH_TRIS = { smallSize: 0.4, small: 1500, large: 2500, l1: 400 };
-/** S4: generated model v2 for every fish on the new swim (else only the trial body plans that set `xs`) */
-const MODEL_V2_ALL = false;
+/** S4: generated model v2 for every fish on the new swim (false: only the trial body plans that set `xs`) */
+const MODEL_V2_ALL = true;
 
 /** Generated model v2 (§3) applies to the fish on swim v2; sea mammals, penguins and the sea snake keep the old body. */
 export function fishV2(def: SpeciesDef): boolean {

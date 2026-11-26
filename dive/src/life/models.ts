@@ -525,9 +525,20 @@ export function buildFish(s: FishShape, o: FishBuildOpts = {}): { geo: THREE.Buf
     parts.push(c);
   }
   if (s.lure) {
-    const stalk = new THREE.CylinderGeometry(0.008, 0.012, 0.32, 5);
-    stalk.rotateX(-0.7);
-    stalk.translate(0, H / 2 + 0.1, 0.42);
+    // the illicium: v2 roots it on the forehead and runs it to the bulb (the old stalk floated beside it)
+    let stalk: Part;
+    if (v2) {
+      const base = new THREE.Vector3(0, topAt(0.86) * 0.95 + mid(0.86), 0.36);
+      const tip = new THREE.Vector3(0, H / 2 + 0.2, 0.53);
+      const len = base.distanceTo(tip);
+      stalk = new THREE.CylinderGeometry(0.007, 0.012, len, 5);
+      stalk.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), tip.clone().sub(base).normalize()));
+      stalk.translate((base.x + tip.x) / 2, (base.y + tip.y) / 2, (base.z + tip.z) / 2);
+    } else {
+      stalk = new THREE.CylinderGeometry(0.008, 0.012, 0.32, 5);
+      stalk.rotateX(-0.7);
+      stalk.translate(0, H / 2 + 0.1, 0.42);
+    }
     parts.push(stalk);
     const bulb = new THREE.SphereGeometry(0.035, detail ? 6 : 10, detail ? 4 : 8);
     bulb.translate(0, H / 2 + 0.22, 0.54);

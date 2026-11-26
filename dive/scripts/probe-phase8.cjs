@@ -12,7 +12,8 @@
  *
  * Budget rows (§6.1) are printed as OK / OVER and do not fail the run on their own: several of them
  * depend on later steps (S5 LOD). Behaviour checks are PASS / FAIL and set the exit code.
- * Item 9 (swim v2) is covered from S3. Not covered yet (later steps): item 3 (L2 draw call), 4 (L0 target), 10 (3D models).
+ * Item 9 (swim v2) is covered from S3; S4 adds the triangle budgets of every generated fish (L0 / L1) and aAO.
+ * Not covered yet (later steps): item 3 (L2 draw call), 4 (L0 target), 10 (3D models).
  */
 const http = require('http');
 const fs = require('fs');

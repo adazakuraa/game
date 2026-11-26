@@ -3,6 +3,13 @@
 最終更新: 2026-11-26（作業ブランチ `muse/phase8-impl`）
 
 ## 現状
+- **Phase 8 の手順 S3（泳ぎ v2）・S4（生成モデル v2）を実装した**（ブランチ `muse/phase8-impl`、S0〜S2 の上。正式ビルド・アーティファクト・実機は未確認）。
+  - S3：背骨の線で曲げる頂点シェーダ（`SWIM_V2`）、個体ごとの `aSwim`（位相・振幅・向きの変化・胸びれ）、泳ぎ方の 5 型と周波数 `clamp(f0 + U/(0.7L), 0.6, 4)`、振って→滑る、C 字、C スタート。調整値は `src/life/swim.ts`。海の哺乳類・ペンギン・ウミヘビ・チンアナゴ・魚以外は従来の動き。
+  - S4：`buildFish` を v2 に（スーパー楕円の断面・横幅の包絡線・尾柄の隆起・口・格子のヒレと曲線の尾・埋めた目・尾柄のふた・aAO）、`paint.ts` にぼかし・側線・鰓蓋と口の線・ヒレの筋と縁・α の銀色。L1（400 以下）を `rt.geo1` に用意（描画は S5）。三角形は全生成魚が上限以内。
+  - 設計から変えた点は設計書 §9.4・§9.5 の「実装時の補足」（尾の振幅に全体倍率 0.8、`pedW` の既定 `min(0.3, ped)`、目の分割 10×5 など）。
+  - **未達・注意**：L0 だけで描くので、サンゴ礁の生き物の三角形が約 15〜19 万（予算 9 万、S5 の LOD で下げる前提）。生成魚 1 種の生成時間（VM）約 4.1〜4.6 → 6.6〜7.0ms。sheen・aAO をシェーダで使うのは S8。
+  - 検証（ハーネスビルド）：`probe-phase8.cjs` 全 PASS（項目 9 の周波数、全生成魚の三角形・L1・aAO を追加）、phase4（暗所 2 件は変更前から）・phase6 16/16・phase7 11/11・fixes 20/20（phase7 の写真カードと fixes の P4-6 は 1 回目だけ落ち、再実行で通過＝揺れ）。比較画像はリポジトリ外（ハーネスの compare/）。
+  - プローブの実行：Chromium は `PROBE_CHROME=/opt/pw-browsers/chromium-1243/chrome-linux64/chrome`、phase7 は `NODE_PATH=/opt/npm-tools/node_modules`（この環境の場合）。
 - **Phase 8 の手順 S0・S1・S2 を実装した**（ブランチ `muse/phase8-impl`。正式ビルド・`play.html`・アーティファクトは未更新、実機未確認）。
   - S0：画素数の上限 90 万と適応解像度、`make-artifact.mjs --page`、診断表示（`?diag`／デバッグ欄）。
   - S1：影の対象を絞る・サンゴの遠景ジオメトリ・スマホは BasicShadowMap（`bias -0.003`・`normalBias 0.12`）とコースティクス1回・小物と光芒の結合・生成済みの種 120 の上限・遠い個体の間引き・潜る前のシェーダコンパイル。調整値は `src/game/render.ts`。
@@ -68,7 +75,7 @@
   - 検証：`npm run artifact` 通過、Playwright で各項目を確認（詳細は git 履歴と PHASE3-DESIGN）。
 
 ## 次の一手
-- Phase 8 は S0〜S2 まで実装済み。次は正式ビルドと実機の確認（`ユーザ確認リスト.md`）、そのあと S3（泳ぎ）以降。
+- Phase 8 は S0〜S4 まで実装済み。次は正式ビルド（`npm run artifact`、型チェック込み）と実機の確認（`ユーザ確認リスト.md`）、そのあと S5（LOD とアトラス。`rt.geo1` を使う）以降。
 - Phase 8 の設計は `dive/docs/PHASE8-DESIGN.md`（2026-11-26。計測ベースライン §0.2、手順 S0〜S8、暫定決定 AW〜BH）。元の記述：Phase 8（魚・生物モデルの見た目刷新＋軽量化）の設計・実装。見た目の統合設計は Opus、素材作りは Muse、ゲームへの組み込み設計は Opus が担う分担（2026-11-25 夜の合意）。軽量化は 2026-11-25 のユーザー報告（実機で重い）を受けた項目で、ドローコール／インスタンシング／解像度スケーリング／読み込みサイズが対象。Phase が終わったら次の Phase も続けて進める（ユーザー指示）。
 - アーティファクト更新は節目のみで、動作確認は GitHub Pages のビルド済み単体ファイル（https://adazakuraa.github.io/game/dive/play.html 。セーブはアーティファクト版と別。旧 /game/dive/ はソース表示のみでゲームは動かない）で行う。フェーズごとに `npm run artifact` → `node scripts/make-artifact.mjs dist dist/play.html --page` → `dist/play.html` を `dive/play.html` にコピーして main へ push する（`--page` なしの `artifact.html` には viewport 指定がなく、スマホが 980px 幅で描いて画素が約 9.5 倍になる。アーティファクトに公開するのは `artifact.html` のほう）。
 

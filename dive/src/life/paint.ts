@@ -248,8 +248,6 @@ export function paintLook(p: Paint, L: Look): void {
   const H = f.shape.H;
   const g = p.g;
   const v2 = !!f.v2;
-  // §3.4: pattern edges blur a little (0.3 % of the texture width), as real markings do
-  const soft = (on: boolean) => { g.filter = on && v2 ? `blur(${Math.max(0.6, p.W * 0.003).toFixed(2)}px)` : 'none'; };
   p.fill(L.fin ?? L.c[1]);
   if (L.dorsal) { g.fillStyle = L.dorsal; g.fillRect(0, 0, p.W, p.V(H * 0.3)); }
   if (L.anal) { g.fillStyle = L.anal; g.fillRect(0, p.V(-H * 0.3), p.W, p.H); }
@@ -276,7 +274,6 @@ export function paintLook(p: Paint, L: Look): void {
     }
   }
   p.shade(L.c[0], L.c[1], L.c[2], L.mid ?? 0.5);
-  soft(true);
   p.clipBody(() => {
     if (L.front) { g.fillStyle = L.front[1]; g.fillRect(p.U(L.front[0]), 0, p.W, p.H); }
     if (L.rear) {
@@ -329,7 +326,15 @@ export function paintLook(p: Paint, L: Look): void {
     p.bar(t - 0.5, 0.05, L.eyeBar, undefined, 0.01);
   }
   if (L.snout) p.clipBody(() => { g.fillStyle = L.snout!; g.fillRect(p.U(0.42), 0, p.W, p.H); });
-  soft(false);
+  if (v2) {
+    // §3.4: pattern edges blur a little (0.3 % of the texture width), as real markings do — one blurred copy of the
+    // body over itself (cheaper than a filter on every band and spot); scales, noise and the eye stay sharp
+    p.clipBody(() => {
+      g.filter = `blur(${Math.max(0.6, p.W * 0.003).toFixed(2)}px)`;
+      g.drawImage(p.c, 0, 0);
+      g.filter = 'none';
+    });
+  }
   p.scales(Math.min(L.scales ?? 0.035, 0.06), Math.max(4, Math.round(p.W / 64)));
   p.noise(L.noise ?? 0.05);
   if (v2) {
