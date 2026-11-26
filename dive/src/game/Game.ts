@@ -44,7 +44,7 @@ type Save = LandSave & {
   boardOn?: boolean; boardIntro?: boolean;
   questsDone?: number;
   /** Phase 2: gear already in stock under the old dex-share (%) rule, kept in stock; and the migration mark */
-  stocked?: string[]; p2?: 1;
+  stocked?: string[]; announced?: string[]; p1?: 1; p2?: 1;
   /** Phase 3: chapters cleared whose reward has not been received yet; dive points swum into; photo spots already paid */
   storyClaim?: number[]; visited?: string[]; spots?: string[];
   /** Phase 5: treasure chests opened, and sights named by a chest's notebook page */
@@ -351,7 +351,10 @@ export class Game {
           sv.money = 0;
         }
         // Phase 1: saves from before the inn and the board intro keep the board, and skip the landlady's first hello
-        if (sv.dives > 0) { sv.boardOn ??= true; sv.okami ??= { lore: 1 }; }
+        if (!sv.p1) {
+          if (sv.dives > 0) { sv.boardOn ??= true; sv.okami ??= { lore: 1 }; }
+          sv.p1 = 1;
+        }
         // Phase 2: stock moved from a dex share (%) to a species count; what was already in stock stays in stock
         if (!sv.p2) {
           if (sv.dives > 0) {
@@ -379,7 +382,7 @@ export class Game {
     } catch {
       /* storage unavailable */
     }
-    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p2: 1 };
+    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p1: 1, p2: 1 };
   }
 
   private writeSave(): void {
@@ -620,7 +623,7 @@ export class Game {
     const unread = (this.save.storyRead ?? -1) < i;
     el.innerHTML = `<div class="sc-kicker">第${i + 1}章　${i > 0 ? `写真家の評価：${CHAPTERS[i - 1].title2}` : '駆け出しの海中写真家'}</div>${cleared}<div class="sc-title">${ch.title}</div>` +
       (unread ? `<div class="sc-intro">${ch.intro}</div><button type="button" class="btn sec" id="sc-ok">了解</button>` : '') +
-      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? '<small class="sc-wait">ライトがまだない（図鑑を増やすと入荷する）</small>' : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${ch.tips ? `<details class="sc-tips"><summary>編集長の「Sを取るコツ」</summary><ul>${ch.tips.map((t) => `<li>${t}</li>`).join('')}</ul></details>` : ''}${album}`;
+      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? `<small class="sc-wait">${this.stockGap(SHOP.find((x) => x.id === 'torch')!) > 0 ? 'ライトがまだない（図鑑を増やすと入荷する）' : 'ライトがない（ボートのショップで買える）'}</small>` : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${ch.tips ? `<details class="sc-tips"><summary>編集長の「Sを取るコツ」</summary><ul>${ch.tips.map((t) => `<li>${t}</li>`).join('')}</ul></details>` : ''}${album}`;
     this.bindClaims(el);
     if (unread) document.getElementById('sc-ok')!.addEventListener('click', () => { this.save.storyRead = i; this.storyCleared = []; this.writeSave(); this.renderStory(); });
   }
@@ -704,6 +707,16 @@ export class Game {
     $('snd-wave').style.opacity = this.save.muted ? '0.15' : '1';
   }
 
+  /** Stock notices go by "announced", not by dex-count deltas, so players who already met a threshold are told once too (Fix batch 1, P2-3). */
+  private announceStock(): string[] {
+    const ann = (this.save.announced ??= []);
+    const fresh = SHOP.filter((g) => !g.rep && !g.map && !this.has(g.id as GearId) && this.stockGap(g) === 0 && !ann.includes(g.id));
+    if (!fresh.length) return [];
+    ann.push(...fresh.map((g) => g.id));
+    this.writeSave();
+    return fresh.map((g) => g.name);
+  }
+
   private renderTitle(): void {
     const n = this.foundCount;
     this.advanceStory();
@@ -756,6 +769,10 @@ export class Game {
           : `<span class="ok">「${gl.name}」が買える！ ショップへ</span>`;
     $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.foundCount}種</b><br>` + (goal ? goalText(goal) : '装備コンプリート') + (this.save.storyClaim?.length ? '<br><span class="ok">編集長の報酬を受け取っていない（下の章カードで受け取れる）</span>' : '');
     if (!$('shop').classList.contains('hidden')) this.renderShop();
+    if (this.state === 'title' && this.save.tutorial) {
+      const names = this.announceStock();
+      if (names.length) this.toast(`ダイブショップに${names.length > 2 ? `「${names[0]}」ほか${names.length - 1}点` : names.map((n) => `「${n}」`).join('と')}が入荷している`, '', 4.5);
+    }
   }
 
   /** Fish in the cooler that the shop takes as material (good catches, lightest first). */
@@ -1390,6 +1407,7 @@ export class Game {
     if (reason === 'narcosis' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">窒素酔いで意識を失い、救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。55mより深く長く潜りすぎないようにしよう。</div>`);
     if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
     const stockedNow = SHOP.filter((g) => !this.has(g.id) && !g.rep && !this.save.stocked?.includes(g.id) && g.need > before && this.stockGap(g) === 0);
+    if (stockedNow.length) { (this.save.announced ??= []).push(...stockedNow.map((g) => g.id)); this.writeSave(); }
     const affordable = SHOP.filter((g) => !this.has(g.id) && this.stockGap(g) === 0 && this.save.money! >= g.price && (moneyBefore < g.price || stockedNow.includes(g)));
     const goal = this.nextGoal();
     $('res-unlock').innerHTML = [

@@ -270,7 +270,9 @@ button.gear-item.can .gdesc { color: var(--ink); }
 
 @media (max-height: 480px) and (orientation: landscape) {
   #air { width: 104px; height: 104px; }
-  .air-text { top: 24px; } .air-label { top: 12px; }   #btn-shutter { width: 72px; height: 72px; }
+  .air-text { top: 24px; }
+  .air-label { top: 12px; }
+  #btn-shutter { width: 72px; height: 72px; }
   .ctl { width: 46px; height: 46px; }
   .depth-row b { font-size: 28px; }
   #minimap-btn { width: 72px; height: 72px; top: calc(102px + var(--safe-t)); }
