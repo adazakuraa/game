@@ -80,15 +80,22 @@ const check = (name, ok, extra = '') => { results.push([name, ok]); console.log(
   await ev(() => document.getElementById('shop-close').click());
 
   // ---- discover card -> dex detail
+  // the card lives in #hud, which is hidden on the title: dive first so hit-testing sees it
+  await ev(() => window.__THREE_GAME_TEST_HOOKS__.setState('reef'));
+  await page.waitForTimeout(600);
   const disc = await ev(() => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game;
     g['showDiscover']('kumanomi', 'data:image/png;base64,iVBORw0KGgo=', false, undefined, 0, undefined, false);
     const el = document.getElementById('discover');
     const has = el.dataset.dex === 'kumanomi' && !el.classList.contains('hidden');
+    // hit-test first: a real finger goes through elementFromPoint, not el.click()
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const hitOk = !!hit && (hit === el || el.contains(hit));
     el.click();
-    return { has, dexOpen: !document.getElementById('dex').classList.contains('hidden'), detail: !document.getElementById('dex-detail').classList.contains('hidden'), name: document.querySelector('#dex-detail h3')?.textContent };
+    return { has, hitOk, dexOpen: !document.getElementById('dex').classList.contains('hidden'), detail: !document.getElementById('dex-detail').classList.contains('hidden'), name: document.querySelector('#dex-detail h3')?.textContent };
   });
-  check('photo card: tapping the discover card opens that species page', disc.has && disc.dexOpen && disc.detail && /クマノミ/.test(disc.name), JSON.stringify(disc));
+  check('photo card: tapping the discover card opens that species page', disc.has && disc.hitOk && disc.dexOpen && disc.detail && /クマノミ/.test(disc.name), JSON.stringify(disc));
   await ev(() => window.__THREE_GAME_TEST_HOOKS__.game['closeDex']());
 
   // ---- result card -> dex detail
