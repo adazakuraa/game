@@ -270,7 +270,9 @@ button.gear-item.can .gdesc { color: var(--ink); }
 
 @media (max-height: 480px) and (orientation: landscape) {
   #air { width: 104px; height: 104px; }
-  .air-text { top: 24px; } .air-label { top: 12px; }   #btn-shutter { width: 72px; height: 72px; }
+  .air-text { top: 24px; }
+  .air-label { top: 12px; }
+  #btn-shutter { width: 72px; height: 72px; }
   .ctl { width: 46px; height: 46px; }
   .depth-row b { font-size: 28px; }
   #minimap-btn { width: 72px; height: 72px; top: calc(102px + var(--safe-t)); }
@@ -279,6 +281,8 @@ button.gear-item.can .gdesc { color: var(--ink); }
 @media (max-width: 520px) {
   #toast { max-width: calc(100vw - 40px); top: calc(122px + var(--safe-t)); white-space: normal; text-align: center; }
   #surface-btn { top: calc(170px + var(--safe-t)); }
+  /* coach (top 118px) is up: the toast sits below it (Fix batch 1, P1-4) */
+  #app:has(#coach:not(.hidden)) #toast { top: calc(292px + var(--safe-t)); }
 }
 @media (prefers-reduced-motion: reduce) {
   #flash.go { animation-duration: 0.01s; }

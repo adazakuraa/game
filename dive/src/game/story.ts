@@ -121,7 +121,7 @@ export const ENDING = '『月刊うみなか』の表紙に、あなたの写真
  * praised the moment it is done. Order: move, look, descend, shoot, photos are money, the second-photo rule,
  * air, surface. The coach panel shows only the current step.
  */
-export type TutStep = { text: string; done: (t: TutCtx) => boolean; praise: string; hold?: number; hl?: 'air' | 'surface' };
+export type TutStep = { text: string; done: (t: TutCtx) => boolean; praise: string; hl?: 'air' | 'surface' };
 export type TutCtx = { moved: number; looked: number; depth: number; depth0: number; down: number; airShown: number; shots: number; species: number; repeat: number; surfaceNear: boolean; t: number; alt: number };
 
 export const TUTORIAL: TutStep[] = [
@@ -131,7 +131,7 @@ export const TUTORIAL: TutStep[] = [
   { text: '▼ボタンを押して、海底の近くまで潜ってみよう', done: (t) => t.down >= 0.6 && (t.alt < 1.2 || t.depth >= t.depth0 + 1.5), praise: '上手！' },
   { text: '生き物を照準の枠に入れて、カメラボタンで撮ろう。近く・真横から・全身が入ると高評価', done: (t) => t.shots >= 1, praise: 'ナイスショット！' },
   { text: '撮った写真は、浮上したときに雑誌社が買い取ってくれる。評価が高いほど高く売れる。あと2種類、ちがう生き物を撮ってみよう', done: (t) => t.species >= 3, praise: 'すばらしい！' },
-  { text: '同じ生き物の2枚目からは、より良い評価なら図鑑の写真が差し替わる。ただし売れるのは1回のダイブで1種1枚だけ。また売るには潜り直す必要がある', done: (t) => t.repeat >= 1 || t.t > 9, praise: '次はエアの見方だ', hold: 9 },
-  { text: '右上の丸いメーターがエア（空気）の残り。深く潜るほど、速く泳ぐほど早く減る。0になると気絶して救助され、稼ぎが減ってしまう。半分を切ったら戻り始めよう', done: (t) => t.airShown > 7, praise: 'エアはいつも気にしておこう', hold: 7, hl: 'air' },
+  { text: '同じ生き物の2枚目からは、より良い評価なら図鑑の写真が差し替わる。ただし売れるのは1回のダイブで1種1枚だけ。また売るには潜り直す必要がある', done: (t) => t.repeat >= 1 || t.t > 9, praise: '次はエアの見方だ' },
+  { text: '右上の丸いメーターがエア（空気）の残り。深く潜るほど、速く泳ぐほど早く減る。0になると気絶して救助され、稼ぎが減ってしまう。半分を切ったら戻り始めよう', done: (t) => t.airShown > 7, praise: 'エアはいつも気にしておこう', hl: 'air' },
   { text: 'ボートへ戻ろう。▲で水面近く（水深1.6mより浅く）まで上がると「浮上」ボタンが出る', done: (t) => t.surfaceNear, praise: '浮上ボタンを押してダイブ終了！', hl: 'surface' },
 ];

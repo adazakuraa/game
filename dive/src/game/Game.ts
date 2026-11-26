@@ -14,7 +14,7 @@ import { Terrain } from '../world/terrain';
 import { Environment } from '../world/environment';
 import { Flora } from '../world/flora';
 import { Creatures, OCTO, type PhotoTarget } from '../life/creatures';
-import { BAIT, eatsBait, type BaitId } from './bait';
+import { BAIT, dietOf, eatsBait, type BaitId } from './bait';
 import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
@@ -44,7 +44,7 @@ type Save = LandSave & {
   boardOn?: boolean; boardIntro?: boolean;
   questsDone?: number;
   /** Phase 2: gear already in stock under the old dex-share (%) rule, kept in stock; and the migration mark */
-  stocked?: string[]; p2?: 1;
+  stocked?: string[]; announced?: string[]; p1?: 1; p2?: 1;
   /** Phase 3: chapters cleared whose reward has not been received yet; dive points swum into; photo spots already paid */
   storyClaim?: number[]; visited?: string[]; spots?: string[];
   /** Phase 5: treasure chests opened, and sights named by a chest's notebook page */
@@ -79,6 +79,8 @@ export class Game {
   private diveMaxDepth = 0;
   private pending = new Map<string, Shot>();
   private diveShots = 0;
+  /** chapters whose S has already been shot on this dive: no more S advice for them (reset at dive start) */
+  private sDoneCh = new Set<number>();
   private point: DivePoint = DIVE_POINTS[1];
   private ads = false;
   private captureReq: PhotoTarget | null | undefined = undefined;
@@ -351,7 +353,10 @@ export class Game {
           sv.money = 0;
         }
         // Phase 1: saves from before the inn and the board intro keep the board, and skip the landlady's first hello
-        if (sv.dives > 0) { sv.boardOn ??= true; sv.okami ??= { lore: 1 }; }
+        if (!sv.p1) {
+          if (sv.dives > 0) { sv.boardOn ??= true; sv.okami ??= { lore: 1 }; }
+          sv.p1 = 1;
+        }
         // Phase 2: stock moved from a dex share (%) to a species count; what was already in stock stays in stock
         if (!sv.p2) {
           if (sv.dives > 0) {
@@ -379,7 +384,7 @@ export class Game {
     } catch {
       /* storage unavailable */
     }
-    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p2: 1 };
+    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p1: 1, p2: 1 };
   }
 
   private writeSave(): void {
@@ -420,18 +425,16 @@ export class Game {
   }
 
   /** A dive point becomes known: from now on the boat can go straight there. */
-  private discover(id: string, how: 'swim' | 'chart'): boolean {
+  private discover(id: string): boolean {
     if (this.discovered.has(id)) return false;
     (this.save.discovered ??= ['lagoon']).push(id);
     this.writeSave();
     if (this.minimap) this.minimap.known = this.discovered;
-    const dp = DIVE_POINTS.find((d) => d.id === id);
-    void how; void dp; // the banner comes from exploreCheck (Phase 3)
     return true;
   }
 
   private grantMap(id: string): void {
-    this.discover(id, 'chart');
+    this.discover(id);
   }
 
   // ------------------------------------------------------------------ story (photographer)
@@ -620,7 +623,7 @@ export class Game {
     const unread = (this.save.storyRead ?? -1) < i;
     el.innerHTML = `<div class="sc-kicker">第${i + 1}章　${i > 0 ? `写真家の評価：${CHAPTERS[i - 1].title2}` : '駆け出しの海中写真家'}</div>${cleared}<div class="sc-title">${ch.title}</div>` +
       (unread ? `<div class="sc-intro">${ch.intro}</div><button type="button" class="btn sec" id="sc-ok">了解</button>` : '') +
-      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? '<small class="sc-wait">ライトがまだない（図鑑を増やすと入荷する）</small>' : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${ch.tips ? `<details class="sc-tips"><summary>編集長の「Sを取るコツ」</summary><ul>${ch.tips.map((t) => `<li>${t}</li>`).join('')}</ul></details>` : ''}${album}`;
+      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? `<small class="sc-wait">${this.stockGap(SHOP.find((x) => x.id === 'torch')!) > 0 ? 'ライトがまだない（図鑑を増やすと入荷する）' : 'ライトがない（ボートのショップで買える）'}</small>` : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${ch.tips ? `<details class="sc-tips"><summary>編集長の「Sを取るコツ」</summary><ul>${ch.tips.map((t) => `<li>${t}</li>`).join('')}</ul></details>` : ''}${album}`;
     this.bindClaims(el);
     if (unread) document.getElementById('sc-ok')!.addEventListener('click', () => { this.save.storyRead = i; this.storyCleared = []; this.writeSave(); this.renderStory(); });
   }
@@ -704,6 +707,16 @@ export class Game {
     $('snd-wave').style.opacity = this.save.muted ? '0.15' : '1';
   }
 
+  /** Stock notices go by "announced", not by dex-count deltas, so players who already met a threshold are told once too (Fix batch 1, P2-3). */
+  private announceStock(): string[] {
+    const ann = (this.save.announced ??= []);
+    const fresh = SHOP.filter((g) => !g.rep && !g.map && !this.has(g.id as GearId) && this.stockGap(g) === 0 && !ann.includes(g.id));
+    if (!fresh.length) return [];
+    ann.push(...fresh.map((g) => g.id));
+    this.writeSave();
+    return fresh.map((g) => g.name);
+  }
+
   private renderTitle(): void {
     const n = this.foundCount;
     this.advanceStory();
@@ -756,6 +769,10 @@ export class Game {
           : `<span class="ok">「${gl.name}」が買える！ ショップへ</span>`;
     $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.foundCount}種</b><br>` + (goal ? goalText(goal) : '装備コンプリート') + (this.save.storyClaim?.length ? '<br><span class="ok">編集長の報酬を受け取っていない（下の章カードで受け取れる）</span>' : '');
     if (!$('shop').classList.contains('hidden')) this.renderShop();
+    if (this.state === 'title' && this.save.tutorial) {
+      const names = this.announceStock();
+      if (names.length) this.toast(`ダイブショップに${names.length > 2 ? `「${names[0]}」ほか${names.length - 1}点` : names.map((n) => `「${n}」`).join('と')}が入荷している`, '', 4.5);
+    }
   }
 
   /** Fish in the cooler that the shop takes as material (good catches, lightest first). */
@@ -1016,6 +1033,8 @@ export class Game {
       this.airMax = (this.ads ? 220 : AIR_TANK[this.save.airLv ?? 0].cap) * (this.buff === 'nabe' ? 1.2 : 1);
       this.air = this.airMax;
       this.diveTime = 0;
+      this.clearMapFound();
+      this.sDoneCh.clear();
       this.narcDeepT = 0;
       this.narcBlur = 0;
       this.narcBlurT = 0;
@@ -1228,6 +1247,8 @@ export class Game {
     (this.baitPts.material as THREE.PointsMaterial).opacity = left < 8 ? Math.max(0, left / 8) * 0.9 : 0.9;
   }
 
+  private baitLabelPrev: string | null = null;
+  private baitColorPrev = '';
   /** Bait buttons: shown while diving after the tutorial (never in the ADS), with kind and uses left. */
   private refreshBaitUi(): void {
     const held = this.heldBaits();
@@ -1236,8 +1257,11 @@ export class Game {
     $('btn-bait-kind').classList.toggle('hidden', !(show && held.length > 1));
     if (held.length && !held.some((k) => k.id === this.baitKind)) this.baitKind = held[0].id;
     const kind = BAIT.kinds.find((k) => k.id === this.baitKind);
-    $('bait-label').textContent = kind && show ? `${kind.name}×${this.save.bait?.[kind.id] ?? 0}` : '';
-    if (kind) $('btn-bait').style.color = kind.color;
+    // write the DOM only when a value changed (P4-5)
+    const label = kind && show ? `${kind.name}×${this.save.bait?.[kind.id] ?? 0}` : '';
+    if (label !== this.baitLabelPrev) { $('bait-label').textContent = label; this.baitLabelPrev = label; }
+    const col = kind ? kind.color : '';
+    if (col && col !== this.baitColorPrev) { $('btn-bait').style.color = col; this.baitColorPrev = col; }
   }
 
   /** Warnings, charges and bites from territorial triggerfish / curious sharks. */
@@ -1292,6 +1316,9 @@ export class Game {
     const before = this.foundCount;
     const shots = [...this.pending.entries()];
     this.creatures.companion = null;
+    this.creatures.clearBait();
+    this.clearBaitVisual();
+    this.clearMapFound();
     // discoveries are never lost (being rescued costs money instead: the penalty fits the mistake)
     for (const [id, f] of shots) {
       const old = this.save.found[id];
@@ -1369,8 +1396,12 @@ export class Game {
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
     if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">${b.label}<b>${yen(b.value)}</b></div>`).join(''));
     // Phase 3: the editor's chapter was cleared on this dive — the reward is received on the boat
-    const chNow = this.chapter;
-    if (chNow && chNow.reward && chNow.done(this.storyState())) list.insertAdjacentHTML('beforeend', `<div class="res-find"><span class="open">編集長の依頼「${chNow.title}」をクリア！</span>ボートの章カードで報酬 <b>${yen(chNow.reward)}</b> を受け取ろう</div>`);
+    {
+      const st = this.storyState();
+      const clearedNow: { title: string; reward: number }[] = [];
+      for (let k = this.save.storyMain ?? 0; k < CHAPTERS.length && CHAPTERS[k].done(st); k++) if (CHAPTERS[k].reward) clearedNow.push({ title: CHAPTERS[k].title, reward: CHAPTERS[k].reward! });
+      if (clearedNow.length) list.insertAdjacentHTML('beforeend', `<div class="res-find"><span class="open">編集長の依頼${clearedNow.map((c) => `「${c.title}」`).join('')}をクリア！</span>ボートの章カードで報酬 <b>${clearedNow.map((c) => yen(c.reward)).join(' + ')}</b> を受け取ろう</div>`);
+    }
     if (this.diveCatch.length) {
       list.insertAdjacentHTML('beforeend', reason === 'surface'
         ? caught.map((c) => `<div class="res-catch">獲物：${SPECIES_BY_ID.get(c.id)!.name}<b>${fmtKg(c.kg)}</b></div>`).join('')
@@ -1390,6 +1421,7 @@ export class Game {
     if (reason === 'narcosis' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">窒素酔いで意識を失い、救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。55mより深く長く潜りすぎないようにしよう。</div>`);
     if (reason === 'blackout' && shots.length) list.insertAdjacentHTML('beforeend', `<div class="res-empty">気絶して救助された。図鑑の記録は残ったが、救助費用で売上は${Math.round(PHOTO.blackoutKeep * 100)}%に（${yen(gross)} → ${yen(earn)}）。エアに気をつけて早めに浮上しよう。</div>`);
     const stockedNow = SHOP.filter((g) => !this.has(g.id) && !g.rep && !this.save.stocked?.includes(g.id) && g.need > before && this.stockGap(g) === 0);
+    if (stockedNow.length) { (this.save.announced ??= []).push(...stockedNow.map((g) => g.id)); this.writeSave(); }
     const affordable = SHOP.filter((g) => !this.has(g.id) && this.stockGap(g) === 0 && this.save.money! >= g.price && (moneyBefore < g.price || stockedNow.includes(g)));
     const goal = this.nextGoal();
     $('res-unlock').innerHTML = [
@@ -1744,7 +1776,7 @@ export class Game {
     const dp = DIVE_POINTS.find((d) => d.id === id);
     if (!dp) return;
     const fromChart = this.discovered.has(id);
-    if (!this.ads && id !== 'deep') this.discover(id, 'swim');
+    if (!this.ads && id !== 'deep') this.discover(id);
     const v = (this.save.visited ??= ['lagoon']);
     if (v.includes(id)) return;
     v.push(id);
@@ -1756,6 +1788,12 @@ export class Game {
   /** banners waiting to be shown, and how long the current one stays */
   private mapFoundQ: { name: string; sub: string }[] = [];
   private mapFoundT = 0;
+  /** Hide the new-map banner and drop what is queued (dive start / end: the banner is only updated while diving). */
+  private clearMapFound(): void {
+    this.mapFoundQ.length = 0;
+    this.mapFoundT = 0;
+    $('map-found').classList.add('hidden');
+  }
   private updateMapFound(dt: number): void {
     if (this.mapFoundT > 0) {
       this.mapFoundT -= dt;
@@ -1989,9 +2027,11 @@ export class Game {
     const depth = -t.agent.p.y;
     const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2, this.env.night >= 0.5);
     // the editor's advice while the chapter asks for an S (Phase 3)
-    if (this.chapter?.tips && this.tut.step < 0) {
+    const chIdx = this.save.storyMain ?? 0;
+    if (this.chapter?.tips && this.tut.step < 0 && !this.sDoneCh.has(chIdx)) {
       const tip = sAdvice(ev);
       this.toast(tip ? `Sまであと少し！ ${tip}` : '編集長「これがSだ！」', tip ? 'warn' : '', 3);
+      if (!tip) this.sDoneCh.add(chIdx);
     }
     this.missions.onPhoto(def.id, ev.grade.g);
     this.questPhoto(def.id, ev.grade.g, zoneAt(this.camera.position.x, this.camera.position.z));
@@ -2621,6 +2661,8 @@ export class Game {
         return this.creatures.baitInfo();
       },
       baitInfo: () => this.creatures.baitInfo(),
+      /** Fix batch 1 (P4-1): the diet the bait system infers for a species id */
+      dietOf: (id: string) => { const d = SPECIES_BY_ID.get(id); return d ? dietOf(d) : undefined; },
       placeOcto: (id: string) => {
         const rt = this.creatures.list.find((r) => r.def.id === id);
         const a = rt?.agents[0];

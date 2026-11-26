@@ -940,15 +940,22 @@ export class Creatures {
     b.t += dt;
     if (b.t >= b.life) { this.clearBait(); return; }
     for (const a of [...b.fish]) if (a.taken) { a.lured = false; b.fish.delete(a); }
-    b.species.clear();
-    for (const rt of this.list) for (const a of rt.agents) if (b.fish.has(a)) b.species.add(rt.def.id);
+    // the full scan runs once per LURE.refill seconds, not every frame; only fish that are active (drawn) count (Fix batch 1, P4-4)
     b.refill -= dt;
-    if (b.refill > 0 || b.fish.size >= LURE.maxFish) return;
+    if (b.refill > 0) return;
     b.refill = LURE.refill;
+    b.species.clear();
+    for (const rt of this.list) {
+      for (const a of rt.agents) {
+        if (!b.fish.has(a)) continue;
+        if (!rt.active) { a.lured = false; b.fish.delete(a); } else b.species.add(rt.def.id);
+      }
+    }
+    if (b.fish.size >= LURE.maxFish) return;
     const cands: { a: Agent; def: SpeciesDef; d: number }[] = [];
     for (const rt of this.list) {
       const def = rt.def;
-      if (!this.lurable(def) || !b.eats(def)) continue;
+      if (!rt.active || !this.lurable(def) || !b.eats(def)) continue;
       for (const a of rt.agents) {
         if (a.lured || a.taken || a.aggro || rt.groups[a.g].absent) continue;
         const d = a.p.distanceTo(b.p);
@@ -1038,6 +1045,7 @@ export class Creatures {
       const movable = this.canRelocate(rt.def);
       rt.groups.forEach((g, gi) => {
         g.absent = this.rnd() > p;
+        g.cur = 0; g.curT = 0; // curiosity state does not carry across dives (P4-7)
         if (!g.absent && movable) this.relocate(rt, gi, player, 4);
       });
       const ag = rt.def.aggro;
@@ -1180,18 +1188,17 @@ export class Creatures {
         const pl = pd.length();
         const res = this.resident(def);
         const gFlee = res ? fleeR * SPREAD.residentFlee : fleeR;
-        if (def.flee > 0 && pl < gFlee * 2.5 && def.behavior !== 'anemone' && def.hab !== 'coralHover' && def.hab !== 'under' && def.hab !== 'cleaner') {
+        // leash (P4-3): beyond it the flee force is dropped and only the pull home applies
+        const outside = res && Math.hypot(g.c.x - g.home.x, g.c.z - g.home.z) > SPREAD.leash + def.size * SPREAD.leashSize;
+        if (!outside && def.flee > 0 && pl < gFlee * 2.5 && def.behavior !== 'anemone' && def.hab !== 'coralHover' && def.hab !== 'under' && def.hab !== 'cleaner') {
           // schools veer off sideways (keeping their distance) rather than bolting straight away
           fleeDir(pd, g.v, radialW, _v);
           g.v.addScaledVector(_v, dt * def.speed * 2);
         }
-        if (res) {
-          // leash: a resident group dragged too far from home swims back instead of fleeing on
-          const hd = Math.hypot(g.c.x - g.home.x, g.c.z - g.home.z);
-          if (hd > SPREAD.leash + def.size * SPREAD.leashSize) {
-            _v.set(g.home.x - g.c.x, 0, g.home.z - g.c.z).normalize();
-            g.v.addScaledVector(_v, dt * def.speed * 2.5);
-          }
+        if (outside) {
+          // a resident group dragged too far from home swims back instead of fleeing on
+          _v.set(g.home.x - g.c.x, 0, g.home.z - g.c.z).normalize();
+          g.v.addScaledVector(_v, dt * def.speed * 2.5);
         }
         g.c.addScaledVector(g.v, dt);
         const gg = heightFast(g.c.x, g.c.z);

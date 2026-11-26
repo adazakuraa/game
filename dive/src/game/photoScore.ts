@@ -115,7 +115,7 @@ export type GearId = string;
 
 /**
  * 【エアタンクの強化】The one tank is upgraded step by step instead of buying new ones. Capacity in bar only
- * (the first one is sized for about 3 minutes at 2 m while swimming: 0.42 × 1.2 × 1.15 bar/s × 180 s ≈ 105; see PHASE2-DESIGN §1.2). After the spear is in hand, the shop also takes fish
+ * (capacities follow the table in PHASE2-DESIGN §1.2; no wall-clock estimate is written here or in the UI). After the spear is in hand, the shop also takes fish
  * (kg from the cooler) in place of half the money.
  */
 export const AIR_TANK = [

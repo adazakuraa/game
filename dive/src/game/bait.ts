@@ -21,17 +21,42 @@ export const BAIT = {
   ],
 };
 
-/** Name fragments -> diet. Checked in order; weed-eaters first (ハコフグ must not fall to フグ/meat). */
+/**
+ * Name fragments -> diet. The LONGEST matching fragment wins (ties: list order), so specific names beat general ones:
+ * カワハギ (meat) beats ハギ (weed), コショウダイ / カスミアジ / ギンガメアジ (meat) beat アジ (plankton).
+ */
 const DIET_WORDS: [Diet, string[]][] = [
   ['weed', ['ハギ', 'ブダイ', 'アイゴ', 'メジナ', 'ニザダイ', 'イスズミ', 'ハコフグ', 'オヤビッチャ']],
   ['plankton', ['スズメダイ', 'ハナダイ', 'ハナゴイ', 'キンギョハナダイ', 'タカサゴ', 'イワシ', 'アジ']],
-  ['meat', ['ハタ', 'フエダイ', 'ベラ', 'カサゴ', 'メバル', 'ソイ', 'タイ', 'イサキ', 'フグ', 'カワハギ', 'モンガラ', 'カマス']],
+  ['meat', ['ハタ', 'フエダイ', 'ベラ', 'カサゴ', 'メバル', 'ソイ', 'タイ', 'イサキ', 'フグ', 'カワハギ', 'モンガラ', 'カマス', 'コショウダイ', 'カスミアジ', 'ギンガメアジ']],
 ];
 
+/**
+ * タイ in the design's table never matches names spelled ダイ, so the sea breams are listed by their exact name (F1).
+ * Exact, not substring: 'マダイ' would also hit トノサマダイ (a butterflyfish).
+ */
+const MEAT_EXACT = ['マダイ', 'クロダイ', 'ヘダイ', 'イシダイ', 'イシガキダイ'];
+
+/** Names containing 'ハゼ' are not judged by the word lists (ハタタテハゼ is a tiny goby, not a ハタ): size / behaviour decides. */
+const NO_WORDS = ['ハゼ'];
+
+/** ハタタテダイ (butterflyfish) must not hit the grouper word 'ハタ' (F4); its other words / the fallback decide. */
+const NOT_GROUPER = 'ハタタテ';
+
 export function dietOf(def: SpeciesDef): Diet | null {
-  for (const [diet, words] of DIET_WORDS) {
-    for (const w of words) if (def.name.includes(w)) return diet;
+  if (!NO_WORDS.some((w) => def.name.includes(w))) {
+    let best: Diet | null = null;
+    let len = 0;
+    for (const [diet, words] of DIET_WORDS) {
+      for (const w of words) {
+        if (w === 'ハタ' && def.name.includes(NOT_GROUPER)) continue;
+        if (w.length > len && def.name.includes(w)) { best = diet; len = w.length; }
+      }
+    }
+    if (best) return best;
   }
+  if (MEAT_EXACT.includes(def.name)) return 'meat';
+  // fallback (PHASE4-DESIGN §9 governs, decision AV): a school under 15 cm is plankton, 15 cm-2.5 m is meat, schools included
   if (def.behavior === 'school' && def.size < 0.15) return 'plankton';
   if (def.size >= 0.15 && def.size <= 2.5) return 'meat';
   return null;
