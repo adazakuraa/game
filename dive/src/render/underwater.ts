@@ -109,6 +109,8 @@ float uwNoise( vec3 p ) {
 type InjectOpts = {
   key: string;
   caustic?: number; // per-material strength multiplier
+  /** no caustic pattern (creature L1 / L2, PHASE8-DESIGN §6.3-③): its average light is kept, so nothing pops */
+  noCaustic?: boolean;
   vertexHead?: string;
   vertexBody?: string; // runs after <begin_vertex>, can modify 'transformed'
   fragHead?: string;
@@ -157,6 +159,15 @@ vec4 uwTri( sampler2D T, vec3 P, vec3 N, float s, float k, out vec3 nW ) {
   return tx * w.x + ty * w.y + tz * w.z;
 }
 `;
+
+/** average of 0.7·uwCaustic + 0.5·uwCaustic (and of the phone's 1.2·uwCaustic) over space and time, sampled offline */
+const CAUSTIC_MEAN = 0.148;
+
+/** Phones: cheaper fragment shading (one caustic layer). Set once, before the first shader is compiled. */
+let uwMobile = false;
+export function setUwMobile(v: boolean): void {
+  uwMobile = v;
+}
 
 /**
  * Inject underwater lighting into a stock MeshStandardMaterial: projected caustics on up-facing
@@ -224,7 +235,7 @@ export function underwaterMaterial<T extends THREE.MeshStandardMaterial>(mat: T,
   }`,
         );
     shader.fragmentShader =
-      `${CAUSTIC_GLSL}\nuniform float uMatCaustic;\n${o.fragHead ?? ''}\n` +
+      `${uwMobile ? '#define UW_MOBILE\n' : ''}${o.noCaustic ? `#define UW_NO_CAUSTIC\n#define UW_CAUSTIC_MEAN ${CAUSTIC_MEAN.toFixed(3)}\n` : ''}${CAUSTIC_GLSL}\nuniform float uMatCaustic;\n${o.fragHead ?? ''}\n` +
       shader.fragmentShader
         .replace('void main() {', `${UW_BUMP}\n${o.fragFuncs ?? ''}\nvoid main() {`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${o.fragEmissive ?? ''}`)
@@ -237,9 +248,18 @@ export function underwaterMaterial<T extends THREE.MeshStandardMaterial>(mat: T,
     float upF = clamp( normalize( vUwNrm ).y * 0.8 + 0.25, 0.0, 1.0 );
     float depthF = exp( min( vUwPos.y, 0.0 ) / 13.0 );
     vec2 cp = ( vUwPos.xz - vUwPos.y * uSunDir.xz / uSunDir.y ) * 0.32;
+    #ifndef UW_NO_CAUSTIC
     float ca = uwCaustic( cp, uTime * 0.55 );
-    float ca2 = uwCaustic( cp * 1.7 + 1.3, uTime * 0.43 + 2.0 );
-    float cst = ( ca * 0.7 + ca2 * 0.5 ) * upF * depthF * uCaustic * uMatCaustic;
+    #endif
+    #if defined( UW_NO_CAUSTIC )
+      float caSum = UW_CAUSTIC_MEAN; // the pattern's average: the same light without its cost
+    #elif defined( UW_MOBILE )
+      float caSum = ca * 1.2; // one layer only, at the same average brightness as the two below
+    #else
+      float ca2 = uwCaustic( cp * 1.7 + 1.3, uTime * 0.43 + 2.0 );
+      float caSum = ca * 0.7 + ca2 * 0.5;
+    #endif
+    float cst = caSum * upF * depthF * uCaustic * uMatCaustic;
     float uwSh = 1.0;
     #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
       uwSh = receiveShadow ? getShadow( directionalShadowMap[ 0 ], directionalLightShadows[ 0 ].shadowMapSize, directionalLightShadows[ 0 ].shadowIntensity, directionalLightShadows[ 0 ].shadowBias, directionalLightShadows[ 0 ].shadowRadius, vDirectionalShadowCoord[ 0 ] ) : 1.0;
@@ -252,7 +272,7 @@ export function underwaterMaterial<T extends THREE.MeshStandardMaterial>(mat: T,
   #include <opaque_fragment>`,
         );
   };
-  mat.customProgramCacheKey = () => 'uw-' + o.key;
+  mat.customProgramCacheKey = () => 'uw-' + o.key + (o.noCaustic ? '-nc' : '') + (uwMobile ? '-m' : '');
   return mat;
 }
 

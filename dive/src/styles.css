@@ -124,6 +124,10 @@ svg { fill: currentColor; }
 #toast.warn { border-color: var(--warn); color: var(--warn); }
 #toast.danger { border-color: var(--danger); color: #ffd0d0; }
 
+/* performance readout (?diag / debug row): left edge, above everything, never takes taps */
+#diag { position: absolute; left: calc(6px + var(--safe-l)); top: 48%; z-index: 40; pointer-events: none; white-space: pre;
+  font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #d8f6ff; background: rgba(0, 10, 18, 0.72); border-radius: 6px; padding: 5px 8px; }
+
 #surface-btn { position: absolute; left: 50%; top: calc(60px + var(--safe-t)); transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
   background: linear-gradient(180deg, #3fd7e8, #1597b2); color: #021a24; border: 0; border-radius: 12px; padding: 13px 20px; font-family: var(--jp); font-weight: 900; font-size: 17px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.35); cursor: pointer; white-space: nowrap; }
@@ -481,7 +485,7 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 #album-body figcaption b { display: block; color: var(--ink); font-size: 13.5px; }
 #album-body .al-count { font-size: 14px; margin-bottom: 8px; }
 #album-body .al-count b { color: var(--warn); font-family: var(--num); font-size: 18px; }
-.debug-row { display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-dim); opacity: 0.8; }
+.debug-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-dim); opacity: 0.8; }
 
 /* ---- しおさい亭: a warm wooden diner, unlike the blue sea screens */
 #kitchen.screen.full { background:

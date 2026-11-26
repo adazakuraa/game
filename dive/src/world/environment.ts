@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { UW } from '../render/underwater';
 import { makeBubble } from '../render/textures';
+import { SHADOW } from '../game/render';
 import { heightAt, zoneAt, type ZoneId } from './layout';
 import { clamp, lerp, mulberry32 } from '../utils/noise';
 
@@ -27,7 +29,7 @@ export class Environment {
   readonly hemi = new THREE.HemisphereLight(0x8fd4ee, 0x2a2a22, 0.9);
   readonly diverLight = new THREE.SpotLight(0xfff1dd, 0, 38, 0.5, 0.6, 1.5);
   private surface: THREE.Mesh;
-  private rays: THREE.Mesh[] = [];
+  private rays: THREE.Mesh;
   private rayMat: THREE.ShaderMaterial;
   private snow: THREE.Points;
   private snowMat: THREE.ShaderMaterial;
@@ -61,11 +63,12 @@ export class Environment {
     this.sun.castShadow = true;
     const S = this.sun.shadow;
     S.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
-    const half = mobile ? 20 : 26;
+    const half = SHADOW.half;
     Object.assign(S.camera, { left: -half, right: half, top: half, bottom: -half, near: 1, far: 140 });
     S.camera.updateProjectionMatrix();
-    S.bias = -0.0006;
-    S.normalBias = 0.04;
+    // phones sample the map once (BasicShadowMap), so grazing rock faces need a deeper bias to avoid stripes
+    S.bias = mobile ? -0.003 : -0.0006;
+    S.normalBias = mobile ? 0.12 : 0.04;
     S.radius = 2.5;
     this.group.add(this.sun, this.sun.target, this.hemi);
     camera.add(this.diverLight);
@@ -151,10 +154,18 @@ export class Environment {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
+      forceSinglePass: true, // additive: the order of the two faces does not matter, one draw call is enough
       uniforms: { uTime: UW.uTime, uStrength: { value: 1 }, uCamPos: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(0.6, 0.85, 0.95) } },
       vertexShader: /* glsl */ `
-        varying vec2 vUv; varying vec3 vW; attribute float aSeed; varying float vSeed;
-        void main(){ vUv = uv; vSeed = aSeed; vec4 w = modelMatrix*vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }`,
+        uniform vec3 uCamPos;
+        varying vec2 vUv; varying vec3 vW; attribute float aSeed; attribute vec2 aOff; varying float vSeed;
+        void main(){ vUv = uv; vSeed = aSeed;
+          // each shaft sits on its own wrapping 70 m grid around the camera and turns to face it
+          vec2 at = floor((uCamPos.xz - aOff) / 70.0 + 0.5) * 70.0 + aOff;
+          vec2 to = uCamPos.xz - at;
+          vec2 f = dot(to, to) > 1e-8 ? normalize(to) : vec2(0.0, 1.0);
+          vec3 p = vec3(position.x * f.y + position.z * f.x, position.y, position.z * f.y - position.x * f.x);
+          vec4 w = modelMatrix*vec4(p + vec3(at.x, 0.0, at.y),1.0); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }`,
       fragmentShader: /* glsl */ `
         uniform float uTime; uniform float uStrength; uniform vec3 uCamPos; uniform vec3 uColor;
         varying vec2 vUv; varying vec3 vW; varying float vSeed;
@@ -171,6 +182,7 @@ export class Environment {
         }`,
     });
     const r = mulberry32(5);
+    const shafts: THREE.BufferGeometry[] = [];
     for (let i = 0; i < 18; i++) {
       const w = 2 + r() * 6;
       const geo = new THREE.PlaneGeometry(w, 46, 1, 1);
@@ -182,13 +194,17 @@ export class Environment {
         p.setX(k, p.getX(k) - y * 0.18);
       }
       geo.setAttribute('aSeed', new THREE.BufferAttribute(new Float32Array(p.count).fill(r()), 1));
-      const m = new THREE.Mesh(geo, this.rayMat);
-      m.frustumCulled = false;
-      m.userData.ox = (r() - 0.5) * 70;
-      m.userData.oz = (r() - 0.5) * 70;
-      this.rays.push(m);
-      this.group.add(m);
+      const ox = (r() - 0.5) * 70;
+      const oz = (r() - 0.5) * 70;
+      const off = new Float32Array(p.count * 2);
+      for (let k = 0; k < p.count; k++) { off[k * 2] = ox; off[k * 2 + 1] = oz; }
+      geo.setAttribute('aOff', new THREE.BufferAttribute(off, 2));
+      shafts.push(geo);
     }
+    this.rays = new THREE.Mesh(mergeGeometries(shafts)!, this.rayMat);
+    for (const g of shafts) g.dispose();
+    this.rays.frustumCulled = false;
+    this.group.add(this.rays);
 
     // --- marine snow (wraps around camera in shader)
     const N = 2200;
@@ -374,14 +390,7 @@ export class Environment {
     this.rayMat.uniforms.uStrength.value = rayStrength;
     this.rayMat.uniforms.uCamPos.value.copy(cp);
     this.rayMat.uniforms.uColor.value.setRGB(0.45 + 0.4 * attR, 0.85, 0.95);
-    for (const m of this.rays) {
-      m.visible = rayStrength > 0.03;
-      if (!m.visible) continue;
-      const wx = Math.round((cp.x - m.userData.ox) / 70) * 70 + m.userData.ox;
-      const wz = Math.round((cp.z - m.userData.oz) / 70) * 70 + m.userData.oz;
-      m.position.set(wx, 0, wz);
-      m.rotation.y = Math.atan2(cp.x - wx, cp.z - wz);
-    }
+    this.rays.visible = rayStrength > 0.03;
 
     // marine snow
     const su = this.snowMat.uniforms;

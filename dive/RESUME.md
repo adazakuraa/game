@@ -1,8 +1,23 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-26（作業ブランチ `muse/fix-batch-1`）
+最終更新: 2026-11-26（作業ブランチ `muse/phase8-impl`）
 
 ## 現状
+- **Phase 8 の手順 S3（泳ぎ v2）・S4（生成モデル v2）を実装した**（ブランチ `muse/phase8-impl`、S0〜S2 の上。正式ビルド・アーティファクト・実機は未確認）。
+  - S3：背骨の線で曲げる頂点シェーダ（`SWIM_V2`）、個体ごとの `aSwim`（位相・振幅・向きの変化・胸びれ）、泳ぎ方の 5 型と周波数 `clamp(f0 + U/(0.7L), 0.6, 4)`、振って→滑る、C 字、C スタート。調整値は `src/life/swim.ts`。海の哺乳類・ペンギン・ウミヘビ・チンアナゴ・魚以外は従来の動き。
+  - S4：`buildFish` を v2 に（スーパー楕円の断面・横幅の包絡線・尾柄の隆起・口・格子のヒレと曲線の尾・埋めた目・尾柄のふた・aAO）、`paint.ts` にぼかし・側線・鰓蓋と口の線・ヒレの筋と縁・α の銀色。L1（400 以下）を `rt.geo1` に用意（描画は S5）。三角形は全生成魚が上限以内。
+  - 設計から変えた点は設計書 §9.4・§9.5 の「実装時の補足」（尾の振幅に全体倍率 0.8、`pedW` の既定 `min(0.3, ped)`、目の分割 10×5 など）。
+  - **未達・注意**：L0 だけで描くので、サンゴ礁の生き物の三角形が約 15〜19 万（予算 9 万、S5 の LOD で下げる前提）。生成魚 1 種の生成時間（VM）約 4.1〜4.6 → 6.6〜7.0ms。sheen・aAO をシェーダで使うのは S8。
+  - 検証（ハーネスビルド）：`probe-phase8.cjs` 全 PASS（項目 9 の周波数、全生成魚の三角形・L1・aAO を追加）、phase4（暗所 2 件は変更前から）・phase6 16/16・phase7 11/11・fixes 20/20（phase7 の写真カードと fixes の P4-6 は 1 回目だけ落ち、再実行で通過＝揺れ）。比較画像はリポジトリ外（ハーネスの compare/）。
+  - プローブの実行：Chromium は `PROBE_CHROME=/opt/pw-browsers/chromium-1243/chrome-linux64/chrome`、phase7 は `NODE_PATH=/opt/npm-tools/node_modules`（この環境の場合）。
+- **Phase 8 の手順 S0・S1・S2 を実装した**（ブランチ `muse/phase8-impl`。正式ビルド・`play.html`・アーティファクトは未更新、実機未確認）。
+  - S0：画素数の上限 90 万と適応解像度、`make-artifact.mjs --page`、診断表示（`?diag`／デバッグ欄）。
+  - S1：影の対象を絞る・サンゴの遠景ジオメトリ・スマホは BasicShadowMap（`bias -0.003`・`normalBias 0.12`）とコースティクス1回・小物と光芒の結合・生成済みの種 120 の上限・遠い個体の間引き・潜る前のシェーダコンパイル。調整値は `src/game/render.ts`。
+  - S2：地形・植生テクスチャ 13 枚を再圧縮（base64 2,001 → 1,394 KB、`prep_pbr.py --recompress`）。写真魚は未着手（S6）。
+  - 設計から変えた点は設計書 §9.1〜9.3 の「実装時の補足」。
+  - **未達（サンゴ礁、ハーネスビルドの計測）**：三角形 約 45〜51 万（予算 35 万）、影パス 約 134k（10 万）、影パス呼び出し 約 47（35）、影あり呼び出し 約 183〜192（175）、テクスチャ推定 約 55MB（40MB、生き物 36MB／20MB。保持 120 種のため）、地形テクスチャ 1,394 KB（1,250 KB）。三角形の主因は近くの敷き詰めサンゴが細かいままなこと。生き物の呼び出しは S5 で下げる。
+  - **未検証**：three 0.184 と vite を取得できない環境だったので、検証は three r170＋esbuild の専用ビルドだけ。`npm run artifact`（型チェック込み）を最初に通し、`probe-phase8.cjs` と既存プローブを流し直すこと。
+  - プローブ：`probe-phase8.cjs`（引数は artifact と play.html）の挙動の確認はすべて PASS。既存プローブで変更前から落ちる・揺れるもの：phase4 の暗所2件、phase5／5b／5c のマップ端トーストと黄金フィンの速さ、phase5 のアルバムの行数、probe-fixes の P3-1（後の2つは、描画が軽くなってヘッドレスでも実フレームが進み、発見済みマップが増える・正しい新マップのバナー「サンゴ礁」が出るため落ちる回がある）。
 - **修正バッチ1（Phase 1〜4 レビュー指摘24件）を実装・確認した**（`dive/docs/FIX-BATCH-1.md`、ブランチ `muse/fix-batch-1`）。
   - 直したもの：P1-2 `p1` 移行印（`loadSave`）／P1-4 ≤520px でコーチ表示中はトーストを 292px へ（旧位置は 112px 重なっていた）／P1-5 `TutStep.hold` 削除／P2-1 第4章のライト文言を入荷状態で分岐／P2-3 `save.announced` ＋ `announceStock()`（ボート画面表示時に未通知の入荷を1回だけ。結果画面の入荷も announced に積む）／P2-4・P2-5 コメントと CSS の整形／P3-1 `clearMapFound()` を startDive・endDive で／P3-3 `sDoneCh`（そのダイブで S を撮った章は助言を止める）／P3-4 結果画面に今回クリアした全章を表示／P3-6 `discover()` の未使用引数を削除／P4-1 `bait.ts`（最長一致、`ハゼ` を含む名前は語判定から外す）／P4-2 は後続の判断 AV で取り消し（下記）／P4-3 リーシュ外では逃走力を入れない／P4-4 引き寄せの全走査を2秒ごと・active のみ／P4-5 餌 UI は変化時のみ DOM 書き込み／P4-6 endDive で餌の雲を消す／P4-7 reshuffle で cur／curT をリセット／P4-8 設計文書 §1.1 を §9.2 に合わせた。
   - 再現せず：P1-1（endDive が tutorial=true を立てるので経路は既にある）。対応なし：P1-3（注記のみ）・P2-2・P2-6・P3-2・P3-5。
@@ -60,8 +75,9 @@
   - 検証：`npm run artifact` 通過、Playwright で各項目を確認（詳細は git 履歴と PHASE3-DESIGN）。
 
 ## 次の一手
-- Phase 8 は設計済み（`dive/docs/PHASE8-DESIGN.md`、2026-11-26。計測ベースライン §0.2、手順 S0〜S8、暫定決定 AW〜BH）。**最初は S0（`play.html` に viewport がなく 980px レイアウトで画素が約 9.5 倍になっている件の修正と診断表示）**。以下は元の記述：Phase 8（魚・生物モデルの見た目刷新＋軽量化）の設計・実装。見た目の統合設計は Opus、素材作りは Muse、ゲームへの組み込み設計は Opus が担う分担（2026-11-25 夜の合意）。軽量化は 2026-11-25 のユーザー報告（実機で重い）を受けた項目で、ドローコール／インスタンシング／解像度スケーリング／読み込みサイズが対象。Phase が終わったら次の Phase も続けて進める（ユーザー指示）。
-- アーティファクト更新は節目のみで、動作確認は GitHub Pages のビルド済み単体ファイル（https://adazakuraa.github.io/game/dive/play.html 。セーブはアーティファクト版と別。旧 /game/dive/ はソース表示のみでゲームは動かない）で行う。フェーズごとに `npm run artifact` → `dist/artifact.html` を `dive/play.html` にコピーして main へ push する。
+- Phase 8 は S0〜S4 まで実装済み。次は正式ビルド（`npm run artifact`、型チェック込み）と実機の確認（`ユーザ確認リスト.md`）、そのあと S5（LOD とアトラス。`rt.geo1` を使う）以降。
+- Phase 8 の設計は `dive/docs/PHASE8-DESIGN.md`（2026-11-26。計測ベースライン §0.2、手順 S0〜S8、暫定決定 AW〜BH）。元の記述：Phase 8（魚・生物モデルの見た目刷新＋軽量化）の設計・実装。見た目の統合設計は Opus、素材作りは Muse、ゲームへの組み込み設計は Opus が担う分担（2026-11-25 夜の合意）。軽量化は 2026-11-25 のユーザー報告（実機で重い）を受けた項目で、ドローコール／インスタンシング／解像度スケーリング／読み込みサイズが対象。Phase が終わったら次の Phase も続けて進める（ユーザー指示）。
+- アーティファクト更新は節目のみで、動作確認は GitHub Pages のビルド済み単体ファイル（https://adazakuraa.github.io/game/dive/play.html 。セーブはアーティファクト版と別。旧 /game/dive/ はソース表示のみでゲームは動かない）で行う。フェーズごとに `npm run artifact` → `node scripts/make-artifact.mjs dist dist/play.html --page` → `dist/play.html` を `dive/play.html` にコピーして main へ push する（`--page` なしの `artifact.html` には viewport 指定がなく、スマホが 980px 幅で描いて画素が約 9.5 倍になる。アーティファクトに公開するのは `artifact.html` のほう）。
 
 ## 判断待ち事項
 - Phase 1（PHASE1-DESIGN §9）：A ウニ漁後の夜／D 掲示板の解禁時期。（B は Phase 3 で結論→確認点L、C は Phase 2 で確定）

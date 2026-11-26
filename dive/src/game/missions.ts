@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { chestModel } from './gearModels';
+import { PROP_VIEW } from './render';
 import { buildUrchin } from '../life/models';
 import type { SpeciesDef } from '../life/species';
 import type { ZoneId } from '../world/layout';
@@ -126,7 +127,7 @@ export class Missions {
   private pried: number[] = [];
   private trashMesh: THREE.InstancedMesh;
   private camMesh: THREE.Mesh;
-  private chestMesh: THREE.Group;
+  private chestMesh: THREE.Mesh;
   private netMesh: THREE.LineSegments;
   private _m = new THREE.Matrix4();
   private _q = new THREE.Quaternion();
@@ -158,7 +159,7 @@ export class Missions {
     const cg = new THREE.BoxGeometry(0.22, 0.14, 0.11);
     this.camMesh = new THREE.Mesh(cg, new THREE.MeshStandardMaterial({ color: 0xf2c400, roughness: 0.4, emissive: 0x2a2000 }));
     // treasure chest: the shared model (Phase 5: chests.ts uses the same one)
-    this.chestMesh = chestModel().group;
+    this.chestMesh = chestModel().mesh;
     // ghost net: a tangle of torn mesh draped over a turtle
     const np: number[] = [];
     const nr = (k: number) => Math.sin(k * 12.9898) * 43758.5453 % 1;
@@ -172,6 +173,7 @@ export class Missions {
     ng.setAttribute('position', new THREE.Float32BufferAttribute(np, 3));
     this.netMesh = new THREE.LineSegments(ng, new THREE.LineBasicMaterial({ color: 0x5a8a6a, transparent: true }));
     for (const m of [this.netMesh, ...this.urchinMeshes, this.trashMesh, this.camMesh, this.chestMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
+    this.chestMesh.frustumCulled = true; // one mesh with its own bounds: it can be culled like any other
   }
 
   /** A new dive begins (Phase 3: a netted turtle never turns up two dives in a row). */
@@ -289,6 +291,7 @@ export class Missions {
     }
     if ((a.kind === 'lost' || a.kind === 'treasure') && a.spot) {
       const d = a.spot.distanceTo(c.player);
+      (a.kind === 'lost' ? this.camMesh : this.chestMesh).visible = d < PROP_VIEW;
       if ((a.lastHint ?? 0) <= c.time - 6) {
         a.lastHint = c.time;
         const what = a.kind === 'lost' ? 'カメラはすぐ近く！ 黄色い箱を探そう' : '宝箱はすぐ近く！ 石の陰もよく見て';

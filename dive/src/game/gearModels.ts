@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeProp, propMaterial, type PropPart } from '../render/prop';
 
 /**
  * First-person models of the spearfishing gear, built along -Z (pointing where the camera looks).
@@ -132,20 +133,36 @@ export function buildKnife(): THREE.Group {
   return g;
 }
 
-/** A treasure chest (dark wood, gold bands) with the lid on a hinge pivot so it can swing open. */
-export function chestModel(): { group: THREE.Group; lid: THREE.Group } {
-  const group = new THREE.Group();
-  const wood = new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.8, emissive: 0x120804 });
-  const gold = new THREE.MeshStandardMaterial({ color: 0xe8b830, roughness: 0.3, metalness: 0.8, emissive: 0x3a2800 });
-  const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.45), wood);
-  group.add(box);
-  const pivot = new THREE.Group();
-  pivot.position.set(0, 0.2, -0.225);
-  const lidMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.225, 0.225, 0.7, 10, 1, false, 0, Math.PI), wood);
-  lidMesh.rotation.z = Math.PI / 2;
-  lidMesh.position.set(0, 0, 0.225);
-  pivot.add(lidMesh);
-  group.add(pivot);
-  for (const x of [-0.25, 0.25]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.66, 0.47), gold); b.position.set(x, 0.12, 0); group.add(b); }
-  return { group, lid: pivot };
+/**
+ * A treasure chest (dark wood, gold bands) as one mesh. The lid is a vertex range that setLid swings
+ * about its hinge (rotation about x in radians: 0 closed, negative open).
+ */
+export function chestModel(): { mesh: THREE.Mesh; setLid: (angle: number) => void } {
+  const wood = { color: 0x4a2e18, rough: 0.8, emissive: 0x120804 };
+  const gold = { color: 0xe8b830, rough: 0.3, metal: 0.8, emissive: 0x3a2800 };
+  const parts: PropPart[] = [{ geo: new THREE.BoxGeometry(0.7, 0.4, 0.45), ...wood }];
+  for (const x of [-0.25, 0.25]) parts.push({ geo: new THREE.BoxGeometry(0.06, 0.66, 0.47).translate(x, 0.12, 0), ...gold });
+  const lidStart = parts.reduce((n, p) => n + p.geo.attributes.position.count, 0);
+  // the lid, in the hinge's frame
+  const lid = new THREE.CylinderGeometry(0.225, 0.225, 0.7, 10, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).translate(0, 0, 0.225);
+  const lidPos = Float32Array.from(lid.attributes.position.array);
+  const lidNor = Float32Array.from(lid.attributes.normal.array);
+  parts.push({ geo: lid, ...wood });
+  const geo = mergeProp(parts);
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const nor = geo.attributes.normal as THREE.BufferAttribute;
+  const setLid = (angle: number) => {
+    const c = Math.cos(angle), s = Math.sin(angle);
+    for (let i = 0; i < lidPos.length / 3; i++) {
+      const x = lidPos[i * 3], y = lidPos[i * 3 + 1], z = lidPos[i * 3 + 2];
+      pos.setXYZ(lidStart + i, x, 0.2 + y * c - z * s, -0.225 + y * s + z * c);
+      const nx = lidNor[i * 3], ny = lidNor[i * 3 + 1], nz = lidNor[i * 3 + 2];
+      nor.setXYZ(lidStart + i, nx, ny * c - nz * s, ny * s + nz * c);
+    }
+    pos.needsUpdate = nor.needsUpdate = true;
+  };
+  setLid(0);
+  // covers the lid at any angle
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.2, -0.1), 0.9);
+  return { mesh: new THREE.Mesh(geo, propMaterial()), setLid };
 }

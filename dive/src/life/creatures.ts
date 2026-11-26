@@ -2,14 +2,17 @@ import * as THREE from 'three';
 import { SPECIES, type SpeciesDef } from './species';
 import { loadPhotoTex, photoFor } from './photoFish';
 import { surfaceAt } from '../world/surface';
-import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr } from './models';
+import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr, type FishLayout } from './models';
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
 import { caveRoofAt, caveTopAt, heightFast, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
+import { KEEP, LOD, SHADOW, THIN } from '../game/render';
+import { Impostors, packColor, type ImpostorCell } from './impostors';
 import { resolveCapsule, resolveSphere, segmentBlocked } from '../world/colliders';
+import { SWIM, swimF0, swimFreq, swimModeOf, swimUniforms, type SwimMode } from './swim';
 
 type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number; absent?: boolean;
   /** 5 m cell key this group is registered under in the crowding map (Phase 4) */
@@ -35,12 +38,19 @@ type Agent = {
   aggro?: boolean; mode?: number; modeT?: number;
   /** speared by the diver: gone for the rest of this dive */
   taken?: boolean;
+  /** time not yet simulated while this far individual was being skipped (PHASE8-DESIGN §6.3-⑦) */
+  pend?: number;
   /** drawn to the scattered bait right now (Phase 4) */
   lured?: boolean;
   /** octopus: seconds spent inside grab reach / grab cooldown / the arm warning was shown (Phase 4) */
   octT?: number; octCd?: number; octWarned?: boolean;
   /** cached surface under a crawler: x, z, y */
   gx?: number; gz?: number; gy?: number;
+  /** swim v2 (PHASE8-DESIGN §4.2): tail-beat phase, pectoral phase, amplitude factor, beat/glide timer and state,
+   *  heading of the last write, smoothed turn rate, C-start timer, inside flight distance last frame */
+  swPh?: number; flPh?: number; ak?: number; gl?: number; gs?: number; pyaw?: number; tn?: number; cst?: number; fl?: boolean;
+  /** level of detail chosen last time it was drawn (0 L0 / 1 L1 / 2 atlas card), for the hysteresis (§1.1) */
+  lod?: 0 | 1 | 2;
 };
 
 export type SpeciesRuntime = {
@@ -55,8 +65,34 @@ export type SpeciesRuntime = {
   lureOffset?: THREE.Vector3;
   slot: number;
   minD?: number;
+  /** creature time when an individual was last within drawing range (PHASE8-DESIGN §6.3-⑥) */
+  lastNear?: number;
+  /** swim v2: per-instance (phase, ampK, turn, flapPhase), written with the instance matrices (§4.2) */
+  swimAttr?: THREE.InstancedBufferAttribute;
+  swimF0?: number;
+  /** labriform: always "beat then glide" */
+  swimGlide?: boolean;
+  /** L1 geometry (§1.1: generated fish rings 8 · segs 12, ≤ 400 triangles; other kinds a coarser build), made with L0 */
+  geo1?: THREE.BufferGeometry;
+  /** L1 mesh (§1.3): the same texture and uniforms as L0, its own instances; and its packing slot */
+  mesh1?: THREE.InstancedMesh;
+  slot1?: number;
+  swimAttr1?: THREE.InstancedBufferAttribute;
+  /** instances of the glow halo (all levels) */
+  slotH?: number;
+  /** L2: the species' cell in the shared atlas */
+  cell?: ImpostorCell;
+  /** body height / body length, for the on-screen size that picks the level */
+  hR?: number;
+  /** swim v2 wave number and tail amplitude (for the bend of the L2 card) */
+  swimK?: number;
+  swimTail?: number;
 };
 
+/** kinds whose builder makes an L1 (generated fish and the coarser builds of buildGeometry) */
+const L1_KINDS = new Set(['fish', 'ray', 'jelly', 'squid', 'octopus', 'dumbo', 'turtle', 'lobster', 'isopod']);
+/** kinds whose L2 card is the top view lying in the body plane (§1.2; turtles too, see §9.6) */
+const FLAT_CARD = new Set(['ray', 'turtle']);
 const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster', 'gardenEel', 'inv']);
 const _m = new THREE.Matrix4();
 const _v = new THREE.Vector3();
@@ -67,13 +103,60 @@ const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _qt = new THREE.Quaternion();
 const _sc = new THREE.Vector3();
 
-function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Paint } {
+/** PHASE8-DESIGN §1.1 / BG: triangle budgets of a generated fish — L0 by body length, and its L1. */
+export const FISH_TRIS = { smallSize: 0.4, small: 1500, large: 2500, l1: 400 };
+/** S4: generated model v2 for every fish on the new swim (false: only the trial body plans that set `xs`) */
+const MODEL_V2_ALL = true;
+
+/** Generated model v2 (§3) applies to the fish on swim v2; sea mammals, penguins and the sea snake keep the old body. */
+export function fishV2(def: SpeciesDef): boolean {
+  if (def.kind !== 'fish' || !def.fish || !swimModeOf(def)) return false;
+  return MODEL_V2_ALL || def.fish.xs !== undefined;
+}
+
+const triCount = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.attributes.position.count) / 3;
+
+/**
+ * L0 and L1 geometry of a generated fish (§3.1 subdivisions, §1.1 budgets). Over budget, the fin grids are thinned
+ * first, then the body rings along the length.
+ */
+function fishGeometries(def: SpeciesDef): { geo: THREE.BufferGeometry; geo1: THREE.BufferGeometry; layout: FishLayout } {
+  const f = def.fish!;
+  const v2 = fishV2(def);
+  const small = def.size < FISH_TRIS.smallSize;
+  const limit = small ? FISH_TRIS.small : FISH_TRIS.large;
+  let out: { geo: THREE.BufferGeometry; layout: FishLayout } | null = null;
+  if (v2) {
+    const rings = Math.max(f.rings ?? 0, small ? 16 : 18);
+    const segs0 = Math.max(f.segs ?? 0, small ? 28 : 32);
+    // over budget: first a few body rings along the length (hardly visible), then the fin grids
+    const steps: [number, number][] = [[0, 1], [2, 1], [4, 1], [4, 0.8], [6, 0.8], [6, 0.65], [8, 0.65], [10, 0.5], [12, 0.5]];
+    for (let k = 0; k < steps.length && !out; k++) {
+      const [ds, finK] = steps[k];
+      const r = buildFish({ ...f, rings, segs: Math.max(16, segs0 - ds) }, { v2, finK });
+      if (triCount(r.geo) <= limit || k === steps.length - 1) out = r;
+      else r.geo.dispose();
+    }
+  } else {
+    // the old subdivisions (sea mammals etc. keep their look)
+    const old = def.size < 0.3;
+    out = buildFish({ ...f, rings: f.rings ?? (old ? 8 : 12), segs: f.segs ?? (old ? 12 : 18) }, { v2 });
+  }
+  let geo1: THREE.BufferGeometry | null = null;
+  for (const finK of [1, 0.6, 0.3]) {
+    const r = buildFish({ ...f, rings: 8, segs: 12 }, { v2, detail: 1, finK });
+    if (triCount(r.geo) <= FISH_TRIS.l1 || finK === 0.3) { geo1 = r.geo; break; }
+    r.geo.dispose();
+  }
+  return { geo: out!.geo, geo1: geo1!, layout: out!.layout };
+}
+
+function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; geo1?: THREE.BufferGeometry; paint: Paint } {
   const [tw, th] = def.tex ?? (def.kind === 'fish' && def.size >= 0.4 ? [512, 256] : [256, 128]);
   switch (def.kind) {
     case 'fish': {
-      const small = def.size < 0.3;
-      const { geo, layout } = buildFish({ ...def.fish!, rings: def.fish!.rings ?? (small ? 8 : 12), segs: def.fish!.segs ?? (small ? 12 : 18) });
-      return { geo, paint: new Paint(tw, th, layout) };
+      const { geo, geo1, layout } = fishGeometries(def);
+      return { geo, geo1, paint: new Paint(tw, th, layout) };
     }
     case 'gardenEel': {
       const { geo, layout } = buildFish(def.fish!);
@@ -82,22 +165,23 @@ function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Pai
       setAttr(geo, 'aBend', (_x, y) => Math.pow(clamp(y, 0, 1), 1.5));
       return { geo, paint: new Paint(tw, th, layout) };
     }
+    // other kinds: L1 is the same builder with fewer subdivisions (§1.2; the uv mapping is the same function of position)
     case 'ray':
-      return { geo: buildRay(def.ray!).geo, paint: new Paint(tw, th) };
+      return { geo: buildRay(def.ray!).geo, geo1: buildRay(def.ray!, 1).geo, paint: new Paint(tw, th) };
     case 'jelly':
-      return { geo: buildJelly(def.jelly!), paint: new Paint(tw, th) };
+      return { geo: buildJelly(def.jelly!), geo1: buildJelly(def.jelly!, 1), paint: new Paint(tw, th) };
     case 'squid':
-      return { geo: buildSquid(def.squid!), paint: new Paint(tw, th) };
+      return { geo: buildSquid(def.squid!), geo1: buildSquid(def.squid!, 1), paint: new Paint(tw, th) };
     case 'octopus':
-      return { geo: buildOctopus({}), paint: new Paint(tw, th) };
+      return { geo: buildOctopus({}), geo1: buildOctopus({}, 1), paint: new Paint(tw, th) };
     case 'dumbo':
-      return { geo: buildOctopus({ dumbo: true }), paint: new Paint(tw, th) };
+      return { geo: buildOctopus({ dumbo: true }), geo1: buildOctopus({ dumbo: true }, 1), paint: new Paint(tw, th) };
     case 'turtle':
-      return { geo: buildTurtle(), paint: new Paint(tw, th) };
+      return { geo: buildTurtle(), geo1: buildTurtle(1), paint: new Paint(tw, th) };
     case 'lobster':
-      return { geo: buildCrustacean({ lobster: true }), paint: new Paint(tw, th) };
+      return { geo: buildCrustacean({ lobster: true }), geo1: buildCrustacean({ lobster: true }, 1), paint: new Paint(tw, th) };
     case 'isopod':
-      return { geo: buildCrustacean({}), paint: new Paint(tw, th) };
+      return { geo: buildCrustacean({}), geo1: buildCrustacean({}, 1), paint: new Paint(tw, th) };
     case 'nudi':
       return { geo: buildNudibranch(), paint: new Paint(tw, th) };
     case 'inv':
@@ -107,8 +191,30 @@ function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Pai
   }
 }
 
-function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false): THREE.MeshStandardMaterial {
+/** Distance beyond which an individual of body length `s` is not drawn (lost in the haze). */
+function drawCut(s: number): number {
+  return s < 0.12 ? 20 : s < 0.35 ? 34 : s < 1 ? 46 : 52 + s * 3;
+}
+
+/** half body height at t = k / 16 for the v2 scale rows (§3.4: rows follow the body envelope) */
+function envSamples(lay: FishLayout): number[] {
+  const out: number[] = [];
+  for (let k = 0; k <= 16; k++) {
+    const t = k / 16;
+    const e = (lay.shape.H / 2) * lay.env(t);
+    out.push(Math.max(0.004, (e * lay.top(t) + e * (1 + (lay.shape.belly ?? 0.08) * 0.4)) / 2));
+  }
+  return out;
+}
+
+/**
+ * Creature material. `lod1`: the L1 variant (§6.3-③): the same texture and look without the caustic pattern (its
+ * average light stays) and without the scale / photo relief (CR_LOD1), which only reads up close.
+ */
+function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false, lay?: FishLayout, lod1 = false): THREE.MeshStandardMaterial {
   const m = def.mat ?? {};
+  const v2 = !photo && (lay ? !!lay.v2 : fishV2(def));
+  const mode: SwimMode | null = swimModeOf(def);
   const translucent = m.translucent !== undefined;
   const mat = new THREE.MeshStandardMaterial({
     map,
@@ -130,6 +236,9 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   const blink = def.id === 'hikarikinme' || def.id === 'hikarikinme2';
   if (blink) mat.defines = { ...(mat.defines ?? {}), GLOW_BLINK: '' };
   if (def.rainbow) mat.defines = { ...(mat.defines ?? {}), RAINBOW: '' };
+  if (mode) mat.defines = { ...(mat.defines ?? {}), SWIM_V2: '' };
+  if (lod1) mat.defines = { ...(mat.defines ?? {}), CR_LOD1: '' };
+  const su = mode ? swimUniforms(mode, def, photo) : { a: [0, 0, 0, 0] as [number, number, number, number], k: 0, tail: 0, flap: 0 };
   const scaly = !photo && (def.kind === 'fish' || def.kind === 'gardenEel');
   if (photo) {
     // photographed skin already carries scales / pattern; the outline comes from alpha
@@ -139,12 +248,14 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   }
   if (scaly) {
     mat.defines = { ...(mat.defines ?? {}), FISH_SCALES: '' };
+    if (v2) mat.defines.FISH_V2 = '';
     // wet, glossy skin; silver species keep their metal value
     mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
   }
   return underwaterMaterial(mat, {
-    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : ''),
+    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : '') + (mode ? '-sw' : '') + (v2 ? '-v2' : '') + (lod1 ? '-l1' : ''),
     caustic: 0.9,
+    noCaustic: lod1,
     uniforms: {
       uSwim: { value: new THREE.Vector3(...swim) },
       uFlap: { value: new THREE.Vector3(...flap) },
@@ -153,15 +264,97 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       uGlowAmt: { value: 1 },
       uUvAspect: { value: uvAspect },
       uFishSize: { value: def.size },
+      // swim v2: A(q) coefficients (A(1) = 1) and s0; wave number 2π/λ, tail amplitude, pectoral flap, C-bend κ
+      uSwimA: { value: new THREE.Vector4(...su.a) },
+      uSwimB: { value: new THREE.Vector4(su.k, su.tail, su.flap, SWIM.kappa) },
+      // model v2 (§3.3-3.4): scale columns per unit length, half heights along the body, gill cover edge (u)
+      uScaleN: { value: lay?.shape.scaleN ?? 48 },
+      uEnvH: { value: lay ? envSamples(lay) : new Array(17).fill(0.1) },
+      uHalfH: { value: lay ? lay.shape.H / 2 : 0.1 },
+      uBodyLen: { value: lay ? lay.zMax - lay.zMin : 1 },
+      uGillU: { value: lay ? ((lay.gillT ?? 0.76) - 0.5 - lay.zMin) / (lay.zMax - lay.zMin) : 0.7 },
     },
     vertexHead: `attribute float aBend; attribute float aFlap; attribute float aPulse; attribute float aGlow; attribute float aFin;
-      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin; varying float vPh;`,
+      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin; varying float vPh;
+      #ifdef SWIM_V2
+        attribute vec4 aSwim; uniform vec4 uSwimA; uniform vec4 uSwimB;
+      #endif
+      #ifdef FISH_V2
+        uniform float uEnvH[ 17 ]; varying float vScaleV;
+      #endif`,
     vertexBody: `
       float ph = 0.0;
       #ifdef USE_INSTANCING
         ph = instanceMatrix[3].x * 0.71 + instanceMatrix[3].z * 0.53 + instanceMatrix[3].y * 0.37;
       #endif
       vPh = ph;
+      #ifdef FISH_V2
+      {
+        // height across the body normalised by the local half height: scale rows follow the envelope (§3.4)
+        float et = clamp( position.z + 0.5, 0.0, 1.0 ) * 16.0;
+        int ei = int( min( floor( et ), 15.0 ) );
+        vScaleV = position.y / mix( uEnvH[ ei ], uEnvH[ ei + 1 ], et - float( ei ) );
+      }
+      #endif
+      #ifdef SWIM_V2
+      {
+        // Swim v2 (PHASE8-DESIGN §4.2): the body follows a travelling wave along the spine x = o(s, t), and every
+        // cross-section turns with the spine's slope instead of sliding sideways (the caudal fin stays square to it).
+        // aSwim = (tail-beat phase, amplitude factor, turn rate, pectoral phase), integrated per individual on the CPU.
+        vec4 sw = vec4( 0.0, 1.0, 0.0, 0.0 );
+        #ifdef USE_INSTANCING
+          sw = aSwim;
+        #endif
+        // pectoral fins row fore and aft and fold in (aFlap: 0 at the root .. ±1 at the tip, sign = side)
+        float fa = abs( aFlap );
+        float fk = uSwimB.z * sw.y * fa;
+        transformed.z += fk * sin( sw.w );
+        transformed.x -= sign( aFlap ) * fk * 0.6 * ( 0.5 + 0.5 * cos( sw.w ) );
+        float s = 0.5 - position.z;
+        float sc = clamp( s, 0.0, 1.0 );
+        float span = 1.0 - uSwimA.w;
+        float q = max( 0.0, sc - uSwimA.w ) / span;
+        float dq = ( sc > uSwimA.w && s < 1.0 && s > 0.0 ) ? 1.0 / span : 0.0;
+        float A = uSwimA.x + uSwimA.y * q + uSwimA.z * q * q;
+        float dA = ( uSwimA.y + 2.0 * uSwimA.z * q ) * dq;
+        float amp = uSwimB.y * sw.y;
+        float arg = sw.x - uSwimB.x * sc;
+        float sn = sin( arg ), cs = cos( arg );
+        float o = amp * A * sn;
+        float dods = amp * ( dA * sn - A * uSwimB.x * cs );
+        // turning: C-shaped bend toward the side the fish turns to, pivoting about the first third
+        float cb = sc - 0.35;
+        o += uSwimB.w * sw.z * cb * cb;
+        dods += uSwimB.w * sw.z * 2.0 * cb;
+        // beyond the spine (caudal fin, snout) the shape is carried rigidly along the end tangent
+        o += dods * ( s - sc );
+        float th = atan( -dods );
+        float ct = cos( th ), st = sin( th );
+        #ifdef BEND_Y
+          float lat = transformed.y;
+          transformed.y = o + lat * ct;
+          transformed.z -= lat * st;
+          objectNormal = vec3( objectNormal.x, objectNormal.y * ct + objectNormal.z * st, -objectNormal.y * st + objectNormal.z * ct );
+        #else
+          float lat = transformed.x;
+          transformed.x = o + lat * ct;
+          transformed.z -= lat * st;
+          objectNormal = vec3( objectNormal.x * ct + objectNormal.z * st, objectNormal.y, -objectNormal.x * st + objectNormal.z * ct );
+        #endif
+        // the lit normal was already derived from objectNormal before <begin_vertex>: derive it again
+        transformedNormal = objectNormal;
+        #ifdef USE_INSTANCING
+          transformedNormal = mat3( instanceMatrix ) * transformedNormal;
+        #endif
+        transformedNormal = normalMatrix * transformedNormal;
+        #ifdef FLIP_SIDED
+          transformedNormal = - transformedNormal;
+        #endif
+        #ifndef FLAT_SHADED
+          vNormal = normalize( transformedNormal );
+        #endif
+      }
+      #else
       float wave = sin( uTime * uSwim.x + ph - position.z * uSwim.z );
       #ifdef BEND_Y
         transformed.y += wave * uSwim.y * aBend;
@@ -170,6 +363,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       #endif
       float fl = sin( uTime * uFlap.x + ph * 1.3 - position.z * uFlap.z );
       transformed.y += fl * uFlap.y * aFlap;
+      #endif
       float pu = sin( uTime * uPulse.x + ph );
       transformed.xz *= 1.0 - pu * uPulse.y * aPulse;
       transformed.y += max( pu, 0.0 ) * uPulse.y * aPulse * 0.25;
@@ -178,11 +372,20 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       #ifdef GLOW_SPIN
         vGlow *= 0.15 + pow( 0.5 + 0.5 * sin( atan( position.z, position.x ) * 2.0 - uTime * 4.0 ), 3.0 ) * 1.6;
       #endif`,
-    fragHead: 'uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; uniform float uUvAspect; uniform float uFishSize;',
+    fragHead: `uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; uniform float uUvAspect; uniform float uFishSize;
+      #ifdef FISH_V2
+        varying float vScaleV; uniform float uScaleN; uniform float uHalfH; uniform float uBodyLen; uniform float uGillU;
+      #endif`,
     fragFuncs: `
       #if defined( FISH_SCALES ) && defined( USE_MAP )
       float fishScale( vec2 uv ) {
-        vec2 q = uv * vec2( 58.0, 58.0 * uUvAspect );
+        #ifdef FISH_V2
+          // §3.4: columns per body length by species (scaleN), rows across the local body height
+          if ( uScaleN <= 0.0 ) return 0.0;
+          vec2 q = vec2( uv.x * uScaleN * uBodyLen, vScaleV * uScaleN * uHalfH );
+        #else
+          vec2 q = uv * vec2( 58.0, 58.0 * uUvAspect );
+        #endif
         float row = floor( q.y );
         q.x += mod( row, 2.0 ) * 0.5;
         vec2 f = fract( q ) - vec2( 0.62, 0.5 );
@@ -199,11 +402,12 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
           diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * 1.3 + 0.035, fe * 0.55 );
         }
       #endif
-      #if defined( FISH_SCALES ) && defined( USE_MAP )
+      #if defined( FISH_SCALES ) && defined( USE_MAP ) && !defined( CR_LOD1 )
       if ( vFin < 0.5 ) diffuseColor.rgb *= 0.985 + 0.02 * fishScale( vMapUv );
       else if ( vFin < 1.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * ( 0.9 + 0.14 * abs( sin( vMapUv.y * 150.0 ) ) ), 0.7 * ( 1.0 - smoothstep( 0.8, 2.5, uFishSize ) ) );
       #endif`,
     fragBeforeLights: `
+      #ifndef CR_LOD1
       #if defined( PHOTO_FISH ) && defined( USE_MAP )
         // photographed relief: luminance detail as a faint bump so scales and gill plates catch the light
         normal = uwBump( normal, dot( texture2D( map, vMapUv ).rgb, vec3( 0.3, 0.59, 0.11 ) ) * uFishSize * 0.004 );
@@ -213,8 +417,17 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
         // relief fades with size: on big animals a texture-space pattern turns into coarse banding
         float big = 1.0 - smoothstep( 0.6, 2.0, uFishSize );
         float hb = vFin < 0.5 ? fishScale( vMapUv ) * uFishSize * 0.0006 * ( 0.3 + 0.7 * big ) : vFin < 1.5 ? abs( sin( vMapUv.y * 150.0 ) ) * uFishSize * 0.00035 * big : 0.0;
+        #ifdef FISH_V2
+          // §3.3: the gill cover stands a little proud of the flank behind it (light only, the shape is unchanged)
+          if ( vFin < 0.5 ) {
+            float av = clamp( abs( vScaleV ), 0.0, 1.0 );
+            float ge = uGillU - 0.012 * ( 1.0 - av * av );
+            hb += smoothstep( ge - 0.004, ge + 0.004, vMapUv.x ) * ( 1.0 - smoothstep( 0.6, 0.9, av ) ) * uFishSize * 0.0012;
+          }
+        #endif
         normal = uwBump( normal, hb );
       }
+      #endif
       #endif`,
     fragRough: `
       #ifdef FISH_SCALES
@@ -325,10 +538,13 @@ export class Creatures {
   private rnd = mulberry32(77);
   private haloTex = makeSoftDot('rgba(255,255,255,1)', 'rgba(255,255,255,0.25)');
   time = 0;
+  /** the individual in the viewfinder (set by the game): always simulated every frame */
+  focus: Agent | null = null;
 
   private homes!: Homes;
   constructor(homes: Homes) {
     this.homes = homes;
+    this.imp = new Impostors(this.group);
     for (const def of SPECIES) this.list.push(this.spawn(def, homes));
   }
 
@@ -626,62 +842,315 @@ export class Creatures {
    */
   private buildMesh(rt: SpeciesRuntime): void {
     const def = rt.def;
-      const photo = def.kind === 'fish' ? photoFor(def.id) : null;
-      let geo: THREE.BufferGeometry;
-      let mat: THREE.MeshStandardMaterial;
-      if (photo) {
-        geo = buildPhotoFish(photo.prof, photo.aspect, def.photoWidth ?? (def.fish ? Math.min(0.7, def.fish.W / def.fish.H) : 0.42));
-        mat = makeMaterial(def, loadPhotoTex(photo.url), 1 / photo.aspect, true);
-      } else {
-        const b = buildGeometry(def);
-        geo = b.geo;
-        def.paint?.(b.paint);
-        const tex = new THREE.CanvasTexture(b.paint.c);
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 4;
-        const lay = b.paint.fish;
-        mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
+    const photo = def.kind === 'fish' ? photoFor(def.id) : null;
+    let geo: THREE.BufferGeometry;
+    let mat: THREE.MeshStandardMaterial;
+    let mat1: THREE.MeshStandardMaterial | undefined;
+    if (photo) {
+      geo = buildPhotoFish(photo.prof, photo.aspect, def.photoWidth ?? (def.fish ? Math.min(0.7, def.fish.W / def.fish.H) : 0.42));
+      mat = makeMaterial(def, loadPhotoTex(photo.url), 1 / photo.aspect, true);
+      // body height on screen: the tallest fin-less column of the silhouette (the geometry is 1.12 long)
+      rt.hR = (Math.max(...photo.prof.map((r) => r[2] - r[3])) * 1.12) / photo.aspect;
+    } else {
+      const b = buildGeometry(def);
+      geo = b.geo;
+      rt.geo1 = b.geo1;
+      def.paint?.(b.paint);
+      const lay = b.paint.fish;
+      // §3.4: silver flanks and belly marked in the texture's alpha (read by the §5.2 sheen), opaque species only
+      if (lay?.v2 && def.mat?.translucent === undefined) b.paint.sheenMask(b.paint.sheen ?? Math.min(1, (def.mat?.metal ?? 0.05) * 1.4));
+      const tex = new THREE.CanvasTexture(b.paint.c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      const uvA = lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3;
+      mat = makeMaterial(def, tex, uvA, false, lay);
+      if (rt.geo1) mat1 = makeMaterial(def, tex, uvA, false, lay, true);
+      if (def.fish && def.kind === 'fish') rt.hR = def.fish.H;
+      else {
+        // seen from above (rays, turtles: the span), from the side (squid: the height), else the larger of the two
+        geo.computeBoundingBox();
+        const bb = geo.boundingBox!;
+        const sx = bb.max.x - bb.min.x, sy = bb.max.y - bb.min.y;
+        rt.hR = clamp(FLAT_CARD.has(def.kind) ? sx : def.kind === 'squid' ? sy : Math.max(sx, sy), 0.05, 1.2);
       }
-      const mesh = new THREE.InstancedMesh(geo, mat, def.count);
+    }
+    const mode = swimModeOf(def);
+    const swimAttr = () => new THREE.InstancedBufferAttribute(new Float32Array(def.count * 4), 4).setUsage(THREE.DynamicDrawUsage);
+    if (mode) {
+      // per-instance swim state (PHASE8-DESIGN §4.2): phase, amplitude factor, turn rate, pectoral phase
+      rt.swimAttr = swimAttr();
+      geo.setAttribute('aSwim', rt.swimAttr);
+      rt.swimF0 = swimF0(def);
+      rt.swimGlide = mode === 'labriform';
+      const su = swimUniforms(mode, def, !!photo);
+      rt.swimK = su.k;
+      rt.swimTail = su.tail;
+    }
+    const inst = (g: THREE.BufferGeometry, m: THREE.MeshStandardMaterial, name: string) => {
+      const mesh = new THREE.InstancedMesh(g, m, def.count);
       mesh.frustumCulled = false;
-      mesh.castShadow = def.kind !== 'jelly' && def.size >= 0.6;
       mesh.receiveShadow = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.name = def.id;
-      if (def.instColors) { mesh.setColorAt(0, new THREE.Color(1, 1, 1)); }
-      rt.mesh = mesh;
+      mesh.name = name;
+      if (def.instColors) mesh.setColorAt(0, new THREE.Color(1, 1, 1));
       this.group.add(mesh);
-      if (def.mat?.glow) {
-        rt.haloPos = new Float32Array(def.count * 3);
-        const hg = new THREE.BufferGeometry();
-        hg.setAttribute('position', new THREE.BufferAttribute(rt.haloPos, 3));
-        const hm = new THREE.PointsMaterial({
-          map: this.haloTex,
-          color: def.mat.glow,
-          size: def.id === 'atolla' ? def.size * 3.2 : Math.max(0.2, Math.min(0.7, def.size * 2)),
-          sizeAttenuation: true,
-          transparent: true,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          fog: false,
-          opacity: 0.85,
-        });
-        rt.halo = new THREE.Points(hg, hm);
-        rt.halo.frustumCulled = false;
-        this.group.add(rt.halo);
-        if (def.id === 'angler') rt.lureOffset = new THREE.Vector3(0, def.fish!.H / 2 + 0.22, 0.54);
+      return mesh;
+    };
+    rt.mesh = inst(geo, mat, def.id);
+    if (rt.geo1 && mat1) {
+      // L1 (§1.3): its own instances, the same texture
+      if (mode) { rt.swimAttr1 = swimAttr(); rt.geo1.setAttribute('aSwim', rt.swimAttr1); }
+      rt.mesh1 = inst(rt.geo1, mat1, def.id + '-l1');
+    } else if (rt.geo1) {
+      rt.geo1.dispose();
+      rt.geo1 = undefined;
+    }
+    // L2 (§1.2): fish and squid from the side, rays and turtles from above; the other kinds have no card
+    const card = def.kind === 'fish' || def.kind === 'ray' || def.kind === 'squid' || def.kind === 'turtle';
+    if (card) this.allocCell(rt, geo, mat.map!, FLAT_CARD.has(def.kind), !!photo);
+    if (def.mat?.glow) {
+      rt.haloPos = new Float32Array(def.count * 3);
+      const hg = new THREE.BufferGeometry();
+      hg.setAttribute('position', new THREE.BufferAttribute(rt.haloPos, 3));
+      const hm = this.haloMaterial(def.mat.glow, def.id === 'atolla' ? def.size * 3.2 : Math.max(0.2, Math.min(0.7, def.size * 2)));
+      rt.halo = new THREE.Points(hg, hm);
+      rt.halo.frustumCulled = false;
+      this.group.add(rt.halo);
+      if (def.id === 'angler') rt.lureOffset = new THREE.Vector3(0, def.fish!.H / 2 + 0.22, 0.54);
+    }
+    rt.lastNear = this.time;
+    this.held.add(rt);
+    this.writeAll(rt);
+  }
+
+  /** the shared L2 atlas and its one InstancedMesh (§1.3) */
+  readonly imp: Impostors;
+  /** set by the game: draws the atlas cells (without it, far individuals stay on L1) */
+  renderer: THREE.WebGLRenderer | null = null;
+  /** px per metre at 1 m, for the on-screen body height: screen height at the device's top resolution / (2 tan(fov / 2)) */
+  lodFocal = (844 * 1.5) / (2 * Math.tan((74 * Math.PI) / 360));
+
+  /** Reserve the species' atlas cell; a full atlas gives up the cell of the species away the longest. */
+  private allocCell(rt: SpeciesRuntime, geo: THREE.BufferGeometry, map: THREE.Texture, flat: boolean, alphaTest: boolean): void {
+    let cell = this.imp.alloc(geo, map, { flat, alphaTest });
+    if (!cell) {
+      let victim: SpeciesRuntime | null = null;
+      for (const o of this.held) if (o !== rt && o.cell && (!victim || (o.lastNear ?? 0) < (victim.lastNear ?? 0))) victim = o;
+      if (victim) {
+        this.imp.release(victim.cell);
+        victim.cell = undefined;
+        cell = this.imp.alloc(geo, map, { flat, alphaTest });
       }
-      this.writeAll(rt);
+    }
+    rt.cell = cell ?? undefined;
+  }
+
+  /** Species whose mesh, texture and material exist right now. */
+  private held = new Set<SpeciesRuntime>();
+
+  /** Free everything buildMesh made; the species is built again when it comes near. */
+  private disposeMesh(rt: SpeciesRuntime): void {
+    const mesh = rt.mesh;
+    if (!mesh) return;
+    this.group.remove(mesh);
+    const mat = mesh.material as THREE.MeshStandardMaterial;
+    mat.map?.dispose(); // painted or photo texture, one per species (shared by L1)
+    mat.dispose();
+    mesh.geometry.dispose();
+    mesh.dispose(); // instance matrices and colours
+    if (rt.mesh1) {
+      this.group.remove(rt.mesh1);
+      (rt.mesh1.material as THREE.Material).dispose();
+      rt.mesh1.dispose();
+    }
+    rt.geo1?.dispose();
+    rt.geo1 = undefined;
+    rt.mesh1 = undefined;
+    rt.swimAttr1 = undefined;
+    this.imp.release(rt.cell); // the atlas cell goes back (a waiting one is forgotten)
+    rt.cell = undefined;
+    if (rt.halo) {
+      this.group.remove(rt.halo);
+      rt.halo.geometry.dispose();
+      (rt.halo.material as THREE.Material).dispose(); // its texture (haloTex) is shared: kept
+    }
+    rt.mesh = undefined;
+    rt.swimAttr = undefined;
+    rt.halo = undefined;
+    rt.haloPos = undefined;
+    rt.lureOffset = undefined;
+    this.held.delete(rt);
+  }
+
+  /** Keep at most KEEP.species built: drop those that have been away the longest, if away long enough. */
+  private evict(): void {
+    if (this.held.size <= KEEP.species) return;
+    const away: SpeciesRuntime[] = [];
+    for (const rt of this.held) {
+      const id = rt.def.id;
+      if (this.stage.has(id) || this.pin?.id === id || this.companion?.id === id) continue;
+      if (this.time - (rt.lastNear ?? 0) >= KEEP.idleSec) away.push(rt);
+    }
+    away.sort((a, b) => (a.lastNear ?? 0) - (b.lastNear ?? 0));
+    for (const rt of away) {
+      if (this.held.size <= KEEP.species) break;
+      this.disposeMesh(rt);
+    }
+  }
+
+  /**
+   * Is any individual of an unbuilt species within drawing range? 2: and not behind the camera (it would be
+   * drawn this frame), 1: only behind, 0: none.
+   */
+  private drawable(rt: SpeciesRuntime): 0 | 1 | 2 {
+    let found: 0 | 1 = 0;
+    for (const a of rt.agents) {
+      if (rt.groups[a.g].absent || a.taken) continue;
+      const dx = a.p.x - this.viewPos.x, dy = a.p.y - this.viewPos.y, dz = a.p.z - this.viewPos.z;
+      const d = Math.hypot(dx, dy, dz);
+      if (d > drawCut(a.s) * 1.1) continue;
+      const reach = a.s * 1.5 + 2;
+      if (d <= reach || dx * this.viewDir.x + dy * this.viewDir.y + dz * this.viewDir.z >= -reach) return 2;
+      found = 1;
+    }
+    return found;
+  }
+
+  /**
+   * One tiny instanced mesh per distinct kind of creature shader, so that all of them can be compiled
+   * before a dive (PHASE8-DESIGN §6.3-⑧). The caller keeps these objects: while their materials live,
+   * the compiled programs are not released when species meshes are disposed.
+   */
+  warmupObjects(): THREE.Object3D[] {
+    const map = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    map.colorSpace = THREE.SRGBColorSpace;
+    map.needsUpdate = true;
+    const geo = new THREE.BufferGeometry();
+    for (const [name, size] of [['position', 3], ['normal', 3], ['uv', 2], ['aBend', 1], ['aFlap', 1], ['aPulse', 1], ['aGlow', 1], ['aFin', 1], ['aAO', 1]] as const) {
+      geo.setAttribute(name, new THREE.BufferAttribute(new Float32Array(3 * size), size));
+    }
+    geo.setAttribute('aSwim', new THREE.InstancedBufferAttribute(new Float32Array(4), 4));
+    const seen = new Set<string>();
+    const out: THREE.Object3D[] = [];
+    let halo = false;
+    for (const def of SPECIES) {
+      if (def.kind === 'none') continue;
+      const photo = def.kind === 'fish' && !!photoFor(def.id);
+      const sig = [def.kind, def.mat?.translucent !== undefined, photo, def.id.startsWith('hikarikinme'), def.id === 'atolla', !!def.rainbow, !!def.fish?.bendY, !!def.instColors, !!swimModeOf(def), !photo && fishV2(def)].join('|');
+      if (!seen.has(sig)) {
+        seen.add(sig);
+        // L0, and the L1 variant for the kinds that have one (§6.3-③)
+        for (const lod1 of photo || !L1_KINDS.has(def.kind) ? [false] : [false, true]) {
+          const mesh = new THREE.InstancedMesh(geo, makeMaterial(def, map, 0.3, photo, undefined, lod1), 1);
+          if (def.instColors) mesh.setColorAt(0, new THREE.Color(1, 1, 1));
+          mesh.castShadow = def.kind !== 'jelly';
+          mesh.receiveShadow = true;
+          mesh.frustumCulled = false;
+          out.push(mesh);
+        }
       }
+      if (def.mat?.glow && !halo) {
+        halo = true;
+        const pts = new THREE.Points(geo, this.haloMaterial(def.mat.glow, 0.2));
+        pts.frustumCulled = false;
+        out.push(pts);
+      }
+    }
+    out.push(this.imp.warmupObject());
+    return out;
+  }
+
+  private haloMaterial(color: number, size: number): THREE.PointsMaterial {
+    return new THREE.PointsMaterial({
+      map: this.haloTex,
+      color,
+      size,
+      sizeAttenuation: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+      opacity: 0.85,
+    });
+  }
 
   private writeAll(rt: SpeciesRuntime) {
-    rt.slot = 0;
+    const wdt = this.wdt;
+    this.wdt = 0;
+    // cards are only listed by the frame's main pass (this fill may run before or outside it)
+    this.noCards = true;
+    this.beginSpecies(rt);
     rt.agents.forEach((a, i) => {
       this.orient(rt, a, 1);
       this.writeInstance(rt, a, i);
     });
-    rt.mesh!.count = rt.slot;
-    rt.mesh!.instanceMatrix.needsUpdate = true;
+    this.finishSpecies(rt, true);
+    this.noCards = false;
+    this.wdt = wdt;
+  }
+  private noCards = false;
+
+  private beginSpecies(rt: SpeciesRuntime): void {
+    rt.slot = 0;
+    rt.slot1 = 0;
+    rt.slotH = 0;
+    rt.minD = 1e9;
+  }
+
+  /** Instance counts, uploads, visibility and shadows of the L0 / L1 meshes and the halo after packing. */
+  private finishSpecies(rt: SpeciesRuntime, keepVisible = false): void {
+    for (const [m, n, sa] of [[rt.mesh, rt.slot, rt.swimAttr], [rt.mesh1, rt.slot1 ?? 0, rt.swimAttr1]] as const) {
+      if (!m) continue;
+      m.count = n;
+      if (!keepVisible) m.visible = n > 0;
+      m.instanceMatrix.needsUpdate = true;
+      if (sa) sa.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    }
+    if (rt.halo) {
+      const n = rt.slotH ?? 0;
+      if (!keepVisible) rt.halo.visible = n > 0;
+      rt.halo.geometry.setDrawRange(0, n);
+      rt.halo.geometry.attributes.position.needsUpdate = true;
+    }
+    this.shadowFor(rt);
+  }
+
+  /** Only large animals close to the diver cast a sun shadow (PHASE8-DESIGN §6.3-①). */
+  private shadowFor(rt: SpeciesRuntime): void {
+    const cast = rt.def.kind !== 'jelly' && rt.def.size >= SHADOW.creatureSize && (rt.minD ?? 1e9) < SHADOW.creatureDist;
+    rt.mesh!.castShadow = cast;
+    if (rt.mesh1) rt.mesh1.castShadow = cast;
+  }
+
+  /** Always drawn on L0 (§1.1): the individual in the viewfinder, and the pinned, companion and staged ones. */
+  private forcedL0(rt: SpeciesRuntime, a: Agent, i: number): boolean {
+    const id = rt.def.id;
+    if (a === this.focus) return true;
+    if (i === 0 && (this.pin?.id === id || this.companion?.id === id)) return true;
+    const st = this.stage.get(id);
+    return !!st && i < st.length;
+  }
+
+  /**
+   * Level of detail by the body's height on screen (§1.1): L0 from 120 px, L2 below 24 px, 15% hysteresis on the
+   * way down. A level the species does not have (no L1 mesh, atlas cell not drawn yet) falls back to more detail.
+   */
+  private levelOf(rt: SpeciesRuntime, a: Agent, i: number, d: number): 0 | 1 | 2 {
+    let lv: 0 | 1 | 2;
+    if (this.forcedL0(rt, a, i)) lv = 0;
+    else {
+      const h = (a.s * (rt.hR ?? 0.3) * this.lodFocal) / Math.max(d, 0.05);
+      const dn = 1 - LOD.hyst;
+      const p = a.lod;
+      const t0 = p === 0 ? LOD.l0 * dn : LOD.l0;
+      const t2 = p === 0 || p === 1 ? LOD.l2 * dn : LOD.l2;
+      lv = h >= t0 ? 0 : h >= t2 ? 1 : 2;
+    }
+    a.lod = lv;
+    if (lv === 2 && !rt.cell?.ready) lv = 1;
+    if (lv === 1 && !rt.mesh1) lv = 0;
+    return lv;
   }
 
   private orient(rt: SpeciesRuntime, a: Agent, k: number) {
@@ -725,11 +1194,11 @@ export class Creatures {
     const dx = a.p.x - this.viewPos.x, dy = a.p.y - this.viewPos.y, dz = a.p.z - this.viewPos.z;
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
     const reach = s * 1.5 + 2;
-    if (d > (s < 0.12 ? 20 : s < 0.35 ? 34 : s < 1 ? 46 : 52 + s * 3)) return;
+    if (d > drawCut(s)) return;
+    rt.lastNear = this.time;
+    if (!rt.mesh) return; // not built yet (nothing of it has been in sight)
     if (d > reach && (dx * this.viewDir.x + dy * this.viewDir.y + dz * this.viewDir.z) < -reach) return;
-    const i = rt.slot++;
     if (d < (rt.minD ?? 1e9)) rt.minD = d;
-    if (a.col) rt.mesh!.setColorAt(i, a.col);
     if (rt.def.behavior === 'buried') {
       _v.copy(a.p);
       _v.y -= a.retract * s * 1.05;
@@ -737,8 +1206,25 @@ export class Creatures {
     } else {
       _m.compose(a.p, a.q, _sc.setScalar(s));
     }
-    rt.mesh!.setMatrixAt(i, _m);
+    if (rt.swimAttr) this.swimStep(rt, a);
+    const lv = this.levelOf(rt, a, _i, d);
+    if (lv === 2) {
+      // L2: a card in the shared atlas mesh, bent with the same wave (amplitude × tail, turn × κ)
+      if (!this.noCards) {
+        const amp = rt.swimAttr ? (a.ak ?? 1) * (rt.swimTail ?? 0) : 0;
+        const bend = rt.swimAttr ? (a.tn ?? 0) * ((a.cst ?? 0) > 0 ? SWIM.cStartTurn : 1) * SWIM.kappa : 0;
+        this.imp.add(_m, rt.cell!, a.swPh ?? 0, amp, bend, rt.swimK ?? 0, packColor(a.col));
+      }
+    } else {
+      const m = lv === 1 ? rt.mesh1! : rt.mesh;
+      const k = lv === 1 ? (rt.slot1 = (rt.slot1 ?? 0) + 1) - 1 : rt.slot++;
+      if (a.col) m.setColorAt(k, a.col);
+      m.setMatrixAt(k, _m);
+      const sa = lv === 1 ? rt.swimAttr1 : rt.swimAttr;
+      if (sa) this.writeSwim(sa, k, a);
+    }
     if (rt.haloPos) {
+      const i = (rt.slotH = (rt.slotH ?? 0) + 1) - 1;
       _v.set(0, 0, 0);
       if (rt.lureOffset) _v.copy(rt.lureOffset).multiplyScalar(s).applyQuaternion(a.q);
       _v.add(a.p);
@@ -746,6 +1232,57 @@ export class Creatures {
       rt.haloPos[i * 3 + 1] = _v.y;
       rt.haloPos[i * 3 + 2] = _v.z;
     }
+  }
+
+  /** frame time handed to the swim integrator by writeInstance (0 while a mesh is first filled) */
+  private wdt = 0;
+
+  /**
+   * Swim v2 (PHASE8-DESIGN §4.2): integrate this individual's tail-beat phase from its speed, the amplitude factor
+   * (with "beat then glide" for pectoral swimmers and idling fish), the smoothed turn rate and the C-start.
+   * Once per individual and frame, whatever level it is drawn at (`writeSwim` puts it into a mesh's slot).
+   */
+  private swimStep(rt: SpeciesRuntime, a: Agent): void {
+    const dt = this.wdt;
+    const def = rt.def;
+    let ph = a.swPh ?? a.ph * 6.2831853, fph = a.flPh ?? a.ph * 4.1, ak = a.ak ?? SWIM.ampLo;
+    let gl = a.gl ?? 0, gs = a.gs ?? 0, tn = a.tn ?? 0, cst = a.cst ?? 0;
+    if (dt > 0) {
+      const U = a.v.length();
+      const f = swimFreq(rt.swimF0 ?? 1, U, a.s);
+      const cruise = Math.max(0.1, def.speed * 1.6);
+      let target = SWIM.ampLo + (SWIM.ampHi - SWIM.ampLo) * clamp(U / cruise, 0, 1);
+      const slow = U < Math.max(SWIM.slowMin, def.speed * SWIM.slowK);
+      if (rt.swimGlide || slow) {
+        gl -= dt;
+        if (gl <= 0) {
+          gs = gs ? 0 : 1;
+          const [lo, hi] = gs ? SWIM.glide : SWIM.beat;
+          gl = lo + this.rnd() * (hi - lo);
+        }
+        if (gs) target = SWIM.glideAmp;
+      } else gs = 0;
+      if (cst > 0) { cst -= dt; target *= SWIM.cStartAmp; }
+      ak += (target - ak) * Math.min(1, dt * 4);
+      // integrated, so a change of speed never makes the phase jump (a glide only lowers the amplitude)
+      ph = (ph + 2 * Math.PI * f * dt) % (2 * Math.PI * 64);
+      fph = (fph + 2 * Math.PI * f * 0.9 * dt) % (2 * Math.PI * 64);
+      let dy = a.yaw - (a.pyaw ?? a.yaw);
+      while (dy > Math.PI) dy -= Math.PI * 2;
+      while (dy < -Math.PI) dy += Math.PI * 2;
+      tn += (clamp(dy / dt, -SWIM.turnMax, SWIM.turnMax) - tn) * Math.min(1, dt * 5);
+    }
+    a.swPh = ph; a.flPh = fph; a.ak = ak; a.gl = gl; a.gs = gs; a.tn = tn; a.cst = cst;
+    a.pyaw = a.yaw;
+  }
+
+  /** (phase, ampK, turn, pectoral phase) of an individual into instance slot `i` of a swim attribute */
+  private writeSwim(attr: THREE.InstancedBufferAttribute, i: number, a: Agent): void {
+    const arr = attr.array as Float32Array;
+    arr[i * 4] = a.swPh ?? 0;
+    arr[i * 4 + 1] = a.ak ?? SWIM.ampLo;
+    arr[i * 4 + 2] = (a.tn ?? 0) * ((a.cst ?? 0) > 0 ? SWIM.cStartTurn : 1);
+    arr[i * 4 + 3] = a.flPh ?? 0;
   }
 
   private relocT = 0;
@@ -1060,7 +1597,7 @@ export class Creatures {
     const cands: SpeciesDef[] = [];
     for (const rt of this.list) {
       const d = rt.def;
-      if (!rt.active || !rt.mesh || d.kind === 'none' || d.size < minSize || d.behavior === 'buried' || this.stage.has(d.id)) continue;
+      if (!rt.active || d.kind === 'none' || d.size < minSize || d.behavior === 'buried' || this.stage.has(d.id)) continue;
       if (rt.agents.some((a) => !rt.groups[a.g].absent && a.p.distanceTo(p) < radius)) cands.push(d);
     }
     return cands.length ? cands[Math.floor(Math.random() * cands.length)] : null;
@@ -1107,6 +1644,7 @@ export class Creatures {
 
   update(dt0: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir?: THREE.Vector3): void {
     const dt = dt0;
+    this.wdt = dt0;
     this.frameNo++;
     // re-home far groups (a few species per frame)
     this.relocT += dt;
@@ -1128,18 +1666,25 @@ export class Creatures {
     if (viewDir) this.viewDir.copy(viewDir);
     this.time += dt;
     this.baitStep(dt);
+    this.imp.begin();
     const r = this.rnd;
     const pFast = Math.min(1, playerVel.length() / 1.4);
     let buildMs = 0, built = 0; // 0 = drifting / slow, 1 = finning hard
+    /** species in range only behind the camera: built after the others, when there is time and room */
+    const later: SpeciesRuntime[] = [];
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
-      if ((this.pin && this.pin.id === rt.def.id) || (this.companion && this.companion.id === rt.def.id) || this.stage.has(rt.def.id)) near = true;
+      const forced = this.pin?.id === rt.def.id || this.companion?.id === rt.def.id || this.stage.has(rt.def.id);
+      if (forced) near = true;
       if (near && !rt.mesh && rt.def.kind !== 'none') {
         // lazy build, a few species per frame so a dive never stalls on texture painting
-        // (the budget counts build time only, and at least one species is built every frame)
-        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id && this.companion?.id !== rt.def.id && !this.stage.has(rt.def.id)) near = false;
-        else {
+        // (the budget counts build time only, and at least one species is built every frame).
+        // A species is built once it could be drawn, not merely because it lives within 68 m (§6.3-⑥).
+        const want = forced ? 2 : this.drawable(rt);
+        if (want) rt.lastNear = this.time;
+        if (want === 1) later.push(rt);
+        else if (want === 2 && (forced || built === 0 || buildMs <= this.buildBudgetMs)) {
           const t0 = performance.now();
           this.buildMesh(rt);
           buildMs += performance.now() - t0;
@@ -1148,10 +1693,11 @@ export class Creatures {
       }
       rt.active = near;
       if (rt.mesh) rt.mesh.visible = near;
+      if (rt.mesh1) rt.mesh1.visible = near;
       if (rt.halo) rt.halo.visible = near;
-      if (!near || !rt.mesh) continue;
-      rt.slot = 0;
-      rt.minD = 1e9;
+      // an unbuilt species is still simulated (sonar, requests and bait see it); it just draws nothing
+      if (!near) continue;
+      this.beginSpecies(rt);
       const def = rt.def;
       // Flight distance shrinks for a slow diver (fish tolerate a gentle approach), and a slow diver
       // mostly makes them swim across the view (side-on) instead of turning tail.
@@ -1240,11 +1786,16 @@ export class Creatures {
         }
         if (g.absent || a.taken) continue;
         if (Math.abs(g.c.x - player.x) > 100 || Math.abs(g.c.z - player.z) > 100) continue;
-        // far individuals are simulated every third frame (with three frames' worth of time): nobody sees the difference
-        const lod = Math.abs(a.p.x - player.x) + Math.abs(a.p.z - player.z) > 45 && !a.aggro ? 3 : 1;
-        if (lod > 1 && (this.frameNo + i) % lod !== 0) { this.writeInstance(rt, a, i); continue; }
-        const dt = dt0 * lod;
+        // far individuals are simulated every 2nd or 4th frame, with the skipped time added up (§6.3-⑦);
+        // anything the diver is interacting with is simulated every frame
         const dPlayer = a.p.distanceTo(player);
+        const busy = a.aggro || a.alarm > 0 || a.lured || (a.watch ?? 0) > 0 || !!g.cur || a === this.focus || this.grab?.a === a
+          || (def.flee > 0 && dPlayer < Math.max(fleeR * 2.6, 2.6));
+        const every = busy ? 1 : dPlayer > THIN.far ? 4 : dPlayer > THIN.mid ? 2 : 1;
+        a.pend = Math.min(THIN.maxDt, (a.pend ?? 0) + dt0);
+        if (every > 1 && (this.frameNo + i) % every !== 0) { this.writeInstance(rt, a, i); continue; }
+        const dt = a.pend;
+        a.pend = 0;
         if (def.behavior === 'buried') {
           const want = dPlayer < def.flee + playerVel.length() * 1.5 ? 1 : 0;
           a.retract += (want - a.retract) * Math.min(1, dt * (want ? 6 : 0.35));
@@ -1385,6 +1936,8 @@ export class Creatures {
           // Phase 4: each fish veers to its own fixed side, so the school splits instead of bunching
           const side = (a.ph % 2) < 1 ? 1 : -1;
           if (dPlayer < fr) {
+            // swim v2: the first moment of a flight is a C-start (a hard bend and a strong beat, §4.2)
+            if (!a.fl) a.cst = SWIM.cStart;
             fleeDir(_v2.copy(a.p).sub(player), a.v, radialW, _v2, side);
             acc.addScaledVector(_v2, (fr - dPlayer) * 4);
           } else if (pFast < 0.6) {
@@ -1394,6 +1947,7 @@ export class Creatures {
             acc.addScaledVector(_v, -SPREAD.linger * (1 - pFast)); // linger rather than rejoin the school's heading
           }
         }
+        a.fl = def.flee > 0 && dPlayer < fr && !hiding && !(a.aggro && a.mode);
         a.v.addScaledVector(acc, dt);
         a.v.multiplyScalar(1 - Math.min(0.9, dt * 1.2));
         const maxV = charging ? def.aggro!.speed : a.aggro && a.mode === 1 ? Math.max(def.speed * 1.6, 1.6) : def.speed * (dPlayer < fr ? 1.6 + 1.2 * radialW : 1.6) + 0.15 + (a.lured ? 0.4 : 0);
@@ -1426,22 +1980,34 @@ export class Creatures {
         this.orient(rt, a, 1 - Math.exp(-dt * (def.size > 3 ? 1.2 : 5)));
         this.writeInstance(rt, a, i);
       }
-      rt.mesh.count = rt.slot;
-      rt.mesh.visible = rt.slot > 0;
-      if (rt.halo) { rt.halo.visible = rt.slot > 0; rt.halo.geometry.setDrawRange(0, rt.slot); }
-      rt.mesh.instanceMatrix.needsUpdate = true;
-      if (rt.mesh.instanceColor) rt.mesh.instanceColor.needsUpdate = true;
-      if (rt.halo) rt.halo.geometry.attributes.position.needsUpdate = true;
+      if (!rt.mesh) continue;
+      this.finishSpecies(rt);
     }
-    // draw budget: only the nearest species meshes are drawn (far small schools are lost in the haze anyway)
-    const drawn = this.list.filter((rt) => rt.mesh?.visible);
+    for (const rt of later) {
+      if (this.held.size >= KEEP.species || (built > 0 && buildMs > this.buildBudgetMs)) break;
+      const t0 = performance.now();
+      this.buildMesh(rt);
+      buildMs += performance.now() - t0;
+      built++;
+      rt.mesh!.visible = false; // behind the camera: shown by the next frame that packs it
+      if (rt.mesh1) rt.mesh1.visible = false;
+      if (rt.halo) rt.halo.visible = false;
+    }
+    this.evict();
+    // draw budget: only the nearest species meshes are drawn (far small schools are lost in the haze anyway);
+    // the L2 cards are one shared draw and do not count (§1.3)
+    const drawn = this.list.filter((rt) => rt.mesh?.visible || rt.mesh1?.visible);
     if (drawn.length > this.maxDrawn) {
       drawn.sort((a, b) => (a.minD ?? 1e9) - (b.minD ?? 1e9));
       for (let i = this.maxDrawn; i < drawn.length; i++) {
         drawn[i].mesh!.visible = false;
+        if (drawn[i].mesh1) drawn[i].mesh1!.visible = false;
         if (drawn[i].halo) drawn[i].halo!.visible = false;
       }
     }
+    // atlas cells of newly built species (a few per frame), then the frame's cards
+    if (this.renderer) this.imp.flush(this.renderer);
+    this.imp.end();
   }
   maxDrawn = 70;
 
@@ -1675,6 +2241,16 @@ export class Creatures {
     let d = Infinity;
     for (const a of rt.agents) d = Math.min(d, a.p.distanceTo(from));
     return d;
+  }
+
+  /** Individuals drawn per level of detail (§1.3), for the diagnostics readout. */
+  lodCounts(): { l0: number; l1: number; l2: number } {
+    let l0 = 0, l1 = 0;
+    for (const rt of this.list) {
+      if (rt.mesh?.visible) l0 += rt.mesh.count;
+      if (rt.mesh1?.visible) l1 += rt.mesh1.count;
+    }
+    return { l0, l1, l2: this.imp.mesh.visible ? this.imp.mesh.count : 0 };
   }
 
   stats() {
