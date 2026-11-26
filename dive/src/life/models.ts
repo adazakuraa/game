@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../utils/noise';
+import type { SwimMode } from './swim';
 
 /**
  * Procedural creature geometry. Every builder returns one merged, non-indexed geometry with:
@@ -117,6 +118,8 @@ export type FishShape = {
   hump?: number;
   rings?: number;
   segs?: number;
+  /** 泳ぎ方の型（PHASE8-DESIGN §4.2）。省略時は swimModeOf() が kind・体型・名前から決める */
+  swimMode?: SwimMode;
 };
 
 export type FishLayout = { zMin: number; zMax: number; yMax: number; env: (t: number) => number; top: (t: number) => number; shape: FishShape };

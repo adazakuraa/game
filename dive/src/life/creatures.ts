@@ -11,6 +11,7 @@ import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
 import { KEEP, SHADOW, THIN } from '../game/render';
 import { resolveCapsule, resolveSphere, segmentBlocked } from '../world/colliders';
+import { SWIM, swimF0, swimFreq, swimModeOf, swimUniforms, type SwimMode } from './swim';
 
 type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number; absent?: boolean;
   /** 5 m cell key this group is registered under in the crowding map (Phase 4) */
@@ -44,6 +45,9 @@ type Agent = {
   octT?: number; octCd?: number; octWarned?: boolean;
   /** cached surface under a crawler: x, z, y */
   gx?: number; gz?: number; gy?: number;
+  /** swim v2 (PHASE8-DESIGN §4.2): tail-beat phase, pectoral phase, amplitude factor, beat/glide timer and state,
+   *  heading of the last write, smoothed turn rate, C-start timer, inside flight distance last frame */
+  swPh?: number; flPh?: number; ak?: number; gl?: number; gs?: number; pyaw?: number; tn?: number; cst?: number; fl?: boolean;
 };
 
 export type SpeciesRuntime = {
@@ -60,6 +64,11 @@ export type SpeciesRuntime = {
   minD?: number;
   /** creature time when an individual was last within drawing range (PHASE8-DESIGN §6.3-⑥) */
   lastNear?: number;
+  /** swim v2: per-instance (phase, ampK, turn, flapPhase), written with the instance matrices (§4.2) */
+  swimAttr?: THREE.InstancedBufferAttribute;
+  swimF0?: number;
+  /** labriform: always "beat then glide" */
+  swimGlide?: boolean;
 };
 
 const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster', 'gardenEel', 'inv']);
@@ -119,6 +128,7 @@ function drawCut(s: number): number {
 
 function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false): THREE.MeshStandardMaterial {
   const m = def.mat ?? {};
+  const mode: SwimMode | null = swimModeOf(def);
   const translucent = m.translucent !== undefined;
   const mat = new THREE.MeshStandardMaterial({
     map,
@@ -140,6 +150,8 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   const blink = def.id === 'hikarikinme' || def.id === 'hikarikinme2';
   if (blink) mat.defines = { ...(mat.defines ?? {}), GLOW_BLINK: '' };
   if (def.rainbow) mat.defines = { ...(mat.defines ?? {}), RAINBOW: '' };
+  if (mode) mat.defines = { ...(mat.defines ?? {}), SWIM_V2: '' };
+  const su = mode ? swimUniforms(mode, def, photo) : { a: [0, 0, 0, 0] as [number, number, number, number], k: 0, tail: 0, flap: 0 };
   const scaly = !photo && (def.kind === 'fish' || def.kind === 'gardenEel');
   if (photo) {
     // photographed skin already carries scales / pattern; the outline comes from alpha
@@ -153,7 +165,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
     mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
   }
   return underwaterMaterial(mat, {
-    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : ''),
+    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : '') + (mode ? '-sw' : ''),
     caustic: 0.9,
     uniforms: {
       uSwim: { value: new THREE.Vector3(...swim) },
@@ -163,15 +175,80 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       uGlowAmt: { value: 1 },
       uUvAspect: { value: uvAspect },
       uFishSize: { value: def.size },
+      // swim v2: A(q) coefficients (A(1) = 1) and s0; wave number 2π/λ, tail amplitude, pectoral flap, C-bend κ
+      uSwimA: { value: new THREE.Vector4(...su.a) },
+      uSwimB: { value: new THREE.Vector4(su.k, su.tail, su.flap, SWIM.kappa) },
     },
     vertexHead: `attribute float aBend; attribute float aFlap; attribute float aPulse; attribute float aGlow; attribute float aFin;
-      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin; varying float vPh;`,
+      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin; varying float vPh;
+      #ifdef SWIM_V2
+        attribute vec4 aSwim; uniform vec4 uSwimA; uniform vec4 uSwimB;
+      #endif`,
     vertexBody: `
       float ph = 0.0;
       #ifdef USE_INSTANCING
         ph = instanceMatrix[3].x * 0.71 + instanceMatrix[3].z * 0.53 + instanceMatrix[3].y * 0.37;
       #endif
       vPh = ph;
+      #ifdef SWIM_V2
+      {
+        // Swim v2 (PHASE8-DESIGN §4.2): the body follows a travelling wave along the spine x = o(s, t), and every
+        // cross-section turns with the spine's slope instead of sliding sideways (the caudal fin stays square to it).
+        // aSwim = (tail-beat phase, amplitude factor, turn rate, pectoral phase), integrated per individual on the CPU.
+        vec4 sw = vec4( 0.0, 1.0, 0.0, 0.0 );
+        #ifdef USE_INSTANCING
+          sw = aSwim;
+        #endif
+        // pectoral fins row fore and aft and fold in (aFlap: 0 at the root .. ±1 at the tip, sign = side)
+        float fa = abs( aFlap );
+        float fk = uSwimB.z * sw.y * fa;
+        transformed.z += fk * sin( sw.w );
+        transformed.x -= sign( aFlap ) * fk * 0.6 * ( 0.5 + 0.5 * cos( sw.w ) );
+        float s = 0.5 - position.z;
+        float sc = clamp( s, 0.0, 1.0 );
+        float span = 1.0 - uSwimA.w;
+        float q = max( 0.0, sc - uSwimA.w ) / span;
+        float dq = ( sc > uSwimA.w && s < 1.0 && s > 0.0 ) ? 1.0 / span : 0.0;
+        float A = uSwimA.x + uSwimA.y * q + uSwimA.z * q * q;
+        float dA = ( uSwimA.y + 2.0 * uSwimA.z * q ) * dq;
+        float amp = uSwimB.y * sw.y;
+        float arg = sw.x - uSwimB.x * sc;
+        float sn = sin( arg ), cs = cos( arg );
+        float o = amp * A * sn;
+        float dods = amp * ( dA * sn - A * uSwimB.x * cs );
+        // turning: C-shaped bend toward the side the fish turns to, pivoting about the first third
+        float cb = sc - 0.35;
+        o += uSwimB.w * sw.z * cb * cb;
+        dods += uSwimB.w * sw.z * 2.0 * cb;
+        // beyond the spine (caudal fin, snout) the shape is carried rigidly along the end tangent
+        o += dods * ( s - sc );
+        float th = atan( -dods );
+        float ct = cos( th ), st = sin( th );
+        #ifdef BEND_Y
+          float lat = transformed.y;
+          transformed.y = o + lat * ct;
+          transformed.z -= lat * st;
+          objectNormal = vec3( objectNormal.x, objectNormal.y * ct + objectNormal.z * st, -objectNormal.y * st + objectNormal.z * ct );
+        #else
+          float lat = transformed.x;
+          transformed.x = o + lat * ct;
+          transformed.z -= lat * st;
+          objectNormal = vec3( objectNormal.x * ct + objectNormal.z * st, objectNormal.y, -objectNormal.x * st + objectNormal.z * ct );
+        #endif
+        // the lit normal was already derived from objectNormal before <begin_vertex>: derive it again
+        transformedNormal = objectNormal;
+        #ifdef USE_INSTANCING
+          transformedNormal = mat3( instanceMatrix ) * transformedNormal;
+        #endif
+        transformedNormal = normalMatrix * transformedNormal;
+        #ifdef FLIP_SIDED
+          transformedNormal = - transformedNormal;
+        #endif
+        #ifndef FLAT_SHADED
+          vNormal = normalize( transformedNormal );
+        #endif
+      }
+      #else
       float wave = sin( uTime * uSwim.x + ph - position.z * uSwim.z );
       #ifdef BEND_Y
         transformed.y += wave * uSwim.y * aBend;
@@ -180,6 +257,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       #endif
       float fl = sin( uTime * uFlap.x + ph * 1.3 - position.z * uFlap.z );
       transformed.y += fl * uFlap.y * aFlap;
+      #endif
       float pu = sin( uTime * uPulse.x + ph );
       transformed.xz *= 1.0 - pu * uPulse.y * aPulse;
       transformed.y += max( pu, 0.0 ) * uPulse.y * aPulse * 0.25;
@@ -654,6 +732,15 @@ export class Creatures {
         const lay = b.paint.fish;
         mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
       }
+      const mode = swimModeOf(def);
+      if (mode) {
+        // per-instance swim state (PHASE8-DESIGN §4.2): phase, amplitude factor, turn rate, pectoral phase
+        rt.swimAttr = new THREE.InstancedBufferAttribute(new Float32Array(def.count * 4), 4);
+        rt.swimAttr.setUsage(THREE.DynamicDrawUsage);
+        geo.setAttribute('aSwim', rt.swimAttr);
+        rt.swimF0 = swimF0(def);
+        rt.swimGlide = mode === 'labriform';
+      }
       const mesh = new THREE.InstancedMesh(geo, mat, def.count);
       mesh.frustumCulled = false;
       mesh.receiveShadow = true;
@@ -696,6 +783,7 @@ export class Creatures {
       (rt.halo.material as THREE.Material).dispose(); // its texture (haloTex) is shared: kept
     }
     rt.mesh = undefined;
+    rt.swimAttr = undefined;
     rt.halo = undefined;
     rt.haloPos = undefined;
     rt.lureOffset = undefined;
@@ -749,13 +837,14 @@ export class Creatures {
     for (const [name, size] of [['position', 3], ['normal', 3], ['uv', 2], ['aBend', 1], ['aFlap', 1], ['aPulse', 1], ['aGlow', 1], ['aFin', 1]] as const) {
       geo.setAttribute(name, new THREE.BufferAttribute(new Float32Array(3 * size), size));
     }
+    geo.setAttribute('aSwim', new THREE.InstancedBufferAttribute(new Float32Array(4), 4));
     const seen = new Set<string>();
     const out: THREE.Object3D[] = [];
     let halo = false;
     for (const def of SPECIES) {
       if (def.kind === 'none') continue;
       const photo = def.kind === 'fish' && !!photoFor(def.id);
-      const sig = [def.kind, def.mat?.translucent !== undefined, photo, def.id.startsWith('hikarikinme'), def.id === 'atolla', !!def.rainbow, !!def.fish?.bendY, !!def.instColors].join('|');
+      const sig = [def.kind, def.mat?.translucent !== undefined, photo, def.id.startsWith('hikarikinme'), def.id === 'atolla', !!def.rainbow, !!def.fish?.bendY, !!def.instColors, !!swimModeOf(def)].join('|');
       if (!seen.has(sig)) {
         seen.add(sig);
         const mesh = new THREE.InstancedMesh(geo, makeMaterial(def, map, 0.3, photo), 1);
@@ -790,6 +879,8 @@ export class Creatures {
   }
 
   private writeAll(rt: SpeciesRuntime) {
+    const wdt = this.wdt;
+    this.wdt = 0;
     rt.slot = 0;
     rt.minD = 1e9;
     rt.agents.forEach((a, i) => {
@@ -798,7 +889,9 @@ export class Creatures {
     });
     rt.mesh!.count = rt.slot;
     rt.mesh!.instanceMatrix.needsUpdate = true;
+    if (rt.swimAttr) rt.swimAttr.needsUpdate = true;
     this.shadowFor(rt);
+    this.wdt = wdt;
   }
 
   /** Only large animals close to the diver cast a sun shadow (PHASE8-DESIGN §6.3-①). */
@@ -862,6 +955,7 @@ export class Creatures {
       _m.compose(a.p, a.q, _sc.setScalar(s));
     }
     rt.mesh!.setMatrixAt(i, _m);
+    if (rt.swimAttr) this.swimStep(rt, a, i);
     if (rt.haloPos) {
       _v.set(0, 0, 0);
       if (rt.lureOffset) _v.copy(rt.lureOffset).multiplyScalar(s).applyQuaternion(a.q);
@@ -870,6 +964,53 @@ export class Creatures {
       rt.haloPos[i * 3 + 1] = _v.y;
       rt.haloPos[i * 3 + 2] = _v.z;
     }
+  }
+
+  /** frame time handed to the swim integrator by writeInstance (0 while a mesh is first filled) */
+  private wdt = 0;
+
+  /**
+   * Swim v2 (PHASE8-DESIGN §4.2): integrate this individual's tail-beat phase from its speed, the amplitude factor
+   * (with "beat then glide" for pectoral swimmers and idling fish), the smoothed turn rate and the C-start, and write
+   * them into instance slot `i`.
+   */
+  private swimStep(rt: SpeciesRuntime, a: Agent, i: number): void {
+    const dt = this.wdt;
+    const def = rt.def;
+    let ph = a.swPh ?? a.ph * 6.2831853, fph = a.flPh ?? a.ph * 4.1, ak = a.ak ?? SWIM.ampLo;
+    let gl = a.gl ?? 0, gs = a.gs ?? 0, tn = a.tn ?? 0, cst = a.cst ?? 0;
+    if (dt > 0) {
+      const U = a.v.length();
+      const f = swimFreq(rt.swimF0 ?? 1, U, a.s);
+      const cruise = Math.max(0.1, def.speed * 1.6);
+      let target = SWIM.ampLo + (SWIM.ampHi - SWIM.ampLo) * clamp(U / cruise, 0, 1);
+      const slow = U < Math.max(SWIM.slowMin, def.speed * SWIM.slowK);
+      if (rt.swimGlide || slow) {
+        gl -= dt;
+        if (gl <= 0) {
+          gs = gs ? 0 : 1;
+          const [lo, hi] = gs ? SWIM.glide : SWIM.beat;
+          gl = lo + this.rnd() * (hi - lo);
+        }
+        if (gs) target = SWIM.glideAmp;
+      } else gs = 0;
+      if (cst > 0) { cst -= dt; target *= SWIM.cStartAmp; }
+      ak += (target - ak) * Math.min(1, dt * 4);
+      // integrated, so a change of speed never makes the phase jump (a glide only lowers the amplitude)
+      ph = (ph + 2 * Math.PI * f * dt) % (2 * Math.PI * 64);
+      fph = (fph + 2 * Math.PI * f * 0.9 * dt) % (2 * Math.PI * 64);
+      let dy = a.yaw - (a.pyaw ?? a.yaw);
+      while (dy > Math.PI) dy -= Math.PI * 2;
+      while (dy < -Math.PI) dy += Math.PI * 2;
+      tn += (clamp(dy / dt, -SWIM.turnMax, SWIM.turnMax) - tn) * Math.min(1, dt * 5);
+    }
+    a.swPh = ph; a.flPh = fph; a.ak = ak; a.gl = gl; a.gs = gs; a.tn = tn; a.cst = cst;
+    a.pyaw = a.yaw;
+    const arr = rt.swimAttr!.array as Float32Array;
+    arr[i * 4] = ph;
+    arr[i * 4 + 1] = ak;
+    arr[i * 4 + 2] = tn * (cst > 0 ? SWIM.cStartTurn : 1);
+    arr[i * 4 + 3] = fph;
   }
 
   private relocT = 0;
@@ -1231,6 +1372,7 @@ export class Creatures {
 
   update(dt0: number, player: THREE.Vector3, playerVel: THREE.Vector3, viewDir?: THREE.Vector3): void {
     const dt = dt0;
+    this.wdt = dt0;
     this.frameNo++;
     // re-home far groups (a few species per frame)
     this.relocT += dt;
@@ -1521,6 +1663,8 @@ export class Creatures {
           // Phase 4: each fish veers to its own fixed side, so the school splits instead of bunching
           const side = (a.ph % 2) < 1 ? 1 : -1;
           if (dPlayer < fr) {
+            // swim v2: the first moment of a flight is a C-start (a hard bend and a strong beat, §4.2)
+            if (!a.fl) a.cst = SWIM.cStart;
             fleeDir(_v2.copy(a.p).sub(player), a.v, radialW, _v2, side);
             acc.addScaledVector(_v2, (fr - dPlayer) * 4);
           } else if (pFast < 0.6) {
@@ -1530,6 +1674,7 @@ export class Creatures {
             acc.addScaledVector(_v, -SPREAD.linger * (1 - pFast)); // linger rather than rejoin the school's heading
           }
         }
+        a.fl = def.flee > 0 && dPlayer < fr && !hiding && !(a.aggro && a.mode);
         a.v.addScaledVector(acc, dt);
         a.v.multiplyScalar(1 - Math.min(0.9, dt * 1.2));
         const maxV = charging ? def.aggro!.speed : a.aggro && a.mode === 1 ? Math.max(def.speed * 1.6, 1.6) : def.speed * (dPlayer < fr ? 1.6 + 1.2 * radialW : 1.6) + 0.15 + (a.lured ? 0.4 : 0);
@@ -1567,6 +1712,7 @@ export class Creatures {
       rt.mesh.visible = rt.slot > 0;
       if (rt.halo) { rt.halo.visible = rt.slot > 0; rt.halo.geometry.setDrawRange(0, rt.slot); }
       rt.mesh.instanceMatrix.needsUpdate = true;
+      if (rt.swimAttr) rt.swimAttr.needsUpdate = true;
       if (rt.mesh.instanceColor) rt.mesh.instanceColor.needsUpdate = true;
       if (rt.halo) rt.halo.geometry.attributes.position.needsUpdate = true;
       this.shadowFor(rt);

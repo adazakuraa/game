@@ -12,7 +12,7 @@
  *
  * Budget rows (§6.1) are printed as OK / OVER and do not fail the run on their own: several of them
  * depend on later steps (S5 LOD). Behaviour checks are PASS / FAIL and set the exit code.
- * Not covered yet (later steps): item 3 (L2 draw call), 4 (L0 target), 9 (swim), 10 (3D models).
+ * Item 9 (swim v2) is covered from S3. Not covered yet (later steps): item 3 (L2 draw call), 4 (L0 target), 10 (3D models).
  */
 const http = require('http');
 const fs = require('fs');
@@ -342,6 +342,54 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
   });
   check('⑦ 間引き：近くは毎フレーム、25m超は1/2、45m超は1/4', thin.near === 8 && thin.mid === 4 && thin.far === 2, JSON.stringify(thin));
   check('⑦ 撮影対象・餌に寄る魚・逃走中は遠くても毎フレーム', thin.focus === 8 && thin.lured === 8 && thin.alarm === 8 && thin.maxPend > 0.1 && thin.maxPend <= 0.2, JSON.stringify(thin));
+
+  // ---------- 9: swim v2 (§4.2): the tail-beat phase grows at f = clamp(f0 + U / (0.7 L), 0.6, 4) Hz
+  const swim = await page.evaluate(() => {
+    const g = window.__THREE_GAME_TEST_HOOKS__.game, c = g.creatures;
+    const out = { rows: [], kinds: {}, jump: 0 };
+    for (const id of ['giganmeaji', 'nijihata', 'rurisuzu']) {
+      const rt = c.list.find((r) => r.def.id === id);
+      if (!rt) continue;
+      if (!rt.mesh) c.buildMesh(rt);
+      if (!rt.swimAttr) { out.rows.push({ id, noAttr: true }); continue; }
+      const a = rt.agents[0];
+      const f0 = (rt.def.swim ? rt.def.swim[0] : Math.max(0.8, 5.5 - rt.def.size * 4)) / (2 * Math.PI);
+      for (const U of [0.1, 1.0]) {
+        a.v.set(0, 0, U); a.yaw = 0; a.pyaw = 0;
+        let total = 0, prev;
+        c.wdt = 0.05;
+        c.swimStep(rt, a, 0); prev = a.swPh;
+        for (let k = 0; k < 20; k++) {
+          c.swimStep(rt, a, 0);
+          let d = a.swPh - prev; if (d < 0) d += 2 * Math.PI * 64;
+          out.jump = Math.max(out.jump, d);
+          total += d; prev = a.swPh;
+        }
+        const want = Math.min(4, Math.max(0.6, f0 + U / (0.7 * a.s)));
+        out.rows.push({ id, U, got: +(total / (2 * Math.PI)).toFixed(3), want: +want.toFixed(3) });
+      }
+      // phase continuity: an abrupt change of speed never makes the phase jump
+      a.v.set(0, 0, 3); c.swimStep(rt, a, 0); const p0 = a.swPh; a.v.set(0, 0, 0); c.swimStep(rt, a, 0);
+      let d = a.swPh - p0; if (d < 0) d += 2 * Math.PI * 64;
+      out.jump = Math.max(out.jump, d);
+      c.wdt = 0;
+    }
+    // which species run on the new swim shader (non-fish keep their own motion)
+    for (const rt of c.list) {
+      if (rt.def.kind === 'none') continue;
+      if (!rt.mesh) c.buildMesh(rt);
+      const v2 = 'SWIM_V2' in (rt.mesh.material.defines || {});
+      const k = rt.def.kind + (rt.def.fish?.bendY ? '(bendY)' : '');
+      out.kinds[k] = out.kinds[k] || [0, 0];
+      out.kinds[k][v2 ? 0 : 1]++;
+    }
+    return out;
+  });
+  const swimOk = swim.rows.length >= 4 && swim.rows.every((r) => !r.noAttr && Math.abs(r.got - r.want) <= r.want * 0.05);
+  check('9: 泳ぎの周波数（速さ 0.1 と 1.0、式どおり ±5%）', swimOk, swim.rows.map((r) => r.noAttr ? `${r.id}: aSwim なし` : `${r.id} U=${r.U}: ${r.got}Hz/${r.want}Hz`).join(', '));
+  check('9: 速さが急に変わっても位相が飛ばない（1 ステップ ≤ 2π·4Hz·0.05s）', swim.jump <= 2 * Math.PI * 4 * 0.05 + 1e-6, `max ${swim.jump.toFixed(3)} rad`);
+  const nonFish = Object.entries(swim.kinds).filter(([k]) => k !== 'fish');
+  check('9: 魚以外（と縦に振る哺乳類）は従来の動きのまま', nonFish.every(([, [v2]]) => v2 === 0), JSON.stringify(swim.kinds));
 
   const evict = await page.evaluate(() => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game, c = g.creatures;
