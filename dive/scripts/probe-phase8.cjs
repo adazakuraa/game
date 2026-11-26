@@ -391,6 +391,39 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
   const nonFish = Object.entries(swim.kinds).filter(([k]) => k !== 'fish');
   check('9: 魚以外（と縦に振る哺乳類）は従来の動きのまま', nonFish.every(([, [v2]]) => v2 === 0), JSON.stringify(swim.kinds));
 
+  // ---------- S4: generated model v2 (§3, §1.1): triangle budgets of every generated fish, L1 geometry, aAO
+  const tri = await page.evaluate(() => {
+    const g = window.__THREE_GAME_TEST_HOOKS__.game, c = g.creatures;
+    const n = (geo) => (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
+    const out = { gen: 0, v2: 0, over: [], over1: [], noL1: [], noAO: 0, max: [0, 0], max1: 0, ms: [] };
+    for (const rt of c.list) {
+      if (rt.def.kind !== 'fish') continue;
+      if (rt.mesh) c.disposeMesh(rt);
+      const t0 = performance.now();
+      c.buildMesh(rt);
+      const ms = performance.now() - t0;
+      const m = rt.mesh.material;
+      if ('PHOTO_FISH' in (m.defines || {})) continue;
+      out.gen++; out.ms.push(ms);
+      if ('FISH_V2' in (m.defines || {})) out.v2++;
+      const t = n(rt.mesh.geometry), big = rt.def.size >= 0.4;
+      out.max[big ? 1 : 0] = Math.max(out.max[big ? 1 : 0], t);
+      if (t > (big ? 2500 : 1500)) out.over.push(`${rt.def.id}:${t}`);
+      if (!rt.geo1) out.noL1.push(rt.def.id);
+      else { const t1 = n(rt.geo1); out.max1 = Math.max(out.max1, t1); if (t1 > 400) out.over1.push(`${rt.def.id}:${t1}`); }
+      if (!rt.mesh.geometry.attributes.aAO) out.noAO++;
+    }
+    out.ms.sort((a, b) => a - b);
+    out.msMean = +(out.ms.reduce((a, b) => a + b, 0) / out.ms.length).toFixed(2);
+    out.msMax = +out.ms[out.ms.length - 1].toFixed(1);
+    delete out.ms;
+    return out;
+  });
+  check('S4: 生成魚 L0 の三角形（体長 0.4m 未満 1,500・以上 2,500）', tri.over.length === 0, `${tri.gen} 種（v2 ${tri.v2}）、最大 ${tri.max[0]} / ${tri.max[1]}${tri.over.length ? '、超過 ' + tri.over.join(' ') : ''}`);
+  check('S4: 生成魚 L1 のジオメトリ（400 以下）', tri.noL1.length === 0 && tri.over1.length === 0, `最大 ${tri.max1}${tri.noL1.length ? '、L1 なし ' + tri.noL1.slice(0, 5).join(' ') : ''}${tri.over1.length ? '、超過 ' + tri.over1.join(' ') : ''}`);
+  check('S4: 生成魚に aAO 属性', tri.noAO === 0, `なし ${tri.noAO}`);
+  console.log(`  生成魚 1 種の生成時間（buildMesh、この VM）: 平均 ${tri.msMean}ms・最大 ${tri.msMax}ms`);
+
   const evict = await page.evaluate(() => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game, c = g.creatures;
     const cp = g.camera.position;

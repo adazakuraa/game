@@ -6,11 +6,14 @@ import type { SwimMode } from './swim';
 /**
  * Procedural creature geometry. Every builder returns one merged, non-indexed geometry with:
  *  position, normal, uv, aBend (lateral/vertical body-wave weight), aFlap (vertical flap weight),
- *  aPulse (radial pulse weight, jellies), aGlow (bioluminescence mask).
+ *  aPulse (radial pulse weight, jellies), aGlow (bioluminescence mask), aFin (0 body / 1..1.49 fin membrane / 2 eye),
+ *  aAO (baked ambient occlusion 0.55..1, 1 where a builder does not compute it).
  * Creatures face +Z, length ~1 (instance scale sets real size).
  */
 
-const ATTRS = ['aBend', 'aFlap', 'aPulse', 'aGlow', 'aFin'] as const;
+const ATTRS = ['aBend', 'aFlap', 'aPulse', 'aGlow', 'aFin', 'aAO'] as const;
+/** value of an attribute a part does not set: aAO (baked occlusion, PHASE8-DESIGN §5.2) is 1 = unshaded */
+const ATTR_DEFAULT: Record<string, number> = { aAO: 1 };
 type Part = THREE.BufferGeometry;
 
 export function setAttr(g: Part, name: string, fn: (x: number, y: number, z: number) => number) {
@@ -35,7 +38,7 @@ function finalize(parts: Part[], uvFn?: (x: number, y: number, z: number) => [nu
       }
       g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     }
-    for (const a of ATTRS) if (!g.attributes[a]) setAttr(g, a, () => 0);
+    for (const a of ATTRS) if (!g.attributes[a]) { const v = ATTR_DEFAULT[a] ?? 0; setAttr(g, a, () => v); }
     for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', ...ATTRS].includes(k)) g.deleteAttribute(k);
     return g;
   });
@@ -56,37 +59,6 @@ function flatPoly(pts: [number, number][], map: (a: number, b: number) => [numbe
   g.deleteAttribute('normal');
   g.computeVertexNormals();
   return g;
-}
-
-/**
- * Give a flat fin real substance: two sheets pushed apart by `half(x,y,z)` along `axis` (thick at the root,
- * paper-thin at the margin) and an aFin value of 1..1.49 that grows towards the margin (used for translucency).
- */
-function thickFin(g0: Part, axis: 'x' | 'y', half: (x: number, y: number, z: number) => number, edge: (x: number, y: number, z: number) => number): Part {
-  const g = g0.index ? g0.toNonIndexed() : g0;
-  const p = g.attributes.position as THREE.BufferAttribute;
-  const n = p.count;
-  const pos = new Float32Array(n * 6);
-  const fin = new Float32Array(n * 2);
-  for (let side = 0; side < 2; side++) {
-    const sg = side === 0 ? 1 : -1;
-    for (let i = 0; i < n; i++) {
-      // second sheet: reverse each triangle's winding
-      const src = side === 0 ? i : i - (i % 3) + [0, 2, 1][i % 3];
-      const x = p.getX(src), y = p.getY(src), z = p.getZ(src);
-      const t = half(x, y, z) * sg;
-      const o = (side * n + i) * 3;
-      pos[o] = axis === 'x' ? x + t : x;
-      pos[o + 1] = axis === 'y' ? y + t : y;
-      pos[o + 2] = z;
-      fin[side * n + i] = 1 + 0.49 * Math.min(1, Math.max(0, edge(x, y, z)));
-    }
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  out.setAttribute('aFin', new THREE.BufferAttribute(fin, 1));
-  out.computeVertexNormals();
-  return out;
 }
 
 // --------------------------------------------------------------------------- fish
@@ -120,9 +92,38 @@ export type FishShape = {
   segs?: number;
   /** 泳ぎ方の型（PHASE8-DESIGN §4.2）。省略時は swimModeOf() が kind・体型・名前から決める */
   swimMode?: SwimMode;
+  // ---- 生成モデル v2（PHASE8-DESIGN §3）。すべて省略可、省略時は体型ごとの既定値（species2.ts の B）か下の既定
+  /** 最大幅の位置（t：0 尾 … 1 吻端）。既定 0.65 */
+  wPeak?: number;
+  /** 尾柄の幅（最大幅に対する比）。既定 min(0.3, ped) */
+  pedW?: number;
+  /** 断面のかど（スーパー楕円の指数）。2＝楕円、2.4〜2.8＝体側が平ら（側扁）。既定 2 */
+  xs?: number;
+  /** 断面の上半分・下半分の指数（既定 xsTop = max(1.8, xs − 0.3)：背は少し稜、xsBot = xs：腹は丸い） */
+  xsTop?: number;
+  xsBot?: number;
+  /** 尾柄の横の隆起（マグロ・アジ、0〜0.3） */
+  keel?: number;
+  /** 口の位置：端位・上向き・下向き（既定 'term'） */
+  mouth?: 'term' | 'sup' | 'inf';
+  /** 鱗の列数（体長 1 あたり）。0 で鱗の凹凸なし。既定 48 */
+  scaleN?: number;
 };
 
-export type FishLayout = { zMin: number; zMax: number; yMax: number; env: (t: number) => number; top: (t: number) => number; shape: FishShape };
+/** One fin's grid in the texture's side view (z, y), for painting its margin and soft rays (§3.4). */
+export type FinTrace = { root: [number, number][]; edge: [number, number][] };
+export type FishLayout = {
+  zMin: number; zMax: number; yMax: number; env: (t: number) => number; top: (t: number) => number; shape: FishShape;
+  /** vertical offset of the body centre line (the mouth shifts the snout up or down, §3.3) */
+  mid?: (t: number) => number;
+  /** generated model v2 (§3): the painter adds the gill line, soft edges, lateral line, fin margins and rays */
+  v2?: boolean;
+  /** fins in the side view (v2) */
+  fins?: FinTrace[];
+  /** gill cover edge (t) and mouth line height at the snout (model y) */
+  gillT?: number;
+  mouthY?: number;
+};
 
 /** Dorsal-profile multiplier for FishShape.hump (1 = symmetric). */
 export function fishTop(s: FishShape): (t: number) => number {
@@ -145,31 +146,183 @@ export function fishEnvelope(s: FishShape) {
   };
 }
 
-export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: FishLayout } {
+/** §3.1: lateral (width) envelope, its own peak and a peduncle that narrows quickly to pedW. */
+export function fishWidthEnvelope(s: FishShape) {
+  const wPeak = s.wPeak ?? 0.65;
+  const nose = s.nose ?? 0.4;
+  const pedW = s.pedW ?? Math.min(0.3, s.ped ?? 0.1);
+  return (t: number) => {
+    if (t <= wPeak) {
+      const u = t / wPeak;
+      return pedW + (1 - pedW) * (1 - Math.pow(1 - u, 1.8));
+    }
+    const u = (t - wPeak) / (1 - wPeak);
+    return Math.pow(Math.max(0, 1 - Math.pow(u, 2 + nose * 4)), 0.5 + 0.35 * (1 - nose));
+  };
+}
+
+/** Mouth offset of the body centre line (§3.3): only the last 10 % of the length (the snout) moves. */
+export function fishMid(s: FishShape): (t: number) => number {
+  const k = s.mouth === 'sup' ? 0.22 : s.mouth === 'inf' ? -0.22 : 0;
+  if (!k) return () => 0;
+  return (t: number) => {
+    const q = Math.max(0, (t - 0.9) / 0.1);
+    return k * (s.H / 2) * q * q;
+  };
+}
+
+const spow = (v: number, e: number) => Math.sign(v) * Math.pow(Math.abs(v), e);
+
+/** Polyline resampled by arc length to n + 1 points. */
+function resample(pts: [number, number][], n: number): [number, number][] {
+  const L = [0];
+  for (let i = 1; i < pts.length; i++) L.push(L[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const tot = L[L.length - 1] || 1;
+  const out: [number, number][] = [];
+  let j = 1;
+  for (let k = 0; k <= n; k++) {
+    const d = (k / n) * tot;
+    while (j < pts.length - 1 && L[j] < d) j++;
+    const f = Math.min(1, Math.max(0, (d - L[j - 1]) / ((L[j] - L[j - 1]) || 1)));
+    out.push([pts[j - 1][0] + (pts[j][0] - pts[j - 1][0]) * f, pts[j - 1][1] + (pts[j][1] - pts[j - 1][1]) * f]);
+  }
+  return out;
+}
+
+/** Quadratic Bézier from p0 to p2 through control c, as n segments (p0 excluded). */
+function bez(p0: [number, number], c: [number, number], p2: [number, number], n = 6): [number, number][] {
+  const out: [number, number][] = [];
+  for (let k = 1; k <= n; k++) {
+    const t = k / n, a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, d = t * t;
+    out.push([a * p0[0] + b * c[0] + d * p2[0], a * p0[1] + b * c[1] + d * p2[1]]);
+  }
+  return out;
+}
+
+type FinSpec = {
+  root: [number, number][]; // cols + 1 points on the attached line, in the fin plane (a, b)
+  edge: [number, number][]; // cols + 1 points on the outer edge
+  rows: number;
+  map: (a: number, b: number) => [number, number, number];
+  /** half thickness at the root for each column (0: one sheet, drawn double-sided) */
+  half?: (u: number) => number;
+  axis?: 'x' | 'y';
+  /** pectoral rowing: aFlap = flap × (0 at the root .. 1 at the edge); its sign marks the side */
+  flap?: number;
+};
+
+/**
+ * §3.2: a fin as a grid between the attached root line and the outer edge (rows from root to edge, one column per
+ * edge point), so it bends smoothly with the swim wave and turns paler towards the margin. With a root thickness the
+ * fin is two sheets pushed apart (thick at the root, paper-thin at the margin), as the old flat fins were.
+ */
+function finGrid(f: FinSpec): Part {
+  const cols = f.root.length - 1, rows = f.rows;
+  const sheets = f.half ? 2 : 1;
+  const nv = (rows + 1) * (cols + 1);
+  const pos = new Float32Array(nv * sheets * 3);
+  const fin = new Float32Array(nv * sheets);
+  const flap = new Float32Array(nv * sheets);
+  const ao = new Float32Array(nv * sheets);
+  const idx: number[] = [];
+  for (let sh = 0; sh < sheets; sh++) {
+    const sg = sh === 0 ? 1 : -1;
+    for (let i = 0; i <= cols; i++) {
+      const u = i / cols;
+      const hr = f.half ? f.half(u) : 0;
+      for (let r = 0; r <= rows; r++) {
+        const v = r / rows;
+        const a = f.root[i][0] + (f.edge[i][0] - f.root[i][0]) * v;
+        const b = f.root[i][1] + (f.edge[i][1] - f.root[i][1]) * v;
+        const [x, y, z] = f.map(a, b);
+        const t = hr * Math.pow(1 - v, 1.6) * sg;
+        const k = sh * nv + i * (rows + 1) + r;
+        pos[k * 3] = f.axis === 'y' ? x : x + t;
+        pos[k * 3 + 1] = f.axis === 'y' ? y + t : y;
+        pos[k * 3 + 2] = z;
+        fin[k] = 1 + 0.49 * v;
+        flap[k] = (f.flap ?? 0) * v;
+        ao[k] = 0.7 + 0.3 * v;
+      }
+    }
+    for (let i = 0; i < cols; i++)
+      for (let r = 0; r < rows; r++) {
+        const a = sh * nv + i * (rows + 1) + r, b = a + rows + 1;
+        if (sh === 0) idx.push(a, b, a + 1, a + 1, b, b + 1);
+        else idx.push(a, a + 1, b, a + 1, b + 1, b);
+      }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aFin', new THREE.BufferAttribute(fin, 1));
+  g.setAttribute('aFlap', new THREE.BufferAttribute(flap, 1));
+  g.setAttribute('aAO', new THREE.BufferAttribute(ao, 1));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Level of detail for buildFish: 0 = L0 (near), 1 = L1 (middle distance, PHASE8-DESIGN §1.1). */
+export type FishDetail = 0 | 1;
+/** Fin grid density; buildGeometry lowers it (then the body rings) when a species is over its triangle budget. */
+export type FishBuildOpts = { detail?: FishDetail; v2?: boolean; finK?: number };
+
+/**
+ * Procedural fish. v2 (PHASE8-DESIGN §3): super-ellipse cross-section with its own width envelope (narrow peduncle,
+ * keel), mouth position, fins as grids with curved outlines, eyes as embedded caps, baked occlusion (aAO).
+ * Without `v2` (sea mammals, penguins: kept as they were) the cross-section and fin outlines are the old ones.
+ * The side silhouette (height envelope) is the same in both, so the painted side-projection textures still fit.
+ */
+export function buildFish(s: FishShape, o: FishBuildOpts = {}): { geo: THREE.BufferGeometry; layout: FishLayout } {
+  const detail = o.detail ?? 0;
+  const v2 = !!o.v2;
+  const finK = o.finK ?? 1;
   const env = fishEnvelope(s);
   const topK = fishTop(s);
-  const R = s.rings ?? 14;
-  const S = s.segs ?? 22;
+  const wEnv = v2 ? fishWidthEnvelope(s) : env;
+  const mid = v2 ? fishMid(s) : () => 0;
+  const R = Math.max(3, s.rings ?? 14);
+  const S = Math.max(4, s.segs ?? 22);
   const H = s.H, W = s.W;
   const belly = s.belly ?? 0.08;
+  const xs = v2 ? s.xs ?? 2 : 2;
+  const eT = 2 / (v2 ? s.xsTop ?? Math.max(1.8, xs - 0.3) : 2);
+  const eB = 2 / (v2 ? s.xsBot ?? xs : 2);
+  const keel = v2 ? s.keel ?? 0 : 0;
   const parts: Part[] = [];
   const bendW = (z: number) => Math.pow(Math.min(1, Math.max(0, (0.5 - z) / 1.0)), 1.6) * 0.95 + 0.05;
+  const hwAt = (t: number) => (s.headW ? 1 + (s.headW - 1) * Math.min(1, Math.max(0, (t - 0.55) / 0.35)) ** 2 : 1);
+  const topAt = (t: number) => (H / 2) * env(t) * topK(t);
+  const botAt = (t: number) => (H / 2) * env(t);
+  // mouth line (§3.3): a little below the centre for a terminal mouth, near the top / bottom for upturned / underslung
+  const mouthK = s.mouth === 'sup' ? 0.45 : s.mouth === 'inf' ? -0.6 : -0.15;
+  const mouthY = (t: number) => mid(t) + mouthK * botAt(t);
 
-  // body tube
+  // ---- body tube
   const pos: number[] = [];
+  const aoB: number[] = [];
   const idx: number[] = [];
+  const pt = s.pect?.t ?? 0.7;
   for (let i = 0; i <= S; i++) {
     const t = i / S;
     const z = t - 0.5;
     const e = env(t);
+    const we = wEnv(t) * hwAt(t);
+    const m = mid(t);
     for (let j = 0; j <= R; j++) {
       const a = (j / R) * Math.PI * 2;
       const cy = Math.cos(a);
       const sy = Math.sin(a);
-      const y = (H / 2) * e * cy * (cy > 0 ? topK(t) : 1) - (cy < 0 ? belly * H * e * -cy * 0.4 : 0);
-      const hw = s.headW ? 1 + (s.headW - 1) * Math.min(1, Math.max(0, (t - 0.55) / 0.35)) ** 2 : 1;
-      const x = (W / 2) * e * sy * (1 - 0.15 * cy) * hw;
+      const ce = spow(cy, cy > 0 ? eT : eB);
+      const se = spow(sy, cy > 0 ? eT : eB);
+      const y = (H / 2) * e * ce * (cy > 0 ? topK(t) : 1) - (cy < 0 ? belly * H * e * -cy * 0.4 : 0) + m;
+      let x = (W / 2) * we * se * (1 - (v2 ? 0.1 : 0.15) * cy);
+      if (keel) x += Math.sign(sy) * keel * (W / 2) * Math.exp(-((cy / 0.3) ** 2)) * Math.max(0, 1 - t / 0.22);
+      if (v2 && t > 0.92) x *= 1 - 0.3 * Math.exp(-(((y - mouthY(t)) / Math.max(0.004, 0.035 * H)) ** 2)) * Math.min(1, (t - 0.92) / 0.06);
       pos.push(x, y, z);
+      // §5.2 baked occlusion: the underside, and the flank under the pectoral fin
+      const under = Math.max(0, -cy);
+      aoB.push(Math.max(0.55, 1 - 0.3 * Math.pow(under, 1.3) - 0.14 * Math.exp(-(((t - pt + 0.04) / 0.07) ** 2)) * Math.max(0, -cy + 0.3)));
     }
   }
   for (let i = 0; i < S; i++)
@@ -179,122 +332,195 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
     }
   const body = new THREE.BufferGeometry();
   body.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  body.setAttribute('aAO', new THREE.Float32BufferAttribute(aoB, 1));
   body.setIndex(idx);
   body.computeVertexNormals();
+  {
+    // the seam along the back (j = 0 and j = R are separate vertices): share their normals so no line shows
+    const n = body.attributes.normal as THREE.BufferAttribute;
+    for (let i = 0; i <= S; i++) {
+      const a = i * (R + 1), b = a + R;
+      const nx = n.getX(a) + n.getX(b), ny = n.getY(a) + n.getY(b), nz = n.getZ(a) + n.getZ(b);
+      const l = Math.hypot(nx, ny, nz) || 1;
+      n.setXYZ(a, nx / l, ny / l, nz / l);
+      n.setXYZ(b, nx / l, ny / l, nz / l);
+    }
+  }
   parts.push(body);
+  {
+    // close the open tube at the peduncle (seen from behind, past a thin or missing caudal fin): own vertices,
+    // so the tube's normals there are not bent backwards
+    const cp: number[] = [];
+    const cy0 = mid(0) + ((H / 2) * env(0) * (topK(0) - 1)) / 2;
+    for (let j = 0; j < R; j++) cp.push(0, cy0, -0.5, pos[(j + 1) * 3], pos[(j + 1) * 3 + 1], -0.5, pos[j * 3], pos[j * 3 + 1], -0.5);
+    const cap = new THREE.BufferGeometry();
+    cap.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3));
+    cap.setAttribute('normal', new THREE.Float32BufferAttribute(cp.map((_, k) => (k % 3 === 2 ? -1 : 0)), 3));
+    setAttr(cap, 'aFin', () => 0);
+    setAttr(cap, 'aAO', () => 0.8);
+    parts.push(cap);
+  }
 
+  /** half width of the body surface at height y (relative to the centre line) at t */
+  const surfX = (t: number, y: number) => {
+    const ym = y - mid(t);
+    const top = ym >= 0;
+    const b = top ? topAt(t) : botAt(t) * (1 + belly * 0.4);
+    const c = Math.min(1, Math.abs(ym) / Math.max(1e-4, b));
+    const ex = top ? eT : eB;
+    const cc = Math.pow(c, 1 / ex);
+    const ss = Math.sqrt(Math.max(0, 1 - cc * cc));
+    return (W / 2) * wEnv(t) * hwAt(t) * Math.pow(ss, ex) * (1 - (v2 ? 0.1 : 0.15) * (top ? cc : -cc));
+  };
+
+  const fins: FinTrace[] = [];
+  const rowsMain = detail ? 2 : 4;
+  const colsOf = (n: number) => Math.max(detail ? 2 : 3, Math.round(n * (detail ? 0.45 : 1) * finK));
+
+  // ---- caudal fin
   const z0 = -0.5;
-  const topAt = (t: number) => (H / 2) * env(t) * topK(t);
-  const botAt = (t: number) => (H / 2) * env(t);
   const tl = s.tailL ?? 0.22;
   const th = s.tailH ?? H * 1.1;
   const pedH = Math.max(0.02, topAt(0.02));
-  const vert = (a: number, b: number): [number, number, number] => [0, b, a];
-  const tailStart = parts.length;
-  switch (s.tail) {
-    case 'fork':
-      parts.push(flatPoly([[z0 + 0.03, pedH], [z0 - tl, th / 2], [z0 - tl * 0.78, th / 2 - 0.02], [z0 - tl * 0.42, 0], [z0 - tl * 0.78, -th / 2 + 0.02], [z0 - tl, -th / 2], [z0 + 0.03, -pedH]], vert));
-      break;
-    case 'lunate':
-      parts.push(flatPoly([[z0 + 0.03, pedH], [z0 - tl * 0.75, th / 2], [z0 - tl, th / 2 + 0.01], [z0 - tl * 0.35, 0], [z0 - tl, -th / 2 - 0.01], [z0 - tl * 0.75, -th / 2], [z0 + 0.03, -pedH]], vert));
-      break;
-    case 'round': {
-      const pts: [number, number][] = [[z0 + 0.03, pedH]];
-      for (let k = 0; k <= 8; k++) {
-        const a = Math.PI / 2 - (k / 8) * Math.PI;
-        pts.push([z0 - tl * (0.55 + 0.45 * Math.cos(a)), (th / 2) * Math.sin(a)]);
+  const vert = (a: number, b: number): [number, number, number] => [0, b + mid(0), a];
+  if (s.tail !== 'none') {
+    const rz = z0 + 0.03;
+    let edge: [number, number][];
+    const T: [number, number] = [rz, pedH], Bm: [number, number] = [rz, -pedH];
+    const mirror = (p: [number, number][]) => p.map(([a, b]) => [a, -b] as [number, number]).reverse();
+    if (!v2 || s.tail === 'flukes') {
+      // old polygon outlines (kept as they were for the animals that are not on the v2 model)
+      const old: Record<string, [number, number][]> = {
+        fork: [[z0 - tl, th / 2], [z0 - tl * 0.78, th / 2 - 0.02], [z0 - tl * 0.42, 0], [z0 - tl * 0.78, -th / 2 + 0.02], [z0 - tl, -th / 2]],
+        lunate: [[z0 - tl * 0.75, th / 2], [z0 - tl, th / 2 + 0.01], [z0 - tl * 0.35, 0], [z0 - tl, -th / 2 - 0.01], [z0 - tl * 0.75, -th / 2]],
+        truncate: [[z0 - tl, th / 2], [z0 - tl * 1.05, 0], [z0 - tl, -th / 2]],
+        hetero: [[z0 - tl, th * 0.62], [z0 - tl * 0.86, th * 0.52], [z0 - tl * 0.32, -0.01], [z0 - tl * 0.5, -th * 0.33], [z0 - tl * 0.38, -th * 0.33]],
+        flukes: [[th / 2, z0 - tl * 0.8], [th / 2 - 0.02, z0 - tl], [0, z0 - tl * 0.55], [-th / 2 + 0.02, z0 - tl], [-th / 2, z0 - tl * 0.8]],
+      };
+      if (s.tail === 'round') {
+        edge = [];
+        for (let k = 0; k <= 8; k++) { const a = Math.PI / 2 - (k / 8) * Math.PI; edge.push([z0 - tl * (0.55 + 0.45 * Math.cos(a)), (th / 2) * Math.sin(a)]); }
+      } else edge = old[s.tail];
+      if (s.tail === 'flukes') edge = [[0.04, z0 + 0.04], ...edge, [-0.04, z0 + 0.04]];
+      else edge = [T, ...edge, Bm];
+    } else {
+      // §3.2: curved outlines (bowed lobes, a thin-tipped crescent, gently rounded margins)
+      const tip: [number, number] = [z0 - tl, th / 2];
+      switch (s.tail) {
+        case 'fork': {
+          const notch: [number, number] = [z0 - tl * 0.42, 0];
+          const up = [T, ...bez(T, [z0 - tl * 0.45, th * 0.5], tip), ...bez(tip, [z0 - tl * 0.62, th * 0.1], notch)];
+          edge = [...up, ...mirror(up).slice(1)];
+          break;
+        }
+        case 'lunate': {
+          const tp: [number, number] = [z0 - tl, th / 2 + 0.01];
+          const c: [number, number] = [z0 - tl * 0.38, 0];
+          const up = [T, ...bez(T, [z0 - tl * 0.3, th * 0.5], tp), ...bez(tp, [z0 - tl * 0.5, th * 0.15], c)];
+          edge = [...up, ...mirror(up).slice(1)];
+          break;
+        }
+        case 'round': {
+          edge = [T];
+          for (let k = 0; k <= 16; k++) { const a = Math.PI / 2 - (k / 16) * Math.PI; edge.push([z0 - tl * (0.55 + 0.45 * Math.cos(a)), (th / 2) * Math.sin(a)]); }
+          edge.push(Bm);
+          break;
+        }
+        case 'truncate': {
+          const up = [T, ...bez(T, [z0 - tl * 0.5, th * 0.5], tip), ...bez(tip, [z0 - tl * 1.06, th * 0.2], [z0 - tl * 1.04, 0], 4)];
+          edge = [...up, ...mirror(up).slice(1)];
+          break;
+        }
+        default: {
+          // hetero (sharks): long upper lobe, small lower lobe
+          const up: [number, number] = [z0 - tl, th * 0.62];
+          const lo: [number, number] = [z0 - tl * 0.5, -th * 0.33];
+          edge = [T, ...bez(T, [z0 - tl * 0.5, th * 0.5], up), ...bez(up, [z0 - tl * 0.85, th * 0.3], [z0 - tl * 0.32, -0.01]), ...bez([z0 - tl * 0.32, -0.01], [z0 - tl * 0.48, -th * 0.12], lo, 3), ...bez(lo, [z0 - tl * 0.15, -th * 0.25], Bm, 3)];
+        }
       }
-      pts.push([z0 + 0.03, -pedH]);
-      parts.push(flatPoly(pts, vert));
-      break;
     }
-    case 'truncate':
-      parts.push(flatPoly([[z0 + 0.03, pedH], [z0 - tl, th / 2], [z0 - tl * 1.05, 0], [z0 - tl, -th / 2], [z0 + 0.03, -pedH]], vert));
-      break;
-    case 'hetero':
-      parts.push(flatPoly([[z0 + 0.04, pedH], [z0 - tl, th * 0.62], [z0 - tl * 0.86, th * 0.52], [z0 - tl * 0.32, -0.01], [z0 - tl * 0.5, -th * 0.33], [z0 - tl * 0.38, -th * 0.33], [z0 + 0.04, -pedH]], vert));
-      break;
-    case 'flukes':
-      parts.push(flatPoly([[0.04, z0 + 0.04], [th / 2, z0 - tl * 0.8], [th / 2 - 0.02, z0 - tl], [0, z0 - tl * 0.55], [-th / 2 + 0.02, z0 - tl], [-th / 2, z0 - tl * 0.8], [-0.04, z0 + 0.04]], (a, b) => [a, 0, b]));
-      break;
-    case 'none':
-      break;
-  }
-  {
-    const rootZ = z0 + 0.03;
-    const rootT = (W / 2) * env(0.03) * 0.85;
-    for (let k = tailStart; k < parts.length; k++) {
-      if (s.tail === 'flukes') {
-        const e = (_x: number, _y: number, z: number) => Math.min(1, Math.max(0, (rootZ - z) / (tl + 0.03)));
-        parts[k] = thickFin(parts[k], 'y', (x, y, z) => H * 0.05 * Math.pow(1 - e(x, y, z), 1.6), e);
-      } else {
-        const e = (_x: number, y: number, z: number) => Math.min(1, Math.max((rootZ - z) / (tl + 0.03), (Math.abs(y) - pedH) / Math.max(0.01, th / 2)));
-        parts[k] = thickFin(parts[k], 'x', (x, y, z) => rootT * Math.pow(1 - Math.max(0, e(x, y, z)), 1.6), e);
-      }
+    const cols = colsOf(s.tail === 'round' ? 11 : 8);
+    const e = resample(edge, cols);
+    if (s.tail === 'flukes') {
+      const r0: [number, number] = [0.04, z0 + 0.04], r1: [number, number] = [-0.04, z0 + 0.04];
+      const root = e.map((_, k) => [r0[0] + (r1[0] - r0[0]) * (k / cols), r0[1]] as [number, number]);
+      parts.push(finGrid({ root, edge: e, rows: rowsMain, map: (a, b) => [a, mid(0), b], half: () => H * 0.05, axis: 'y' }));
+    } else {
+      const root = e.map((_, k) => [rz, pedH - 2 * pedH * (k / cols)] as [number, number]);
+      const rootT = (W / 2) * wEnv(0.03) * 0.85;
+      parts.push(finGrid({ root, edge: e, rows: rowsMain, map: vert, half: () => rootT }));
+      fins.push({ root: root.map(([a, b]) => [a, b + mid(0)]), edge: e.map(([a, b]) => [a, b + mid(0)]) });
     }
   }
 
-  // dorsal / anal fin strips
+  // ---- dorsal / anal fins
   const strip = (a: number, b: number, h: number, top: boolean, jag = 0, sweep = 0.3) => {
-    const n = 12;
-    const pts: [number, number][] = [];
+    const n = jag > 0 && v2 && !detail ? Math.max(colsOf((b - a) / 0.06), Math.round(12 * finK)) : colsOf((b - a) / 0.06);
+    // spines: one every two columns, so the dips between them are always resolved
+    const nsp = Math.max(2, Math.floor(n / 2));
+    const root: [number, number][] = [], edge: [number, number][] = [];
     for (let k = 0; k <= n; k++) {
-      const t = a + (b - a) * (k / n);
-      const y = (top ? topAt(t) : -botAt(t)) * 0.9;
-      pts.push([t - 0.5, y]);
+      const u = k / n;
+      const t = a + (b - a) * u;
+      const y0 = (top ? topAt(t) : -botAt(t)) * 0.9;
+      const prof = b - a < 0.25 ? Math.sin(u * Math.PI) : Math.sin(Math.pow(u, 0.7) * Math.PI) * 0.75 + 0.25;
+      // spiny fins: the membrane dips between the spine tips (v2), the old ones alternated the height
+      const jj = jag <= 0 ? 1 : v2 ? 1 - jag * 0.8 * Math.pow(Math.abs(Math.sin(Math.PI * nsp * u)), 0.7) : k % 2 === 0 ? 1 : 1 - jag;
+      const hh = Math.max(0.002, h * prof * jj);
+      root.push([t - 0.5, y0 + mid(t)]);
+      edge.push([t - 0.5 - sweep * hh, y0 + hh * (top ? 1 : -1) + mid(t)]);
     }
-    for (let k = n; k >= 0; k--) {
-      const t = a + (b - a) * (k / n);
-      const prof = Math.sin(Math.pow(k / n, 0.7) * Math.PI) * 0.75 + 0.25;
-      const jj = jag > 0 ? (k % 2 === 0 ? 1 : 1 - jag) : 1;
-      const hh = h * (b - a < 0.25 ? Math.sin((k / n) * Math.PI) : prof) * jj;
-      const y = (top ? topAt(t) : -botAt(t)) * 0.9 + hh * (top ? 1 : -1);
-      pts.push([t - 0.5 - sweep * hh, y]);
-    }
-    const e = (_x: number, y: number, z: number) => {
-      const tt = Math.min(1, Math.max(0, z + 0.5));
-      return (Math.abs(y) - (y > 0 ? topAt(tt) : botAt(tt)) * 0.9) / Math.max(0.01, h);
-    };
-    parts.push(thickFin(flatPoly(pts, vert), 'x', (x, y, z) => (W / 2) * env(Math.min(1, Math.max(0, z + 0.5))) * 0.3 * Math.pow(1 - Math.min(1, Math.max(0, e(x, y, z))), 1.5), e));
+    parts.push(finGrid({ root, edge, rows: detail ? 2 : 3, map: (p, q) => [0, q, p], half: (u) => (W / 2) * wEnv(a + (b - a) * u) * 0.3 }));
+    fins.push({ root, edge });
   };
   for (const d of s.dorsal ?? []) strip(d.a, d.b, d.h, true, d.jag ?? 0, d.sweep ?? 0.3);
   for (const d of s.anal ?? []) strip(d.a, d.b, d.h, false);
 
-  if (s.filament) {
+  if (s.filament && !detail) {
     const d = (s.dorsal ?? [{ a: 0.3, b: 0.6, h: 0.3 }])[0];
     const tz = (d.a + d.b) / 2 - 0.5;
-    const ty = topAt((d.a + d.b) / 2) + d.h;
+    const ty = topAt((d.a + d.b) / 2) + d.h + mid((d.a + d.b) / 2);
     parts.push(flatPoly([[tz - 0.02, ty - 0.1], [tz - s.filament * 0.9, ty + s.filament * 0.25], [tz - s.filament, ty + s.filament * 0.2], [tz + 0.03, ty - 0.1]], vert));
   }
 
-  // pectoral fins (both sides)
+  // ---- pectoral fins: a fan (narrow root, round tip) that rows about its root (aFlap, §3.2 / §4.2)
   if (s.pect) {
     const p = s.pect;
     const zt = p.t - 0.5;
-    const yb = -topAt(p.t) * 0.25;
+    const yb = -topAt(p.t) * 0.25 + mid(p.t);
+    const out = p.out ?? 0.6;
+    const L = p.len, Wd = p.wid;
+    const outline: [number, number][] = v2
+      ? [[0, 0], ...bez([0, 0], [L * out * 0.7, -Wd * 0.05], [L * 0.92, -Wd * 0.4], 4), ...bez([L * 0.92, -Wd * 0.4], [L * 1.05, -Wd * 0.85], [L * 0.7, -Wd * 1.05], 4), ...bez([L * 0.7, -Wd * 1.05], [L * 0.3, -Wd * 1.0], [0.015, -Wd * 0.45], 3)]
+      : [[0, 0], [L * out, -Wd * 0.4], [L, -Wd * 0.9], [L * 0.8, -Wd * 1.1], [0.02, -Wd * 0.5]];
+    const cols = colsOf(5);
+    const e = resample(outline, cols);
+    const rEnd = outline[outline.length - 1];
+    const root = e.map((_, k) => [(rEnd[0] * k) / cols, (rEnd[1] * k) / cols] as [number, number]);
     for (const side of [-1, 1]) {
-      const xb = (W / 2) * env(p.t) * 0.9 * side;
-      const out = p.out ?? 0.6;
-      parts.push(
-        flatPoly([[0, 0], [p.len * out, -p.wid * 0.4], [p.len, -p.wid * 0.9], [p.len * 0.8, -p.wid * 1.1], [0.02, -p.wid * 0.5]], (a, b) => [
-          xb + side * a * Math.cos(p.down),
-          yb - a * Math.sin(p.down),
-          zt + b,
-        ]),
-      );
+      const xb = (v2 ? surfX(p.t, yb) * 0.95 : (W / 2) * env(p.t) * 0.9) * side;
+      parts.push(finGrid({ root, edge: e, rows: detail ? 1 : 2, map: (a, b) => [xb + side * a * Math.cos(p.down), yb - a * Math.sin(p.down), zt + b], flap: v2 ? side : 0 }));
     }
   }
   if (s.pelvic) {
+    const t = 0.55;
+    const yb = -topAt(t) * 0.8 + mid(t);
+    const outline: [number, number][] = v2
+      ? [[0, 0], ...bez([0, 0], [0.06, -0.01], [0.08, -0.05], 3), ...bez([0.08, -0.05], [0.075, -0.1], [0.04, -0.1], 3), [0, -0.055]]
+      : [[0, 0], [0.08, -0.04], [0.06, -0.1], [0, -0.06]];
+    const cols = colsOf(3);
+    const e = resample(outline, cols);
+    const rEnd = outline[outline.length - 1];
+    const root = e.map((_, k) => [(rEnd[0] * k) / cols, (rEnd[1] * k) / cols] as [number, number]);
     for (const side of [-1, 1]) {
-      const t = 0.55;
-      const yb = -topAt(t) * 0.8;
-      parts.push(flatPoly([[0, 0], [0.08, -0.04], [0.06, -0.1], [0, -0.06]], (a, b) => [side * (W * 0.15 + a * 0.4), yb - a * 0.6, t - 0.5 + b]));
+      const x0 = v2 ? Math.min(W * 0.15, surfX(t, yb) * 0.8) : W * 0.15;
+      parts.push(finGrid({ root, edge: e, rows: detail ? 1 : 2, map: (a, b) => [side * (x0 + a * 0.4), yb - a * 0.6, t - 0.5 + b] }));
     }
   }
   if (s.ceph) {
-    const c = new THREE.SphereGeometry(1, 16, 6);
+    const c = new THREE.SphereGeometry(1, detail ? 8 : 16, detail ? 3 : 6);
     c.scale(s.ceph / 2, H * 0.12, 0.06);
-    c.translate(0, H * 0.05, 0.43);
+    c.translate(0, H * 0.05 + mid(0.93), 0.43);
     c.userData.eye = true;
     parts.push(c);
   }
@@ -303,21 +529,33 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
     stalk.rotateX(-0.7);
     stalk.translate(0, H / 2 + 0.1, 0.42);
     parts.push(stalk);
-    const bulb = new THREE.SphereGeometry(0.035, 10, 8);
+    const bulb = new THREE.SphereGeometry(0.035, detail ? 6 : 10, detail ? 4 : 8);
     bulb.translate(0, H / 2 + 0.22, 0.54);
     setAttr(bulb, 'aGlow', () => 1);
     parts.push(bulb);
   }
-  // eyes
+  // ---- eyes (§3.3): a sphere sunk 70 % into the head, only the exposed cap is built; L1 has none (painted)
   const er = (s.eyes ?? 0.09) * H;
-  if (er > 0) {
-    const et = s.eyeT ?? 0.86;
+  const et = s.eyeT ?? 0.86;
+  const eyeY = topAt(et) * 0.22 + mid(et);
+  const eyeParts: Part[] = [];
+  if (er > 0 && detail === 0) {
     for (const side of [-1, 1]) {
-      const e = new THREE.SphereGeometry(er, 8, 6);
-      e.scale(0.5, 1, 1);
-      e.translate((W / 2) * env(et) * 0.92 * side, topAt(et) * 0.22, et - 0.5);
+      let e: Part;
+      if (v2) {
+        // pole along +x: thetaLength 117° keeps the part outside the plane 0.45 r behind the centre
+        e = new THREE.SphereGeometry(er, 10, 5, 0, Math.PI * 2, 0, (117 * Math.PI) / 180);
+        e.rotateZ(-Math.PI / 2);
+        if (side < 0) e.rotateY(Math.PI);
+        e.translate(side * (surfX(et, eyeY) - 0.4 * er), eyeY, et - 0.5);
+      } else {
+        e = new THREE.SphereGeometry(er, 8, 6);
+        e.scale(0.5, 1, 1);
+        e.translate((W / 2) * env(et) * 0.92 * side, topAt(et) * 0.22, et - 0.5);
+      }
       e.userData.eye = true;
       parts.push(e);
+      eyeParts.push(e);
     }
   }
 
@@ -339,8 +577,26 @@ export function buildFish(s: FishShape): { geo: THREE.BufferGeometry; layout: Fi
     // 0 = scaled body, 1 = fin (rays), 2 = eye / smooth parts
     if (!g.attributes.aFin) setAttr(g, 'aFin', () => (i === 0 ? 0 : g.userData.eye ? 2 : 1));
   });
-  const geo = finalize(parts, uvFn);
-  return { geo, layout: { zMin, zMax, yMax, env, top: topK, shape: s } };
+  // the eye caps get the painted eye spread over them (side projection, enlarged so the cap shows pupil and iris)
+  const eyeUV = (g: Part) => {
+    const p = g.attributes.position as THREE.BufferAttribute;
+    const uv = new Float32Array(p.count * 2);
+    for (let i = 0; i < p.count; i++) {
+      const [u, v] = uvFn(0, eyeY + (p.getY(i) - eyeY) * 1.25, et - 0.5 + (p.getZ(i) - (et - 0.5)) * 1.25);
+      uv[i * 2] = u; uv[i * 2 + 1] = v;
+    }
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  };
+  const geo = finalize(parts.map((g) => {
+    if (eyeParts.includes(g) && v2) { const n = g.index ? g.toNonIndexed() : g; eyeUV(n); return n; }
+    const n = g.index ? g.toNonIndexed() : g;
+    const p = n.attributes.position as THREE.BufferAttribute;
+    const uv = new Float32Array(p.count * 2);
+    for (let i = 0; i < p.count; i++) { const [u, v] = uvFn(p.getX(i), p.getY(i), p.getZ(i)); uv[i * 2] = u; uv[i * 2 + 1] = v; }
+    n.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    return n;
+  }));
+  return { geo, layout: { zMin, zMax, yMax, env, top: topK, shape: s, mid, v2, fins, gillT: et - 0.1, mouthY: mouthY(0.97) } };
 }
 
 // --------------------------------------------------------------------------- ray / flatfish
@@ -1069,6 +1325,7 @@ export function buildPhotoFish(prof: number[][], aspect: number, widthRatio = 0.
   g.setAttribute('aFin', new THREE.Float32BufferAttribute(fin, 1));
   g.setAttribute('aBend', new THREE.Float32BufferAttribute(bend, 1));
   for (const a of ['aFlap', 'aPulse', 'aGlow']) setAttr(g, a, () => 0);
+  setAttr(g, 'aAO', () => 1);
   g.setIndex(idx);
   g.computeVertexNormals();
   g.computeBoundingSphere();

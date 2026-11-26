@@ -8,6 +8,8 @@ export class Paint {
   readonly W: number;
   readonly H: number;
   rnd = mulberry32(42);
+  /** Look.sheen, kept for buildMesh (applied by sheenMask after the species' painter has run) */
+  sheen?: number;
   constructor(w: number, h: number, public fish?: FishLayout) {
     this.c = document.createElement('canvas');
     this.c.width = this.W = w;
@@ -29,16 +31,17 @@ export class Paint {
     const p = new Path2D();
     const H = f.shape.H;
     const n = 40;
+    const mid = f.mid ?? (() => 0);
     for (let i = 0; i <= n; i++) {
       const t = i / n;
-      const y = (H / 2) * f.env(t) * f.top(t) * pad;
+      const y = (H / 2) * f.env(t) * f.top(t) * pad + mid(t);
       const x = this.U(t - 0.5);
       if (i === 0) p.moveTo(x, this.V(y));
       else p.lineTo(x, this.V(y));
     }
     for (let i = n; i >= 0; i--) {
       const t = i / n;
-      const y = -(H / 2) * f.env(t) * pad * (1 + (f.shape.belly ?? 0.08) * 0.4);
+      const y = -(H / 2) * f.env(t) * pad * (1 + (f.shape.belly ?? 0.08) * 0.4) + mid(t);
       p.lineTo(this.U(t - 0.5), this.V(y));
     }
     p.closePath();
@@ -130,7 +133,8 @@ export class Paint {
     const f = this.fish!;
     const t = f.shape.eyeT ?? 0.86;
     const x = this.U(t - 0.5);
-    const y = this.V((f.shape.H / 2) * f.env(t) * 0.22);
+    // v2: the painted eye sits where the eye cap is (the old painter ignored the hump)
+    const y = this.V((f.shape.H / 2) * f.env(t) * (f.v2 ? f.top(t) : 1) * 0.22 + (f.mid?.(t) ?? 0));
     const r = Math.max(2.5, ((f.shape.eyes ?? rel) * f.shape.H * this.H) / (2 * f.yMax));
     this.g.fillStyle = iris;
     this.g.beginPath();
@@ -147,7 +151,7 @@ export class Paint {
   }
   mouth(color = 'rgba(40,20,20,0.7)', len = 0.04) {
     const f = this.fish!;
-    const y = this.V(-f.shape.H * 0.05);
+    const y = this.V(f.mouthY ?? -f.shape.H * 0.05);
     this.g.strokeStyle = color;
     this.g.lineWidth = 1.5;
     this.g.beginPath();
@@ -175,6 +179,24 @@ export class Paint {
     };
     if (clip && this.fish) this.clipBody(doit);
     else doit();
+  }
+  /**
+   * §3.4: silver parts (lower flank and belly) marked in the alpha channel, 1 − 0.5 × sheen (kept ≥ 0.5 so the colour
+   * survives the canvas's premultiplied alpha). The material is opaque; the §5.2 sheen term reads it.
+   */
+  sheenMask(k: number) {
+    if (!this.fish || k <= 0) return;
+    const f = this.fish;
+    const g = this.g;
+    g.save();
+    g.clip(this.body());
+    g.globalCompositeOperation = 'destination-out';
+    const gr = g.createLinearGradient(0, this.V(f.shape.H * 0.15), 0, this.V(-f.shape.H * 0.4));
+    gr.addColorStop(0, 'rgba(0,0,0,0)');
+    gr.addColorStop(1, `rgba(0,0,0,${(0.5 * Math.min(1, k)).toFixed(3)})`);
+    g.fillStyle = gr;
+    g.fillRect(0, 0, this.W, this.H);
+    g.restore();
   }
   /** Mottled blotches anywhere. */
   blotch(n: number, r0: number, r1: number, colors: string[], clip = false) {
@@ -214,17 +236,47 @@ export type Look = {
   iris?: string;
   snout?: string;
   blotch?: [number, string[]];
+  /** §3.4 (model v2): lateral line (default: body plans with scaleN ≥ 40), fin margin colour, silver sheen 0..1
+   *  (default from the material's metalness) */
+  lateral?: boolean;
+  finEdge?: string;
+  sheen?: number;
 };
 
 export function paintLook(p: Paint, L: Look): void {
   const f = p.fish!;
   const H = f.shape.H;
   const g = p.g;
+  const v2 = !!f.v2;
+  // §3.4: pattern edges blur a little (0.3 % of the texture width), as real markings do
+  const soft = (on: boolean) => { g.filter = on && v2 ? `blur(${Math.max(0.6, p.W * 0.003).toFixed(2)}px)` : 'none'; };
   p.fill(L.fin ?? L.c[1]);
   if (L.dorsal) { g.fillStyle = L.dorsal; g.fillRect(0, 0, p.W, p.V(H * 0.3)); }
   if (L.anal) { g.fillStyle = L.anal; g.fillRect(0, p.V(-H * 0.3), p.W, p.H); }
   if (L.tail) { g.fillStyle = L.tail; g.fillRect(0, 0, p.U(-0.47), p.H); }
+  if (v2) {
+    // §3.4: soft rays along each fin's grid columns and the margin colour (the body paints over the roots)
+    const lw = Math.max(1, p.W / 256);
+    for (const fin of f.fins ?? []) {
+      g.strokeStyle = 'rgba(0,0,0,0.13)';
+      g.lineWidth = lw;
+      for (let k = 0; k < fin.root.length; k++) {
+        g.beginPath();
+        g.moveTo(p.U(fin.root[k][0]), p.V(fin.root[k][1]));
+        g.lineTo(p.U(fin.edge[k][0]), p.V(fin.edge[k][1]));
+        g.stroke();
+      }
+      if (L.finEdge) {
+        g.strokeStyle = L.finEdge;
+        g.lineWidth = lw * 3;
+        g.beginPath();
+        fin.edge.forEach(([z, y], k) => (k ? g.lineTo(p.U(z), p.V(y)) : g.moveTo(p.U(z), p.V(y))));
+        g.stroke();
+      }
+    }
+  }
   p.shade(L.c[0], L.c[1], L.c[2], L.mid ?? 0.5);
+  soft(true);
   p.clipBody(() => {
     if (L.front) { g.fillStyle = L.front[1]; g.fillRect(p.U(L.front[0]), 0, p.W, p.H); }
     if (L.rear) {
@@ -277,7 +329,29 @@ export function paintLook(p: Paint, L: Look): void {
     p.bar(t - 0.5, 0.05, L.eyeBar, undefined, 0.01);
   }
   if (L.snout) p.clipBody(() => { g.fillStyle = L.snout!; g.fillRect(p.U(0.42), 0, p.W, p.H); });
+  soft(false);
   p.scales(Math.min(L.scales ?? 0.035, 0.06), Math.max(4, Math.round(p.W / 64)));
   p.noise(L.noise ?? 0.05);
+  if (v2) {
+    // §3.4 lateral line: a fine pale line following the back's curve, from the gill cover to the tail root
+    if (L.lateral ?? (f.shape.scaleN ?? 48) >= 40) {
+      p.clipBody(() => {
+        g.strokeStyle = 'rgba(255,255,255,0.2)';
+        g.lineWidth = Math.max(1, p.W / 300);
+        g.beginPath();
+        const t1 = f.gillT ?? 0.76;
+        for (let i = 0; i <= 24; i++) {
+          const t = 0.04 + ((t1 - 0.04) * i) / 24;
+          const y = (H / 2) * f.env(t) * f.top(t) * (0.42 + 0.2 * (t / t1)) + (f.mid?.(t) ?? 0);
+          if (i) g.lineTo(p.U(t - 0.5), p.V(y)); else g.moveTo(p.U(t - 0.5), p.V(y));
+        }
+        g.stroke();
+      });
+    }
+    // §3.3: the gill cover edge and the mouth line
+    p.gill('rgba(0,0,0,0.17)', f.gillT ?? 0.76);
+    p.mouth('rgba(30,15,15,0.55)', 0.035);
+  }
   p.eye(f.shape.eyes ?? 0.1, L.iris ?? '#2a2a20');
+  if (L.sheen !== undefined) p.sheen = L.sheen;
 }

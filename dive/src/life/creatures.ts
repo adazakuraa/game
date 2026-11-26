@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { SPECIES, type SpeciesDef } from './species';
 import { loadPhotoTex, photoFor } from './photoFish';
 import { surfaceAt } from '../world/surface';
-import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr } from './models';
+import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr, type FishLayout } from './models';
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
@@ -69,6 +69,8 @@ export type SpeciesRuntime = {
   swimF0?: number;
   /** labriform: always "beat then glide" */
   swimGlide?: boolean;
+  /** L1 geometry of a generated fish (§1.1, rings 8 · segs 12, ≤ 400 triangles), made with L0 for the LOD of S5 */
+  geo1?: THREE.BufferGeometry;
 };
 
 const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster', 'gardenEel', 'inv']);
@@ -81,13 +83,60 @@ const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _qt = new THREE.Quaternion();
 const _sc = new THREE.Vector3();
 
-function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Paint } {
+/** PHASE8-DESIGN §1.1 / BG: triangle budgets of a generated fish — L0 by body length, and its L1. */
+export const FISH_TRIS = { smallSize: 0.4, small: 1500, large: 2500, l1: 400 };
+/** S4: generated model v2 for every fish on the new swim (else only the trial body plans that set `xs`) */
+const MODEL_V2_ALL = false;
+
+/** Generated model v2 (§3) applies to the fish on swim v2; sea mammals, penguins and the sea snake keep the old body. */
+export function fishV2(def: SpeciesDef): boolean {
+  if (def.kind !== 'fish' || !def.fish || !swimModeOf(def)) return false;
+  return MODEL_V2_ALL || def.fish.xs !== undefined;
+}
+
+const triCount = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.attributes.position.count) / 3;
+
+/**
+ * L0 and L1 geometry of a generated fish (§3.1 subdivisions, §1.1 budgets). Over budget, the fin grids are thinned
+ * first, then the body rings along the length.
+ */
+function fishGeometries(def: SpeciesDef): { geo: THREE.BufferGeometry; geo1: THREE.BufferGeometry; layout: FishLayout } {
+  const f = def.fish!;
+  const v2 = fishV2(def);
+  const small = def.size < FISH_TRIS.smallSize;
+  const limit = small ? FISH_TRIS.small : FISH_TRIS.large;
+  let out: { geo: THREE.BufferGeometry; layout: FishLayout } | null = null;
+  if (v2) {
+    const rings = Math.max(f.rings ?? 0, small ? 16 : 18);
+    const segs0 = Math.max(f.segs ?? 0, small ? 28 : 32);
+    // over budget: first a few body rings along the length (hardly visible), then the fin grids
+    const steps: [number, number][] = [[0, 1], [2, 1], [4, 1], [4, 0.8], [6, 0.8], [6, 0.65], [8, 0.65], [10, 0.5], [12, 0.5]];
+    for (let k = 0; k < steps.length && !out; k++) {
+      const [ds, finK] = steps[k];
+      const r = buildFish({ ...f, rings, segs: Math.max(16, segs0 - ds) }, { v2, finK });
+      if (triCount(r.geo) <= limit || k === steps.length - 1) out = r;
+      else r.geo.dispose();
+    }
+  } else {
+    // the old subdivisions (sea mammals etc. keep their look)
+    const old = def.size < 0.3;
+    out = buildFish({ ...f, rings: f.rings ?? (old ? 8 : 12), segs: f.segs ?? (old ? 12 : 18) }, { v2 });
+  }
+  let geo1: THREE.BufferGeometry | null = null;
+  for (const finK of [1, 0.6, 0.3]) {
+    const r = buildFish({ ...f, rings: 8, segs: 12 }, { v2, detail: 1, finK });
+    if (triCount(r.geo) <= FISH_TRIS.l1 || finK === 0.3) { geo1 = r.geo; break; }
+    r.geo.dispose();
+  }
+  return { geo: out!.geo, geo1: geo1!, layout: out!.layout };
+}
+
+function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; geo1?: THREE.BufferGeometry; paint: Paint } {
   const [tw, th] = def.tex ?? (def.kind === 'fish' && def.size >= 0.4 ? [512, 256] : [256, 128]);
   switch (def.kind) {
     case 'fish': {
-      const small = def.size < 0.3;
-      const { geo, layout } = buildFish({ ...def.fish!, rings: def.fish!.rings ?? (small ? 8 : 12), segs: def.fish!.segs ?? (small ? 12 : 18) });
-      return { geo, paint: new Paint(tw, th, layout) };
+      const { geo, geo1, layout } = fishGeometries(def);
+      return { geo, geo1, paint: new Paint(tw, th, layout) };
     }
     case 'gardenEel': {
       const { geo, layout } = buildFish(def.fish!);
@@ -126,8 +175,20 @@ function drawCut(s: number): number {
   return s < 0.12 ? 20 : s < 0.35 ? 34 : s < 1 ? 46 : 52 + s * 3;
 }
 
-function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false): THREE.MeshStandardMaterial {
+/** half body height at t = k / 16 for the v2 scale rows (§3.4: rows follow the body envelope) */
+function envSamples(lay: FishLayout): number[] {
+  const out: number[] = [];
+  for (let k = 0; k <= 16; k++) {
+    const t = k / 16;
+    const e = (lay.shape.H / 2) * lay.env(t);
+    out.push(Math.max(0.004, (e * lay.top(t) + e * (1 + (lay.shape.belly ?? 0.08) * 0.4)) / 2));
+  }
+  return out;
+}
+
+function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false, lay?: FishLayout): THREE.MeshStandardMaterial {
   const m = def.mat ?? {};
+  const v2 = !photo && (lay ? !!lay.v2 : fishV2(def));
   const mode: SwimMode | null = swimModeOf(def);
   const translucent = m.translucent !== undefined;
   const mat = new THREE.MeshStandardMaterial({
@@ -161,11 +222,12 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   }
   if (scaly) {
     mat.defines = { ...(mat.defines ?? {}), FISH_SCALES: '' };
+    if (v2) mat.defines.FISH_V2 = '';
     // wet, glossy skin; silver species keep their metal value
     mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
   }
   return underwaterMaterial(mat, {
-    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : '') + (mode ? '-sw' : ''),
+    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : '') + (mode ? '-sw' : '') + (v2 ? '-v2' : ''),
     caustic: 0.9,
     uniforms: {
       uSwim: { value: new THREE.Vector3(...swim) },
@@ -178,11 +240,20 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       // swim v2: A(q) coefficients (A(1) = 1) and s0; wave number 2π/λ, tail amplitude, pectoral flap, C-bend κ
       uSwimA: { value: new THREE.Vector4(...su.a) },
       uSwimB: { value: new THREE.Vector4(su.k, su.tail, su.flap, SWIM.kappa) },
+      // model v2 (§3.3-3.4): scale columns per unit length, half heights along the body, gill cover edge (u)
+      uScaleN: { value: lay?.shape.scaleN ?? 48 },
+      uEnvH: { value: lay ? envSamples(lay) : new Array(17).fill(0.1) },
+      uHalfH: { value: lay ? lay.shape.H / 2 : 0.1 },
+      uBodyLen: { value: lay ? lay.zMax - lay.zMin : 1 },
+      uGillU: { value: lay ? ((lay.gillT ?? 0.76) - 0.5 - lay.zMin) / (lay.zMax - lay.zMin) : 0.7 },
     },
     vertexHead: `attribute float aBend; attribute float aFlap; attribute float aPulse; attribute float aGlow; attribute float aFin;
       uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin; varying float vPh;
       #ifdef SWIM_V2
         attribute vec4 aSwim; uniform vec4 uSwimA; uniform vec4 uSwimB;
+      #endif
+      #ifdef FISH_V2
+        uniform float uEnvH[ 17 ]; varying float vScaleV;
       #endif`,
     vertexBody: `
       float ph = 0.0;
@@ -190,6 +261,14 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
         ph = instanceMatrix[3].x * 0.71 + instanceMatrix[3].z * 0.53 + instanceMatrix[3].y * 0.37;
       #endif
       vPh = ph;
+      #ifdef FISH_V2
+      {
+        // height across the body normalised by the local half height: scale rows follow the envelope (§3.4)
+        float et = clamp( position.z + 0.5, 0.0, 1.0 ) * 16.0;
+        int ei = int( min( floor( et ), 15.0 ) );
+        vScaleV = position.y / mix( uEnvH[ ei ], uEnvH[ ei + 1 ], et - float( ei ) );
+      }
+      #endif
       #ifdef SWIM_V2
       {
         // Swim v2 (PHASE8-DESIGN §4.2): the body follows a travelling wave along the spine x = o(s, t), and every
@@ -266,11 +345,20 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       #ifdef GLOW_SPIN
         vGlow *= 0.15 + pow( 0.5 + 0.5 * sin( atan( position.z, position.x ) * 2.0 - uTime * 4.0 ), 3.0 ) * 1.6;
       #endif`,
-    fragHead: 'uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; uniform float uUvAspect; uniform float uFishSize;',
+    fragHead: `uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; uniform float uUvAspect; uniform float uFishSize;
+      #ifdef FISH_V2
+        varying float vScaleV; uniform float uScaleN; uniform float uHalfH; uniform float uBodyLen; uniform float uGillU;
+      #endif`,
     fragFuncs: `
       #if defined( FISH_SCALES ) && defined( USE_MAP )
       float fishScale( vec2 uv ) {
-        vec2 q = uv * vec2( 58.0, 58.0 * uUvAspect );
+        #ifdef FISH_V2
+          // §3.4: columns per body length by species (scaleN), rows across the local body height
+          if ( uScaleN <= 0.0 ) return 0.0;
+          vec2 q = vec2( uv.x * uScaleN * uBodyLen, vScaleV * uScaleN * uHalfH );
+        #else
+          vec2 q = uv * vec2( 58.0, 58.0 * uUvAspect );
+        #endif
         float row = floor( q.y );
         q.x += mod( row, 2.0 ) * 0.5;
         vec2 f = fract( q ) - vec2( 0.62, 0.5 );
@@ -301,6 +389,14 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
         // relief fades with size: on big animals a texture-space pattern turns into coarse banding
         float big = 1.0 - smoothstep( 0.6, 2.0, uFishSize );
         float hb = vFin < 0.5 ? fishScale( vMapUv ) * uFishSize * 0.0006 * ( 0.3 + 0.7 * big ) : vFin < 1.5 ? abs( sin( vMapUv.y * 150.0 ) ) * uFishSize * 0.00035 * big : 0.0;
+        #ifdef FISH_V2
+          // §3.3: the gill cover stands a little proud of the flank behind it (light only, the shape is unchanged)
+          if ( vFin < 0.5 ) {
+            float av = clamp( abs( vScaleV ), 0.0, 1.0 );
+            float ge = uGillU - 0.012 * ( 1.0 - av * av );
+            hb += smoothstep( ge - 0.004, ge + 0.004, vMapUv.x ) * ( 1.0 - smoothstep( 0.6, 0.9, av ) ) * uFishSize * 0.0012;
+          }
+        #endif
         normal = uwBump( normal, hb );
       }
       #endif`,
@@ -725,12 +821,15 @@ export class Creatures {
       } else {
         const b = buildGeometry(def);
         geo = b.geo;
+        rt.geo1 = b.geo1;
         def.paint?.(b.paint);
+        const lay = b.paint.fish;
+        // §3.4: silver flanks and belly marked in the texture's alpha (read by the §5.2 sheen), opaque species only
+        if (lay?.v2 && def.mat?.translucent === undefined) b.paint.sheenMask(b.paint.sheen ?? Math.min(1, (def.mat?.metal ?? 0.05) * 1.4));
         const tex = new THREE.CanvasTexture(b.paint.c);
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = 4;
-        const lay = b.paint.fish;
-        mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3);
+        mat = makeMaterial(def, tex, lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3, false, lay);
       }
       const mode = swimModeOf(def);
       if (mode) {
@@ -776,6 +875,8 @@ export class Creatures {
     mat.map?.dispose(); // painted or photo texture, one per species
     mat.dispose();
     mesh.geometry.dispose();
+    rt.geo1?.dispose();
+    rt.geo1 = undefined;
     mesh.dispose(); // instance matrices and colours
     if (rt.halo) {
       this.group.remove(rt.halo);
@@ -834,7 +935,7 @@ export class Creatures {
     map.colorSpace = THREE.SRGBColorSpace;
     map.needsUpdate = true;
     const geo = new THREE.BufferGeometry();
-    for (const [name, size] of [['position', 3], ['normal', 3], ['uv', 2], ['aBend', 1], ['aFlap', 1], ['aPulse', 1], ['aGlow', 1], ['aFin', 1]] as const) {
+    for (const [name, size] of [['position', 3], ['normal', 3], ['uv', 2], ['aBend', 1], ['aFlap', 1], ['aPulse', 1], ['aGlow', 1], ['aFin', 1], ['aAO', 1]] as const) {
       geo.setAttribute(name, new THREE.BufferAttribute(new Float32Array(3 * size), size));
     }
     geo.setAttribute('aSwim', new THREE.InstancedBufferAttribute(new Float32Array(4), 4));
@@ -844,7 +945,7 @@ export class Creatures {
     for (const def of SPECIES) {
       if (def.kind === 'none') continue;
       const photo = def.kind === 'fish' && !!photoFor(def.id);
-      const sig = [def.kind, def.mat?.translucent !== undefined, photo, def.id.startsWith('hikarikinme'), def.id === 'atolla', !!def.rainbow, !!def.fish?.bendY, !!def.instColors, !!swimModeOf(def)].join('|');
+      const sig = [def.kind, def.mat?.translucent !== undefined, photo, def.id.startsWith('hikarikinme'), def.id === 'atolla', !!def.rainbow, !!def.fish?.bendY, !!def.instColors, !!swimModeOf(def), !photo && fishV2(def)].join('|');
       if (!seen.has(sig)) {
         seen.add(sig);
         const mesh = new THREE.InstancedMesh(geo, makeMaterial(def, map, 0.3, photo), 1);
