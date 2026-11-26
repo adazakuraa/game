@@ -61,7 +61,7 @@
 
 ## 次の一手
 - Phase 8 は設計済み（`dive/docs/PHASE8-DESIGN.md`、2026-11-26。計測ベースライン §0.2、手順 S0〜S8、暫定決定 AW〜BH）。**最初は S0（`play.html` に viewport がなく 980px レイアウトで画素が約 9.5 倍になっている件の修正と診断表示）**。以下は元の記述：Phase 8（魚・生物モデルの見た目刷新＋軽量化）の設計・実装。見た目の統合設計は Opus、素材作りは Muse、ゲームへの組み込み設計は Opus が担う分担（2026-11-25 夜の合意）。軽量化は 2026-11-25 のユーザー報告（実機で重い）を受けた項目で、ドローコール／インスタンシング／解像度スケーリング／読み込みサイズが対象。Phase が終わったら次の Phase も続けて進める（ユーザー指示）。
-- アーティファクト更新は節目のみで、動作確認は GitHub Pages のビルド済み単体ファイル（https://adazakuraa.github.io/game/dive/play.html 。セーブはアーティファクト版と別。旧 /game/dive/ はソース表示のみでゲームは動かない）で行う。フェーズごとに `npm run artifact` → `dist/artifact.html` を `dive/play.html` にコピーして main へ push する。
+- アーティファクト更新は節目のみで、動作確認は GitHub Pages のビルド済み単体ファイル（https://adazakuraa.github.io/game/dive/play.html 。セーブはアーティファクト版と別。旧 /game/dive/ はソース表示のみでゲームは動かない）で行う。フェーズごとに `npm run artifact` → `node scripts/make-artifact.mjs dist dist/play.html --page` → `dist/play.html` を `dive/play.html` にコピーして main へ push する（`--page` なしの `artifact.html` には viewport 指定がなく、スマホが 980px 幅で描いて画素が約 9.5 倍になる。アーティファクトに公開するのは `artifact.html` のほう）。
 
 ## 判断待ち事項
 - Phase 1（PHASE1-DESIGN §9）：A ウニ漁後の夜／D 掲示板の解禁時期。（B は Phase 3 で結論→確認点L、C は Phase 2 で確定）

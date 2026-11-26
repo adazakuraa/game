@@ -4,6 +4,8 @@ import { Kitchen, type LandSave } from './kitchen';
 import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } from './story';
 import { SCENE_AT, Scenes } from './scenes';
 import { SPOT, SPOTS, spotFocus, spotInView } from './spots';
+import { RENDER } from './render';
+import { Diag } from '../ui/diag';
 import { makeQuest, QUEST, type Quest } from './quests';
 import { FIND_NAME, FINDS, Finds, openFind, type FindKind } from './finds';
 import { buildBar, buildHandSpear, buildKnife, buildSpeargun } from './gearModels';
@@ -164,6 +166,12 @@ export class Game {
   private cold = 0;
   private dprCap = 1.5;
   private frameAvg = 16;
+  /** adaptive pixel ratio asked for by the frame-time controller (Infinity = as sharp as the caps allow) */
+  private dprWant = Infinity;
+  /** consecutive fast checks, needed before the resolution is raised again */
+  private dprFast = 0;
+  /** on-screen performance readout (?diag or the debug row) */
+  private diag: Diag;
   private paused = false;
   private reducedMotion = false;
   private helpShown = false;
@@ -183,7 +191,8 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap));
+    this.renderer.setPixelRatio(this.targetDpr());
+    this.diag = new Diag($('diag'), $<HTMLButtonElement>('diag-toggle'), this.renderer);
     this.photoCanvas.width = 320;
     this.photoCanvas.height = 240;
 
@@ -658,9 +667,42 @@ export class Game {
     this.renderTitle();
   }
 
+  /** Pixel-ratio range for the current window: device / platform cap and the pixel-count cap, with a floor. */
+  private dprRange(): { min: number; max: number } {
+    const area = Math.max(1, window.innerWidth * window.innerHeight);
+    const max = Math.min(devicePixelRatio, this.dprCap, Math.sqrt(RENDER.maxPixels / area));
+    return { min: Math.min(max, Math.sqrt(RENDER.minPixels / area)), max };
+  }
+
+  /** The pixel ratio to render at: what the frame-time controller asks for, kept inside the range. */
+  private targetDpr(): number {
+    const r = this.dprRange();
+    return clamp(this.dprWant, r.min, r.max);
+  }
+
+  /** Called every RENDER.checkFrames frames: step the resolution down when slow, up only after staying fast. */
+  private adaptResolution(): void {
+    const cur = this.renderer.getPixelRatio();
+    let next = cur;
+    if (this.frameAvg > RENDER.slowMs) {
+      this.dprFast = 0;
+      next = cur - RENDER.step;
+    } else if (this.frameAvg < RENDER.fastMs) {
+      if (++this.dprFast >= RENDER.fastChecks) {
+        this.dprFast = 0;
+        next = cur + RENDER.step;
+      }
+    } else this.dprFast = 0;
+    if (next === cur) return;
+    const r = this.dprRange();
+    this.dprWant = clamp(next, r.min, r.max);
+    if (Math.abs(this.dprWant - cur) > 1e-4) this.renderer.setPixelRatio(this.dprWant);
+  }
+
   private resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    this.renderer.setPixelRatio(this.targetDpr());
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.fov = w < h ? 74 : 64;
@@ -2327,11 +2369,7 @@ export class Game {
     if (this.frame <= 6) ((window as unknown as Record<string, Record<string, number>>).__BOOT_MS__)['f' + this.frame] = Math.round(rawDt * 1000);
     // adaptive resolution
     this.frameAvg = lerp(this.frameAvg, rawDt * 1000, 0.05);
-    if (this.frame % 90 === 0) {
-      const dpr = this.renderer.getPixelRatio();
-      if (this.frameAvg > 38 && dpr > 0.8) this.renderer.setPixelRatio(Math.max(0.75, dpr - 0.25));
-      else if (this.frameAvg < 20 && dpr < Math.min(devicePixelRatio, this.dprCap)) this.renderer.setPixelRatio(Math.min(this.dprCap, dpr + 0.25));
-    }
+    if (this.frame % RENDER.checkFrames === 0) this.adaptResolution();
     if (!this.paused) this.time += dt;
 
     if (this.state === 'title' || this.state === 'result' || (this.state === 'dex' && this.stateBeforeDex === 'title')) {
@@ -2360,7 +2398,9 @@ export class Game {
     const deep = clamp((-cp.y - 120) / 150, 0, 1);
     this.audio.update(dt, { diving: this.state === 'diving' && !this.paused, depth: -cp.y, reef: this.state === 'diving' ? reefNear : reefNear * 0.4, whale, deep, air: this.air });
 
+    this.diag.beforeRender();
     this.renderer.render(this.scene, this.camera);
+    this.diag.afterRender(this.creatures);
     if (this.captureReq !== undefined) {
       const t = this.captureReq;
       this.captureReq = undefined;
@@ -2387,7 +2427,8 @@ export class Game {
       pending: [...this.pending.keys()],
       player: { position: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z }, speed: this.vel.length() },
       renderer: { calls: info.render.calls, triangles: info.render.triangles, geometries: info.memory.geometries, textures: info.memory.textures, programs: info.programs?.length ?? 0 },
-      creatures: this.creatures.stats(),
+      creatures: { ...this.creatures.stats(), ...this.creatures.lodCounts() },
+      diag: this.diag.values(this.creatures),
       flora: this.flora.instanceCount,
       frameMs: this.frameAvg,
       canvas: { clientWidth: c.clientWidth, clientHeight: c.clientHeight, width: c.width, height: c.height, dpr: this.renderer.getPixelRatio() },

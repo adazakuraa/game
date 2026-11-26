@@ -442,6 +442,7 @@
 ### 9.1 S0 診断と画素数（`Game.ts`、`scripts/make-artifact.mjs`）
 
 - `Game.ts` の `setPixelRatio` を `targetDpr()`（§6.3-⓪の式）に置き換え、`resize` と適応の両方で使う。適応の刻み 0.15、下げる：平均 > 36ms、上げる：平均 < 24ms が 3 回連続。
+  - 実装時の補足（S0）：上限は従来どおり端末の `devicePixelRatio` も超えない（`min(devicePixelRatio, dprCap, sqrt(90万/面積))`）。下限は `min(上限, sqrt(30万/面積))`。調整値は `src/game/render.ts` の `RENDER`。
 - `make-artifact.mjs` に第 3 引数 `--page` を足し、指定時は先頭に `<meta charset="utf-8">` と viewport の meta を付ける。`play.html` はこの出力をコピーする（RESUME.md と publish-artifact スキルの手順の記述も直す）。
 - 診断表示：`?diag` か設定のデバッグ欄で、画面の隅に「fps・呼び出し・三角形・画素数（幅×高さ）・DPR・L0/L1/L2」を 1 秒ごとに更新。`__THREE_GAME_DIAGNOSTICS__` にも同じ値。
 

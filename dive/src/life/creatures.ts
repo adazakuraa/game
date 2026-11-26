@@ -1677,6 +1677,16 @@ export class Creatures {
     return d;
   }
 
+  /**
+   * Individuals drawn per level of detail, for the diagnostics readout. There is only the full model
+   * until the LODs of PHASE8-DESIGN §1 exist, so everything counts as L0.
+   */
+  lodCounts(): { l0: number; l1: number; l2: number } {
+    let l0 = 0;
+    for (const rt of this.list) if (rt.mesh?.visible) l0 += rt.mesh.count;
+    return { l0, l1: 0, l2: 0 };
+  }
+
   stats() {
     let instances = 0;
     let active = 0;

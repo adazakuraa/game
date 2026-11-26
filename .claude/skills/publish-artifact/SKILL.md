@@ -17,5 +17,6 @@ description: Build and publish (or update) the claude.ai artifact for a game in 
 | racing | ビルドなし | **複数ファイル**で publish：`file_path` = `racing/index.html`、`files` に `style.css`・`js/**/*.js`・`vendor/three.module.min.js`・`vendor/Sky.js` を同じ相対パスで渡す（今の公開版もこの 34 ファイル構成）。`index.html` の importmap が `./vendor/three.module.min.js` を指している |
 | kanken | ビルドなし | 公開するなら `kanken/index.html` ＋ `files` に `kanji-data.js`・`kanji-detail.json`（詳細は `fetch('kanji-detail.json')` で遅延読み込み） |
 
+- dive の `play.html`（GitHub Pages 版。https://adazakuraa.github.io/game/dive/play.html ）は、アーティファクト用の出力をそのままコピーしない。`npm run artifact` の後に `node scripts/make-artifact.mjs dist dist/play.html --page`（`meta charset` と `meta viewport` が付く）を実行し、`dist/play.html` を `dive/play.html` にコピーする。アーティファクトに publish するのは `--page` を付けない `dist/artifact.html`。
 - `dist/` は `.gitignore` 済み。コミットしない。
 - 外部 CDN は使っていない（three は npm か `racing/vendor/` 同梱）。アーティファクトでもそのまま動く。
