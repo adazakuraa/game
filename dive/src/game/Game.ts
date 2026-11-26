@@ -2027,6 +2027,7 @@ export class Game {
     this.freezeT = 0.3;
     this.shake = Math.max(this.shake, 0.5);
     const el = $('discover');
+    delete el.dataset.dex;
     el.classList.remove('hidden', 'known');
     const dp = $('disc-photo') as HTMLImageElement; dp.style.display = ''; dp.src = photo;
     $('disc-tag').textContent = first ? '実績解除！ 特別な光景' : '特別な光景';
