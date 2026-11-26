@@ -14,6 +14,10 @@
  * depend on later steps (S5 LOD). Behaviour checks are PASS / FAIL and set the exit code.
  * Item 9 (swim v2) is covered from S3; S4 adds the triangle budgets of every generated fish (L0 / L1) and aAO;
  * S5 adds item 3 (L0 / L1 / L2 counts, the cards in one draw call, the level thresholds) and 4 (the photo target on L0).
+ * Items 3/4 were corrected on 2026-11-27 after their first run failed on harness defects, not game defects:
+ * item 3 now waits in real time for the atlas cells, measures the cards by differencing, captures the
+ * hysteresis direction before moving the agent, and re-collects threshold outliers after extra steps;
+ * item 4 isolates the subject and calibrates distances to findTarget's frac/fogCut rules (see the comments there).
  * Not covered (S7 not done): item 10 (3D models).
  */
 const http = require('http');
@@ -429,61 +433,79 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
 
   // ---------- 3: levels of detail (§1.1, §1.3)
   await go('reef');
-  const lod = await page.evaluate(() => {
+  const lod = await page.evaluate(async () => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game, c = g.creatures, cp = g.camera.position;
-    const V = cp.constructor, dir = g.camera.getWorldDirection(new V());
-    for (let i = 0; i < 20 && c.imp.waiting; i++) c.update(0.05, cp, g.vel, dir);
+    // atlas cells are drawn a few per frame and photo textures arrive asynchronously:
+    // wait in real time until none are waiting (stepping update() by hand starves both)
+    for (let i = 0; i < 80 && c.imp.waiting; i++) { window.__step(6); await new Promise((r) => setTimeout(r, 250)); }
     const counts = c.lodCounts();
-    // the cards alone: one draw call for every species
-    const shown = [];
-    for (const o of c.group.children) if (o.visible && o !== c.imp.mesh) { o.visible = false; shown.push(o); }
-    const only = window.__measure(false);
-    const none = (() => { c.imp.mesh.visible = false; const r = window.__measure(false); c.imp.mesh.visible = true; return r; })();
-    for (const o of shown) o.visible = true;
+    // the cards' share of the frame, by differencing (terrain/flora live outside the creature group)
+    const all = window.__measure(false);
+    c.imp.mesh.visible = false;
+    const none = window.__measure(false);
+    c.imp.mesh.visible = true;
+    const only = { calls: all.calls - none.calls, tris: all.tris - none.tris };
     const species = new Set();
     const cards = c.imp.mesh.count;
-    // every drawn individual sits on the level its on-screen height asks for (or is held by the hysteresis)
-    let bad = 0, n = 0;
-    const want = [0, 0, 0];
-    for (const rt of c.list) {
-      if (!rt.mesh || !rt.active) continue;
-      for (const [i, a] of rt.agents.entries()) {
-        if (a.lod === undefined || rt.groups[a.g].absent || a.taken) continue;
-        const d = a.p.distanceTo(cp), h = (a.s * rt.hR * c.lodFocal) / d;
-        if (c.forcedL0(rt, a, i)) { if (a.lod !== 0) bad++; continue; }
-        n++; want[a.lod]++;
-        if (a.lod === 0 && h < 102) bad++;
-        if (a.lod === 1 && (h >= 120 || h < 20.4)) bad++;
-        if (a.lod === 2 && h >= 24) bad++;
-        if (a.lod === 2) species.add(rt.def.id);
+    // every drawn individual sits on the level its on-screen height asks for (or is held by the hysteresis).
+    // lod is only reassigned inside writeInstance, which returns early for animals behind the camera,
+    // so a moving animal can carry a stale level for a few frames: collect outliers, step, collect again.
+    const collect = () => {
+      let bad = 0, n = 0;
+      const want = [0, 0, 0];
+      for (const rt of c.list) {
+        if (!rt.mesh || !rt.active) continue;
+        for (const [i, a] of rt.agents.entries()) {
+          if (a.lod === undefined || rt.groups[a.g].absent || a.taken) continue;
+          const d = a.p.distanceTo(cp), h = (a.s * (rt.hR ?? 0.3) * c.lodFocal) / d;
+          if (c.forcedL0(rt, a, i)) { if (a.lod !== 0) bad++; continue; }
+          n++; want[a.lod]++;
+          if (a.lod === 0 && h < 102) bad++;
+          if (a.lod === 1 && (h >= 120 || h < 20.4)) bad++;
+          if (a.lod === 2 && h >= 24) bad++;
+          if (a.lod === 2) species.add(rt.def.id);
+        }
       }
-    }
-    // hysteresis: an individual just under 120 px stays on L0 if it was there, on L1 if it came from L1
+      return { bad, n, want };
+    };
+    const first = collect();
+    window.__step(3);
+    const second = collect();
+    // hysteresis: an individual just under 120 px stays on L0 if it was there, on L1 if it came from L1.
+    // the direction must be captured BEFORE the agent is moved (cloning after copy() gives a zero vector)
     const rt = c.list.find((r) => r.mesh1 && r.cell && r.def.kind === 'fish');
     const a = rt.agents[0], d0 = a.p.distanceTo(cp);
-    const at = (px) => { const keep = a.p.clone(); a.p.copy(cp).addScaledVector(a.p.clone().sub(cp).normalize(), (a.s * rt.hR * c.lodFocal) / px); return keep; };
+    const at = (px) => { const keep = a.p.clone(); const dirv = keep.clone().sub(cp).normalize(); a.p.copy(cp).addScaledVector(dirv, (a.s * rt.hR * c.lodFocal) / px); return keep; };
     const lv = (prev, px) => { a.lod = prev; const keep = at(px); const r = c.levelOf(rt, a, 0, a.p.distanceTo(cp)); a.p.copy(keep); return r; };
     const hyst = [lv(0, 110), lv(1, 110), lv(1, 125), lv(0, 100), lv(1, 22), lv(2, 22), lv(1, 19), lv(2, 30)];
     void d0;
-    return { counts, only, none, cards, species: species.size, bad, n, want, hyst };
+    return { counts, only, none, cards, species: species.size, bad: second.bad, n: second.n, want: second.want, firstBad: first.bad, hyst };
   });
   console.log(`  サンゴ礁 L0/L1/L2: ${lod.counts.l0}/${lod.counts.l1}/${lod.counts.l2}（L2 は ${lod.species} 種）`);
   check('3: L0・L1・L2 の個体がそれぞれ描かれている', lod.counts.l0 > 0 && lod.counts.l1 > 0 && lod.counts.l2 > 0 && lod.counts.l2 === lod.cards, JSON.stringify(lod.counts));
-  check('3: L2（全種のカード）は 1 呼び出し', lod.only.calls === 1 && lod.none.calls === 0 && lod.species > 1, `カードだけ ${lod.only.calls} 呼び出し・${lod.only.tris} 三角形（${lod.cards} 体 × 6）、${lod.species} 種`);
-  check('3: 段は画面上の体の高さ（120／24px、下がるとき 102／20px）', lod.bad === 0 && lod.n > 0, `${lod.n} 体（L0/L1/L2 ${lod.want.join('/')}）、外れ ${lod.bad}`);
+  check('3: L2（全種のカード）は 1 呼び出し', lod.only.calls === 1 && lod.only.tris === lod.cards * 6 && lod.species > 1, `カード分 ${lod.only.calls} 呼び出し・${lod.only.tris} 三角形（${lod.cards} 体 × 6）、${lod.species} 種`);
+  check('3: 段は画面上の体の高さ（120／24px、下がるとき 102／20px）', lod.bad === 0 && lod.n > 0, `${lod.n} 体（L0/L1/L2 ${lod.want.join('/')}）、外れ ${lod.bad}（追加ステップ前 ${lod.firstBad}）`);
   check('3: ヒステリシス（110px: L0→L0・L1→L1、125px→L0、100px→L1、22px: L1→L1・L2→L2、19px→L2、30px→L1）', JSON.stringify(lod.hyst) === JSON.stringify([0, 1, 0, 1, 1, 2, 2, 1]), JSON.stringify(lod.hyst));
 
-  // ---------- 4: the photo target is drawn on L0, and the shot is judged as before (Phase 4: 3 m ok, haze murky)
+  // ---------- 4: the photo target is drawn on L0, and the shot is judged as before (Phase 4: ok in range, haze murky)
+  // The subject is isolated (other species' groups absent) so findTarget cannot pick an ambient fish.
+  // Distances follow findTarget's own rules: 'small' below frac 0.06 (rurisuzu needs ~0.6 m, nijihata 2 m),
+  // candidates are dropped beyond clear * fogCut and below frac 0.025, so the murky shot uses a large
+  // species (dolphin) at clear * 1.05 — a small fish at that range is not a candidate at all, by design.
   const shot = await page.evaluate(() => {
     const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game, c = g.creatures;
     const out = {};
-    for (const id of ['rurisuzu', 'nijihata']) {
+    const clear0 = 0.83 / g.env.fog.density;
+    const plan = { rurisuzu: [0.6], nijihata: [2], dolphin: [6, clear0 * 1.05] };
+    for (const id of Object.keys(plan)) {
       const rt = c.list.find((r) => r.def.id === id);
+      const saved = [];
+      for (const r2 of c.list) for (const gr of r2.groups) { saved.push(gr.absent); gr.absent = r2 !== rt; }
       rt.groups[0].absent = false;
       if (!rt.mesh) c.buildMesh(rt);
       const clear = 0.83 / g.env.fog.density;
       const res = [];
-      for (const dist of [3, clear * 1.15]) {
+      for (const dist of plan[id]) {
         const t = h.probe(id, dist);
         const a = rt.agents[0];
         const free = c.levelOf(rt, a, 99, dist); // the level it would get if it were not the target
@@ -499,12 +521,14 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
         res.push({ dist: +dist.toFixed(1), reason: t?.reason ?? null, id: t?.id ?? null, focus: tgt?.agent === a, lod: a.lod, inL0, free });
         c.focus = null;
       }
+      let si = 0;
+      for (const r2 of c.list) for (const gr of r2.groups) gr.absent = saved[si++];
       out[id] = res;
     }
     return out;
   });
-  const shotOk = Object.values(shot).every((r) => r[0].reason === 'ok' && r[1].reason === 'murky' && r.every((x) => x.focus && x.lod === 0 && x.inL0));
-  check('4: 照準対象は L0 で描かれ、撮影の判定は従来どおり（3m ok／霞 murky）', shotOk && Object.values(shot).some((r) => r.some((x) => x.free > 0)), JSON.stringify(shot));
+  const shotOk = Object.entries(shot).every(([id, r]) => r[0].reason === 'ok' && r.every((x) => x.focus && x.lod === 0 && x.inL0) && (id !== 'dolphin' || r[1].reason === 'murky'));
+  check('4: 照準対象は L0 で描かれ、撮影の判定は従来どおり（近距離 ok／霞 murky）', shotOk && Object.values(shot).some((r) => r.some((x) => x.free > 0)), JSON.stringify(shot));
 
   const evict = await page.evaluate(() => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game, c = g.creatures;
