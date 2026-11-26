@@ -1,8 +1,15 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-26（作業ブランチ `muse/phase7-impl`）
+最終更新: 2026-11-26（作業ブランチ `muse/fix-batch-1`）
 
 ## 現状
+- **修正バッチ1（Phase 1〜4 レビュー指摘24件）を実装・確認した**（`dive/docs/FIX-BATCH-1.md`、ブランチ `muse/fix-batch-1`）。
+  - 直したもの：P1-2 `p1` 移行印（`loadSave`）／P1-4 ≤520px でコーチ表示中はトーストを 292px へ（旧位置は 112px 重なっていた）／P1-5 `TutStep.hold` 削除／P2-1 第4章のライト文言を入荷状態で分岐／P2-3 `save.announced` ＋ `announceStock()`（ボート画面表示時に未通知の入荷を1回だけ。結果画面の入荷も announced に積む）／P2-4・P2-5 コメントと CSS の整形／P3-1 `clearMapFound()` を startDive・endDive で／P3-3 `sDoneCh`（そのダイブで S を撮った章は助言を止める）／P3-4 結果画面に今回クリアした全章を表示／P3-6 `discover()` の未使用引数を削除／P4-1・P4-2 `bait.ts`（最長一致、`NO_WORDS`、代替判定は群れを除く）／P4-3 リーシュ外では逃走力を入れない／P4-4 引き寄せの全走査を2秒ごと・active のみ／P4-5 餌 UI は変化時のみ DOM 書き込み／P4-6 endDive で餌の雲を消す／P4-7 reshuffle で cur／curT をリセット／P4-8 設計文書 §1.1 を §9.2 に合わせた。
+  - 再現せず：P1-1（endDive が tutorial=true を立てるので経路は既にある）。対応なし：P1-3（注記のみ）・P2-2・P2-6・P3-2・P3-5。
+  - 判断待ち：AR〜AU（P1-3／P2-2／P2-6／P4-8）。
+  - 注意：P4-2 の結果、school の種（139種）は名前に肉食語が無い限り餌の対象外（ハタタテダイ等）。P4-1 の `ハゼ`／`ハタタテ` を含む名前は語判定を外した。
+  - 検証：`scripts/probe-fixes.cjs` 18/18（P3-3・P4-3・P4-4 はコード確認のみ）。テストフックに `dietOf(id)` を追加。
+
 - **Phase 7（UI・図鑑・メニュー・操作性）を実装・確認した**。設計・実装・検証とも Muse（`dive/docs/PHASE7-DESIGN.md`、§7 が判断待ち AN〜AQ）。トラッカー項目はサンゴ・ヤギ類（固着生物の図鑑追加）を Phase 12 へ送った以外すべて確認済み。
   - 写真→図鑑：`openDex(at)` がグリッド構築後にそのまま詳細を開く。結果画面の `.res-card` と発見カード `#discover`（`dataset.dex`、宝箱・光景カードでは消去）にタップ導線を追加。
   - メニューの伏せ字：`goalText` の所持金不足の分岐も装備名を「？」にした（判断待ち AO：今買える分岐は棚に並んで買えるものなので名前のまま）。

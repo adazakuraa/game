@@ -39,7 +39,7 @@
 
 ### 1.1 魚のいないサンゴを減らす（トラッカー：サンゴの周りに魚）
 
-- `flora.ts`：脳サンゴ・枝サンゴ（一般）・テーブル・ハナヤサイ（大きめのもの、半径 0.6m 以上）の位置と頂上の高さを、新しい生息点 **`Homes.coralAll`** に登録する（既存の `coralTops` などはそのまま）。
+- `flora.ts`：脳サンゴ・枝サンゴ（一般）・テーブル・ハナヤサイ（大きめのもの、スケール `sc > 0.4`。§9.2 と実装に合わせた。修正バッチ1 P4-8）の位置と頂上の高さを、新しい生息点 **`Homes.coralAll`** に登録する（既存の `coralTops` などはそのまま）。
 - サンゴ住まいの種（`hab` が `coralHover`／`coralPick`／`under`／`cleaner` で、`region` が `coralTops`／`bommieSpots`）は、**個体数（count）はそのままで群れ数（groups）を増やす**：`groups = max(groups, ceil(count / SPREAD.coralGroupSize))`（`coralGroupSize = 4`）。
   - 例：デバスズメダイ 200匹/16群れ → 50群れ（1か所4匹）。
   - 個体数・メッシュ・ドローコールは増えない（増えるのは群れの中心の計算だけ）。

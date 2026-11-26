@@ -21,19 +21,31 @@ export const BAIT = {
   ],
 };
 
-/** Name fragments -> diet. Checked in order; weed-eaters first (ハコフグ must not fall to フグ/meat). */
+/**
+ * Name fragments -> diet. The LONGEST matching fragment wins (ties: list order), so specific names beat general ones:
+ * カワハギ (meat) beats ハギ (weed), コショウダイ / カスミアジ / ギンガメアジ (meat) beat アジ (plankton).
+ */
 const DIET_WORDS: [Diet, string[]][] = [
   ['weed', ['ハギ', 'ブダイ', 'アイゴ', 'メジナ', 'ニザダイ', 'イスズミ', 'ハコフグ', 'オヤビッチャ']],
   ['plankton', ['スズメダイ', 'ハナダイ', 'ハナゴイ', 'キンギョハナダイ', 'タカサゴ', 'イワシ', 'アジ']],
-  ['meat', ['ハタ', 'フエダイ', 'ベラ', 'カサゴ', 'メバル', 'ソイ', 'タイ', 'イサキ', 'フグ', 'カワハギ', 'モンガラ', 'カマス']],
+  ['meat', ['ハタ', 'フエダイ', 'ベラ', 'カサゴ', 'メバル', 'ソイ', 'タイ', 'イサキ', 'フグ', 'カワハギ', 'モンガラ', 'カマス', 'コショウダイ', 'カスミアジ', 'ギンガメアジ']],
 ];
 
+/** Names containing these are not judged by the word lists (ハタタテハゼ is a tiny goby, not a ハタ): size / behaviour decides. */
+const NO_WORDS = ['ハゼ', 'ハタタテ'];
+
 export function dietOf(def: SpeciesDef): Diet | null {
-  for (const [diet, words] of DIET_WORDS) {
-    for (const w of words) if (def.name.includes(w)) return diet;
+  if (!NO_WORDS.some((w) => def.name.includes(w))) {
+    let best: Diet | null = null;
+    let len = 0;
+    for (const [diet, words] of DIET_WORDS) {
+      for (const w of words) if (w.length > len && def.name.includes(w)) { best = diet; len = w.length; }
+    }
+    if (best) return best;
   }
   if (def.behavior === 'school' && def.size < 0.15) return 'plankton';
-  if (def.size >= 0.15 && def.size <= 2.5) return 'meat';
+  // fallback: a lone or bottom-dwelling fish of 15 cm or more is a predator (schools are not; PHASE4-DESIGN §3.1)
+  if (def.size >= 0.15 && def.size <= 2.5 && def.behavior !== 'school') return 'meat';
   return null;
 }
 

@@ -14,7 +14,7 @@ import { Terrain } from '../world/terrain';
 import { Environment } from '../world/environment';
 import { Flora } from '../world/flora';
 import { Creatures, OCTO, type PhotoTarget } from '../life/creatures';
-import { BAIT, eatsBait, type BaitId } from './bait';
+import { BAIT, dietOf, eatsBait, type BaitId } from './bait';
 import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
@@ -79,6 +79,8 @@ export class Game {
   private diveMaxDepth = 0;
   private pending = new Map<string, Shot>();
   private diveShots = 0;
+  /** chapters whose S has already been shot on this dive: no more S advice for them (reset at dive start) */
+  private sDoneCh = new Set<number>();
   private point: DivePoint = DIVE_POINTS[1];
   private ads = false;
   private captureReq: PhotoTarget | null | undefined = undefined;
@@ -423,18 +425,16 @@ export class Game {
   }
 
   /** A dive point becomes known: from now on the boat can go straight there. */
-  private discover(id: string, how: 'swim' | 'chart'): boolean {
+  private discover(id: string): boolean {
     if (this.discovered.has(id)) return false;
     (this.save.discovered ??= ['lagoon']).push(id);
     this.writeSave();
     if (this.minimap) this.minimap.known = this.discovered;
-    const dp = DIVE_POINTS.find((d) => d.id === id);
-    void how; void dp; // the banner comes from exploreCheck (Phase 3)
     return true;
   }
 
   private grantMap(id: string): void {
-    this.discover(id, 'chart');
+    this.discover(id);
   }
 
   // ------------------------------------------------------------------ story (photographer)
@@ -1033,6 +1033,8 @@ export class Game {
       this.airMax = (this.ads ? 220 : AIR_TANK[this.save.airLv ?? 0].cap) * (this.buff === 'nabe' ? 1.2 : 1);
       this.air = this.airMax;
       this.diveTime = 0;
+      this.clearMapFound();
+      this.sDoneCh.clear();
       this.narcDeepT = 0;
       this.narcBlur = 0;
       this.narcBlurT = 0;
@@ -1245,6 +1247,8 @@ export class Game {
     (this.baitPts.material as THREE.PointsMaterial).opacity = left < 8 ? Math.max(0, left / 8) * 0.9 : 0.9;
   }
 
+  private baitLabelPrev: string | null = null;
+  private baitColorPrev = '';
   /** Bait buttons: shown while diving after the tutorial (never in the ADS), with kind and uses left. */
   private refreshBaitUi(): void {
     const held = this.heldBaits();
@@ -1253,8 +1257,11 @@ export class Game {
     $('btn-bait-kind').classList.toggle('hidden', !(show && held.length > 1));
     if (held.length && !held.some((k) => k.id === this.baitKind)) this.baitKind = held[0].id;
     const kind = BAIT.kinds.find((k) => k.id === this.baitKind);
-    $('bait-label').textContent = kind && show ? `${kind.name}×${this.save.bait?.[kind.id] ?? 0}` : '';
-    if (kind) $('btn-bait').style.color = kind.color;
+    // write the DOM only when a value changed (P4-5)
+    const label = kind && show ? `${kind.name}×${this.save.bait?.[kind.id] ?? 0}` : '';
+    if (label !== this.baitLabelPrev) { $('bait-label').textContent = label; this.baitLabelPrev = label; }
+    const col = kind ? kind.color : '';
+    if (col && col !== this.baitColorPrev) { $('btn-bait').style.color = col; this.baitColorPrev = col; }
   }
 
   /** Warnings, charges and bites from territorial triggerfish / curious sharks. */
@@ -1309,6 +1316,9 @@ export class Game {
     const before = this.foundCount;
     const shots = [...this.pending.entries()];
     this.creatures.companion = null;
+    this.creatures.clearBait();
+    this.clearBaitVisual();
+    this.clearMapFound();
     // discoveries are never lost (being rescued costs money instead: the penalty fits the mistake)
     for (const [id, f] of shots) {
       const old = this.save.found[id];
@@ -1386,8 +1396,12 @@ export class Game {
       : `<div class="res-empty">${this.diveShots ? '新しい生き物は撮れませんでした。' : '今回は写真を撮りませんでした。'}</div>`;
     if (this.bonuses.length) list.insertAdjacentHTML('beforeend', this.bonuses.map((b) => `<div class="res-bonus">${b.label}<b>${yen(b.value)}</b></div>`).join(''));
     // Phase 3: the editor's chapter was cleared on this dive — the reward is received on the boat
-    const chNow = this.chapter;
-    if (chNow && chNow.reward && chNow.done(this.storyState())) list.insertAdjacentHTML('beforeend', `<div class="res-find"><span class="open">編集長の依頼「${chNow.title}」をクリア！</span>ボートの章カードで報酬 <b>${yen(chNow.reward)}</b> を受け取ろう</div>`);
+    {
+      const st = this.storyState();
+      const clearedNow: { title: string; reward: number }[] = [];
+      for (let k = this.save.storyMain ?? 0; k < CHAPTERS.length && CHAPTERS[k].done(st); k++) if (CHAPTERS[k].reward) clearedNow.push({ title: CHAPTERS[k].title, reward: CHAPTERS[k].reward! });
+      if (clearedNow.length) list.insertAdjacentHTML('beforeend', `<div class="res-find"><span class="open">編集長の依頼${clearedNow.map((c) => `「${c.title}」`).join('')}をクリア！</span>ボートの章カードで報酬 <b>${clearedNow.map((c) => yen(c.reward)).join(' + ')}</b> を受け取ろう</div>`);
+    }
     if (this.diveCatch.length) {
       list.insertAdjacentHTML('beforeend', reason === 'surface'
         ? caught.map((c) => `<div class="res-catch">獲物：${SPECIES_BY_ID.get(c.id)!.name}<b>${fmtKg(c.kg)}</b></div>`).join('')
@@ -1762,7 +1776,7 @@ export class Game {
     const dp = DIVE_POINTS.find((d) => d.id === id);
     if (!dp) return;
     const fromChart = this.discovered.has(id);
-    if (!this.ads && id !== 'deep') this.discover(id, 'swim');
+    if (!this.ads && id !== 'deep') this.discover(id);
     const v = (this.save.visited ??= ['lagoon']);
     if (v.includes(id)) return;
     v.push(id);
@@ -1774,6 +1788,12 @@ export class Game {
   /** banners waiting to be shown, and how long the current one stays */
   private mapFoundQ: { name: string; sub: string }[] = [];
   private mapFoundT = 0;
+  /** Hide the new-map banner and drop what is queued (dive start / end: the banner is only updated while diving). */
+  private clearMapFound(): void {
+    this.mapFoundQ.length = 0;
+    this.mapFoundT = 0;
+    $('map-found').classList.add('hidden');
+  }
   private updateMapFound(dt: number): void {
     if (this.mapFoundT > 0) {
       this.mapFoundT -= dt;
@@ -2007,9 +2027,11 @@ export class Game {
     const depth = -t.agent.p.y;
     const ev = evaluateShot(t, this.lastClear, depth, this.currentF > 0.2, this.env.night >= 0.5);
     // the editor's advice while the chapter asks for an S (Phase 3)
-    if (this.chapter?.tips && this.tut.step < 0) {
+    const chIdx = this.save.storyMain ?? 0;
+    if (this.chapter?.tips && this.tut.step < 0 && !this.sDoneCh.has(chIdx)) {
       const tip = sAdvice(ev);
       this.toast(tip ? `Sまであと少し！ ${tip}` : '編集長「これがSだ！」', tip ? 'warn' : '', 3);
+      if (!tip) this.sDoneCh.add(chIdx);
     }
     this.missions.onPhoto(def.id, ev.grade.g);
     this.questPhoto(def.id, ev.grade.g, zoneAt(this.camera.position.x, this.camera.position.z));
@@ -2639,6 +2661,8 @@ export class Game {
         return this.creatures.baitInfo();
       },
       baitInfo: () => this.creatures.baitInfo(),
+      /** Fix batch 1 (P4-1): the diet the bait system infers for a species id */
+      dietOf: (id: string) => { const d = SPECIES_BY_ID.get(id); return d ? dietOf(d) : undefined; },
       placeOcto: (id: string) => {
         const rt = this.creatures.list.find((r) => r.def.id === id);
         const a = rt?.agents[0];
