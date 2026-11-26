@@ -2450,7 +2450,10 @@ export class Game {
 
     // ambience
     const reefNear = ['reef', 'rocky', 'lagoon'].includes(zoneAt(cp.x, cp.z)) ? clamp(1 - -cp.y / 40, 0, 1) * 0.25 : 0;
-    const whale = clamp(1 - this.creatures.nearestOf('humpback', cp) / 160, 0, 1);
+    // whale song fades with the square of the distance falloff (Phase 10): a linear fade still
+    // reads as loud halfway across the 160 m range, the square puts 80 m at a quarter volume
+    const whaleLin = clamp(1 - this.creatures.nearestOf('humpback', cp) / 160, 0, 1);
+    const whale = whaleLin * whaleLin;
     const deep = clamp((-cp.y - 120) / 150, 0, 1);
     this.audio.update(dt, { diving: this.state === 'diving' && !this.paused, depth: -cp.y, reef: this.state === 'diving' ? reefNear : reefNear * 0.4, whale, deep, air: this.air });
 

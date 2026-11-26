@@ -91,12 +91,6 @@ export class Audio {
     s.stop(t + dur + 0.05);
   }
 
-  private inhale(t: number) {
-    // regulator demand-valve hiss
-    this.noise(t, 1.25, 'bandpass', 2300, 1.4, 0.32, 0.25);
-    this.noise(t, 1.2, 'highpass', 4200, 0.7, 0.05, 0.3);
-  }
-
   private exhale(t: number) {
     const ctx = this.ctx!;
     this.noise(t, 1.6, 'lowpass', 520, 0.8, 0.5, 0.08);
@@ -200,7 +194,8 @@ export class Audio {
       this.breathT -= dt * this.breathRate;
       if (this.breathT <= 0) {
         this.breathT = 5.2;
-        this.inhale(t);
+        // no inhale hiss (Phase 10: the "sha" noise while diving was unwanted); the exhale
+        // bubbles and the onExhale timing below carry the breathing cycle on their own
         this.exhale(t + 1.9);
         window.setTimeout(() => this.onExhale?.(), 1900 / this.breathRate);
       }
