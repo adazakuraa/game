@@ -62,21 +62,27 @@ export const SWIM = {
 };
 
 /** S3 の試験（5 体型だけ）から全体型へ広げるスイッチ */
-const SWIM_V2_ALL = false;
+const SWIM_V2_ALL = true;
 
 const ANGUILLA = /ウツボ|アナゴ|ウナギ|ハモ|ヤガラ|ダツ|ギンポ|ヌタウナギ|ラブカ/;
 const THUNNUS = /マグロ|カツオ|サワラ|サバ|カジキ|サメ|ザメ|ブカ$/;
 const CARANX = /アジ|カマス|ブリ|カンパチ|ヒラマサ|ツムブリ|シイラ|イワシ|ニシン|サヨリ|トビウオ/;
 const LABRUS = /ベラ|ブダイ|フグ|ハリセンボン|ハギ|モンガラ|ハコ|マンボウ/;
+/** 体を曲げずにヒレの波で進むもの（タツノオトシゴ・ヨウジウオ、リュウグウノツカイの仲間）：体型テンプレートより優先 */
+const FIN_WAVE = /タツノオトシゴ|ハナタツ|ヒポカンパス|ヨウジ|リュウグウノツカイ|サケガシラ|アカナマダ/;
+/** 魚の体で作ってあるが魚ではないもの（鳥・爬虫類）は従来の動きのまま */
+const NOT_FISH = /ペンギン|ウミヘビ/;
 
 /**
  * 泳ぎ方の型。体型テンプレートに書いた `fish.swimMode` が優先、なければ kind・体型・名前から推定。
- * null は旧来の動き（魚以外、縦に振る海の哺乳類 `bendY`、砂から出るチンアナゴ）。
+ * null は旧来の動き（魚以外、縦に振る海の哺乳類 `bendY`、魚の体で作ったペンギン・ウミヘビ、砂から出るチンアナゴ）。
+ * 名前の判定は体型テンプレートの swimMode より先（ペンギンは体型 tuna を使っている）。
  */
 export function swimModeOf(def: SpeciesDef): SwimMode | null {
   if (def.kind !== 'fish' || !def.fish) return null;
   const f = def.fish;
-  if (f.bendY || f.tail === 'flukes') return null;
+  if (f.bendY || f.tail === 'flukes' || NOT_FISH.test(def.name)) return null;
+  if (FIN_WAVE.test(def.name)) return 'labriform';
   if (f.swimMode) return f.swimMode;
   if (!SWIM_V2_ALL) return null;
   if (ANGUILLA.test(def.name)) return 'anguilliform';
