@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { heightAt } from '../world/layout';
 import { surfaceAt } from '../world/surface';
+import { mergeProp, propMaterial, type PropPart } from '../render/prop';
+import { PROP_VIEW } from './render';
 
 /**
  * Things lying on the sea floor: now and then (not every dive) an old box or case is down there.
@@ -42,7 +44,7 @@ export function openFind(kind: FindKind, unknownMaps: { id: string; name: string
 
 export class Finds {
   readonly group = new THREE.Group();
-  item: { kind: FindKind; p: THREE.Vector3; mesh: THREE.Object3D } | null = null;
+  item: { kind: FindKind; p: THREE.Vector3; mesh: THREE.Mesh } | null = null;
   private glint: THREE.Sprite;
 
   constructor() {
@@ -61,25 +63,34 @@ export class Finds {
     this.group.add(this.glint);
   }
 
-  private model(kind: FindKind): THREE.Object3D {
-    const grp = new THREE.Group();
+  /** One mesh per find (one draw call). */
+  private model(kind: FindKind): THREE.Mesh {
+    let parts: PropPart[];
     if (kind === 'box') {
-      const wood = new THREE.MeshStandardMaterial({ color: 0x5a4028, roughness: 0.9 });
-      const band = new THREE.MeshStandardMaterial({ color: 0x6a5a40, roughness: 0.5, metalness: 0.6 });
-      grp.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.34), wood));
-      for (const x of [-0.17, 0.17]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.32, 0.36), band); b.position.x = x; grp.add(b); }
+      const wood = { color: 0x5a4028, rough: 0.9 };
+      const band = { color: 0x6a5a40, rough: 0.5, metal: 0.6 };
+      parts = [{ geo: new THREE.BoxGeometry(0.5, 0.3, 0.34), ...wood }];
+      for (const x of [-0.17, 0.17]) parts.push({ geo: new THREE.BoxGeometry(0.04, 0.32, 0.36).translate(x, 0, 0), ...band });
     } else if (kind === 'case') {
-      const metal = new THREE.MeshStandardMaterial({ color: 0x6a5040, roughness: 0.75, metalness: 0.5 });
-      grp.add(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.12, 0.32), metal));
-      const h = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 6, 12, Math.PI), metal);
-      h.position.set(0, 0.06, 0.16); grp.add(h);
+      const metal = { color: 0x6a5040, rough: 0.75, metal: 0.5 };
+      parts = [
+        { geo: new THREE.BoxGeometry(0.46, 0.12, 0.32), ...metal },
+        { geo: new THREE.TorusGeometry(0.05, 0.012, 6, 12, Math.PI).translate(0, 0.06, 0.16), ...metal },
+      ];
     } else {
-      const clay = new THREE.MeshStandardMaterial({ color: 0x8a6a4a, roughness: 0.95 });
       const pts = [0, 0.1, 0.16, 0.17, 0.14, 0.08, 0.07, 0.09].map((r, i) => new THREE.Vector2(r, i * 0.05));
-      grp.add(new THREE.Mesh(new THREE.LatheGeometry(pts, 14), clay));
+      parts = [{ geo: new THREE.LatheGeometry(pts, 14), color: 0x8a6a4a, rough: 0.95 }];
     }
-    grp.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-    return grp;
+    const mesh = new THREE.Mesh(mergeProp(parts), propMaterial());
+    mesh.castShadow = mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  /** A hidden stand-in, so that the finds' shader can be compiled before a dive (§6.3-⑧). */
+  warmupObject(): THREE.Mesh {
+    const m = this.model('jar');
+    m.frustumCulled = false;
+    return m;
   }
 
   /** Maybe place one item for this dive somewhere around the entry point. */
@@ -106,7 +117,10 @@ export class Finds {
   }
 
   clear(): void {
-    if (this.item) this.group.remove(this.item.mesh);
+    if (this.item) {
+      this.group.remove(this.item.mesh);
+      this.item.mesh.geometry.dispose();
+    }
     this.item = null;
     this.glint.visible = false;
   }
@@ -116,7 +130,9 @@ export class Finds {
     if (!this.item) return null;
     const m = this.glint.material as THREE.SpriteMaterial;
     m.opacity = 0.35 + 0.65 * Math.max(0, Math.sin(time * 1.7)) ** 6;
-    if (this.item.p.distanceTo(player) < FINDS.pickR) {
+    const d = this.item.p.distanceTo(player);
+    this.item.mesh.visible = d < PROP_VIEW;
+    if (d < FINDS.pickR) {
       const k = this.item.kind;
       this.clear();
       return k;

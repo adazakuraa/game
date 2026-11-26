@@ -186,6 +186,20 @@ export class Terrain {
     return mesh;
   }
 
+  /** One tiny mesh per terrain material, so that all of them can be compiled before a dive (§6.3-⑧). */
+  warmupObjects(): THREE.Object3D[] {
+    const g = new THREE.BufferGeometry();
+    for (const [name, size] of [['position', 3], ['normal', 3], ['color', 3], ['uv', 2], ['aSand', 1], ['aMat', 3]] as const) {
+      g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(3 * size), size));
+    }
+    return this.materials.map((m) => {
+      const mesh = new THREE.Mesh(g, m);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      return mesh;
+    });
+  }
+
   /** Synchronously ensure chunks near a point exist (used at dive start). */
   prime(x: number, z: number, r = 70): void {
     this.update(x, z, r, 999);
@@ -221,6 +235,9 @@ export class Terrain {
       const s = mesh.geometry.boundingSphere!;
       const d = Math.hypot(s.center.x - x, s.center.z - z);
       mesh.visible = d < r + CHUNK;
+      // only the chunk under the camera and its neighbours cast sun shadows (PHASE8-DESIGN §6.3-①)
+      mesh.castShadow = Math.abs(Math.floor(s.center.x / CHUNK) - Math.floor(x / CHUNK)) <= 1
+        && Math.abs(Math.floor(s.center.z / CHUNK) - Math.floor(z / CHUNK)) <= 1;
       if (d > r * 2.2) {
         mesh.geometry.dispose();
         this.group.remove(mesh);

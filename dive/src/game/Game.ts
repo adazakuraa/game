@@ -5,6 +5,7 @@ import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } fro
 import { SCENE_AT, Scenes } from './scenes';
 import { SPOT, SPOTS, spotFocus, spotInView } from './spots';
 import { RENDER } from './render';
+import { setUwMobile } from '../render/underwater';
 import { Diag } from '../ui/diag';
 import { makeQuest, QUEST, type Quest } from './quests';
 import { FIND_NAME, FINDS, Finds, openFind, type FindKind } from './finds';
@@ -189,7 +190,9 @@ export class Game {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // phones: single-sample shadows (no PCF) and one caustic layer (PHASE8-DESIGN §6.3-③)
+    this.renderer.shadowMap.type = mobile ? THREE.BasicShadowMap : THREE.PCFShadowMap;
+    setUwMobile(mobile);
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.setPixelRatio(this.targetDpr());
     this.diag = new Diag($('diag'), $<HTMLButtonElement>('diag-toggle'), this.renderer);
@@ -1189,7 +1192,9 @@ export class Game {
       this.state = 'diving';
       this.paused = false;
       this.clock.getDelta();
-      fade.classList.remove('on');
+      // the screen stays black until this dive's shaders are compiled (never longer than RENDER.warmMaxMs)
+      void Promise.race([this.warmShaders(), new Promise((r) => window.setTimeout(r, RENDER.warmMaxMs))])
+        .finally(() => { fade.classList.remove('on'); });
       if (prologue) {
         // the opening story sits over the first view of the sea; the dive (and the tutorial) waits for a tap
         this.paused = true;
@@ -1205,6 +1210,51 @@ export class Game {
       }
       this.toast(this.ads ? '大気圧潜水服で深海へ降下中…' : `${dp.name}にエントリー${this.env.night >= 0.5 ? '（夜の海）' : ''}　天気：${WEATHER[this.weather].icon}${WEATHER[this.weather].name}${this.buff ? `　まかないの${DISH[this.buff].name}：${DISH[this.buff].short}` : ''}`, '', 3);
     }, 650);
+  }
+
+  /** stand-ins for materials that only appear during a dive; kept so that their programs stay compiled */
+  private warm: THREE.Group | null = null;
+
+  /**
+   * Compile, while the screen is still black, every shader a dive can meet, so that nothing is compiled
+   * (and stutters) when a new creature first appears (PHASE8-DESIGN §6.3-⑧).
+   */
+  private warmShaders(): Promise<unknown> {
+    const first = !this.warm;
+    if (!this.warm) {
+      this.warm = new THREE.Group();
+      const bait = new THREE.Points(
+        new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3)),
+        new THREE.PointsMaterial({ size: 0.09, transparent: true, opacity: 0.9, depthWrite: false }),
+      );
+      bait.frustumCulled = false;
+      this.warm.add(...this.creatures.warmupObjects(), ...this.terrain.warmupObjects(), this.finds.warmupObject(), bait);
+    }
+    const warm = this.warm;
+    // species meshes may be disposed while the compile is being waited for: leave them out of this pass
+    // (the stand-ins cover their shaders)
+    this.scene.remove(this.creatures.group);
+    this.scene.add(warm);
+    // the vent's glow comes and goes with distance, and only the pressure-suit dive gets that close:
+    // that dive builds the shaders for both light counts (the current one last)
+    const glow = this.flora.ventLight;
+    const lit = glow.visible;
+    const done = Promise.all((this.ads ? [!lit, lit] : [lit]).map((v) => {
+      glow.visible = v;
+      return this.renderer.compileAsync(this.scene, this.camera);
+    }));
+    this.scene.remove(warm);
+    this.scene.add(this.creatures.group);
+    if (!first) return done;
+    return done.then(() => {
+      // compile() does not cover the shadow-depth shaders: draw the stand-ins once, unseen behind the fade
+      warm.position.copy(this.camera.position);
+      warm.scale.setScalar(1e-4);
+      this.scene.add(warm);
+      this.renderer.shadowMap.needsUpdate = true;
+      this.renderer.render(this.scene, this.camera);
+      this.scene.remove(warm);
+    });
   }
 
   /** 2-3 down-current cells at the drop-off edge and in the blue, different on every dive. */
@@ -2382,6 +2432,7 @@ export class Game {
     this.terrain.update(cp.x, cp.z, this.terrain.radius, this.state === 'diving' ? 1 : 2);
     if (!this.paused || this.state === 'title') {
       this.creatures.lightOn = this.env.lightOn;
+      this.creatures.focus = this.state === 'diving' ? this.target?.agent ?? null : null;
       this.creatures.update(dt, cp, this.vel, this.camera.getWorldDirection(this.tmpDir));
     }
     if (this.state === 'diving' && !this.paused) this.updateBaitVisual(dt);

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BLUEHOLE, heightAt, RUINS, VENT, WRECK } from '../world/layout';
 import { chestModel } from './gearModels';
+import { PROP_VIEW } from './render';
 
 /**
  * Phase 5: permanent treasure chests, one per map, never shown on the chart or the sonar.
@@ -40,7 +41,7 @@ export const CHESTS: ChestDef[] = [
   { id: 'c_deep', map: 'deep', x: VENT.x + 30, z: VENT.z + 20 },
 ];
 
-type Item = { def: ChestDef; pos: THREE.Vector3; lid: THREE.Group; opened: boolean; openT: number };
+type Item = { def: ChestDef; pos: THREE.Vector3; mesh: THREE.Mesh; setLid: (angle: number) => void; opened: boolean; openT: number };
 
 export class Chests {
   readonly group = new THREE.Group();
@@ -60,6 +61,7 @@ export class Chests {
 
   /** (Re)place every chest for a dive; opened ones stand open and empty. */
   build(opened: Set<string>): void {
+    for (const it of this.items) it.mesh.geometry.dispose();
     this.group.clear();
     this.items = [];
     const wreckM = new THREE.Matrix4().compose(
@@ -68,22 +70,21 @@ export class Chests {
       new THREE.Vector3(1, 1, 1),
     );
     for (const def of CHESTS) {
-      const { group, lid } = chestModel();
+      const { mesh, setLid } = chestModel();
       let pos: THREE.Vector3;
       if (def.wreckLocal) {
         pos = new THREE.Vector3(...def.wreckLocal).applyMatrix4(wreckM);
-        group.position.copy(pos);
-        group.rotation.set(0.04, 0.6, 0.22);
+        mesh.position.copy(pos);
+        mesh.rotation.set(0.04, 0.6, 0.22);
       } else {
         pos = new THREE.Vector3(def.x, heightAt(def.x, def.z) + 0.22, def.z);
-        group.position.copy(pos);
-        group.rotation.y = (def.x * 12.9898 + def.z * 78.233) % Math.PI;
+        mesh.position.copy(pos);
+        mesh.rotation.y = (def.x * 12.9898 + def.z * 78.233) % Math.PI;
       }
       const isOpen = opened.has(def.id);
-      if (isOpen) lid.rotation.x = -1.85;
-      group.traverse((o) => { o.frustumCulled = false; });
-      this.group.add(group);
-      this.items.push({ def, pos: pos.clone(), lid, opened: isOpen, openT: isOpen ? 1 : 0 });
+      if (isOpen) setLid(-1.85);
+      this.group.add(mesh);
+      this.items.push({ def, pos: pos.clone(), mesh, setLid, opened: isOpen, openT: isOpen ? 1 : 0 });
     }
     if (!this.group.children.includes(this.glint)) this.group.add(this.glint);
   }
@@ -107,10 +108,11 @@ export class Chests {
       if (it.opened && it.openT < 1) {
         it.openT = Math.min(1, it.openT + dt / CHEST.openTime);
         const t = it.openT;
-        it.lid.rotation.x = -1.85 * (1 - (1 - t) ** 3);
+        it.setLid(-1.85 * (1 - (1 - t) ** 3));
       }
-      if (it.opened) continue;
       const d = it.pos.distanceTo(player);
+      it.mesh.visible = d < PROP_VIEW;
+      if (it.opened) continue;
       if (d < nearD) { nearD = d; near = it.def.id; }
       if (d < CHEST.glintR) {
         this.glintPos[n * 3] = it.pos.x;

@@ -9,6 +9,7 @@ import { makeSoftDot } from '../render/textures';
 import { caveRoofAt, caveTopAt, heightFast, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
+import { KEEP, SHADOW, THIN } from '../game/render';
 import { resolveCapsule, resolveSphere, segmentBlocked } from '../world/colliders';
 
 type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number; absent?: boolean;
@@ -35,6 +36,8 @@ type Agent = {
   aggro?: boolean; mode?: number; modeT?: number;
   /** speared by the diver: gone for the rest of this dive */
   taken?: boolean;
+  /** time not yet simulated while this far individual was being skipped (PHASE8-DESIGN §6.3-⑦) */
+  pend?: number;
   /** drawn to the scattered bait right now (Phase 4) */
   lured?: boolean;
   /** octopus: seconds spent inside grab reach / grab cooldown / the arm warning was shown (Phase 4) */
@@ -55,6 +58,8 @@ export type SpeciesRuntime = {
   lureOffset?: THREE.Vector3;
   slot: number;
   minD?: number;
+  /** creature time when an individual was last within drawing range (PHASE8-DESIGN §6.3-⑥) */
+  lastNear?: number;
 };
 
 const UPRIGHT = new Set(['jelly', 'octopus', 'dumbo', 'nudi', 'isopod', 'lobster', 'gardenEel', 'inv']);
@@ -105,6 +110,11 @@ function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; paint: Pai
     default:
       throw new Error('no geometry for ' + def.kind);
   }
+}
+
+/** Distance beyond which an individual of body length `s` is not drawn (lost in the haze). */
+function drawCut(s: number): number {
+  return s < 0.12 ? 20 : s < 0.35 ? 34 : s < 1 ? 46 : 52 + s * 3;
 }
 
 function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false): THREE.MeshStandardMaterial {
@@ -325,6 +335,8 @@ export class Creatures {
   private rnd = mulberry32(77);
   private haloTex = makeSoftDot('rgba(255,255,255,1)', 'rgba(255,255,255,0.25)');
   time = 0;
+  /** the individual in the viewfinder (set by the game): always simulated every frame */
+  focus: Agent | null = null;
 
   private homes!: Homes;
   constructor(homes: Homes) {
@@ -644,7 +656,6 @@ export class Creatures {
       }
       const mesh = new THREE.InstancedMesh(geo, mat, def.count);
       mesh.frustumCulled = false;
-      mesh.castShadow = def.kind !== 'jelly' && def.size >= 0.6;
       mesh.receiveShadow = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.name = def.id;
@@ -655,33 +666,144 @@ export class Creatures {
         rt.haloPos = new Float32Array(def.count * 3);
         const hg = new THREE.BufferGeometry();
         hg.setAttribute('position', new THREE.BufferAttribute(rt.haloPos, 3));
-        const hm = new THREE.PointsMaterial({
-          map: this.haloTex,
-          color: def.mat.glow,
-          size: def.id === 'atolla' ? def.size * 3.2 : Math.max(0.2, Math.min(0.7, def.size * 2)),
-          sizeAttenuation: true,
-          transparent: true,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-          fog: false,
-          opacity: 0.85,
-        });
+        const hm = this.haloMaterial(def.mat.glow, def.id === 'atolla' ? def.size * 3.2 : Math.max(0.2, Math.min(0.7, def.size * 2)));
         rt.halo = new THREE.Points(hg, hm);
         rt.halo.frustumCulled = false;
         this.group.add(rt.halo);
         if (def.id === 'angler') rt.lureOffset = new THREE.Vector3(0, def.fish!.H / 2 + 0.22, 0.54);
       }
+      rt.lastNear = this.time;
+      this.held.add(rt);
       this.writeAll(rt);
       }
 
+  /** Species whose mesh, texture and material exist right now. */
+  private held = new Set<SpeciesRuntime>();
+
+  /** Free everything buildMesh made; the species is built again when it comes near. */
+  private disposeMesh(rt: SpeciesRuntime): void {
+    const mesh = rt.mesh;
+    if (!mesh) return;
+    this.group.remove(mesh);
+    const mat = mesh.material as THREE.MeshStandardMaterial;
+    mat.map?.dispose(); // painted or photo texture, one per species
+    mat.dispose();
+    mesh.geometry.dispose();
+    mesh.dispose(); // instance matrices and colours
+    if (rt.halo) {
+      this.group.remove(rt.halo);
+      rt.halo.geometry.dispose();
+      (rt.halo.material as THREE.Material).dispose(); // its texture (haloTex) is shared: kept
+    }
+    rt.mesh = undefined;
+    rt.halo = undefined;
+    rt.haloPos = undefined;
+    rt.lureOffset = undefined;
+    this.held.delete(rt);
+  }
+
+  /** Keep at most KEEP.species built: drop those that have been away the longest, if away long enough. */
+  private evict(): void {
+    if (this.held.size <= KEEP.species) return;
+    const away: SpeciesRuntime[] = [];
+    for (const rt of this.held) {
+      const id = rt.def.id;
+      if (this.stage.has(id) || this.pin?.id === id || this.companion?.id === id) continue;
+      if (this.time - (rt.lastNear ?? 0) >= KEEP.idleSec) away.push(rt);
+    }
+    away.sort((a, b) => (a.lastNear ?? 0) - (b.lastNear ?? 0));
+    for (const rt of away) {
+      if (this.held.size <= KEEP.species) break;
+      this.disposeMesh(rt);
+    }
+  }
+
+  /**
+   * Is any individual of an unbuilt species within drawing range? 2: and not behind the camera (it would be
+   * drawn this frame), 1: only behind, 0: none.
+   */
+  private drawable(rt: SpeciesRuntime): 0 | 1 | 2 {
+    let found: 0 | 1 = 0;
+    for (const a of rt.agents) {
+      if (rt.groups[a.g].absent || a.taken) continue;
+      const dx = a.p.x - this.viewPos.x, dy = a.p.y - this.viewPos.y, dz = a.p.z - this.viewPos.z;
+      const d = Math.hypot(dx, dy, dz);
+      if (d > drawCut(a.s) * 1.1) continue;
+      const reach = a.s * 1.5 + 2;
+      if (d <= reach || dx * this.viewDir.x + dy * this.viewDir.y + dz * this.viewDir.z >= -reach) return 2;
+      found = 1;
+    }
+    return found;
+  }
+
+  /**
+   * One tiny instanced mesh per distinct kind of creature shader, so that all of them can be compiled
+   * before a dive (PHASE8-DESIGN §6.3-⑧). The caller keeps these objects: while their materials live,
+   * the compiled programs are not released when species meshes are disposed.
+   */
+  warmupObjects(): THREE.Object3D[] {
+    const map = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    map.colorSpace = THREE.SRGBColorSpace;
+    map.needsUpdate = true;
+    const geo = new THREE.BufferGeometry();
+    for (const [name, size] of [['position', 3], ['normal', 3], ['uv', 2], ['aBend', 1], ['aFlap', 1], ['aPulse', 1], ['aGlow', 1], ['aFin', 1]] as const) {
+      geo.setAttribute(name, new THREE.BufferAttribute(new Float32Array(3 * size), size));
+    }
+    const seen = new Set<string>();
+    const out: THREE.Object3D[] = [];
+    let halo = false;
+    for (const def of SPECIES) {
+      if (def.kind === 'none') continue;
+      const photo = def.kind === 'fish' && !!photoFor(def.id);
+      const sig = [def.kind, def.mat?.translucent !== undefined, photo, def.id.startsWith('hikarikinme'), def.id === 'atolla', !!def.rainbow, !!def.fish?.bendY, !!def.instColors].join('|');
+      if (!seen.has(sig)) {
+        seen.add(sig);
+        const mesh = new THREE.InstancedMesh(geo, makeMaterial(def, map, 0.3, photo), 1);
+        if (def.instColors) mesh.setColorAt(0, new THREE.Color(1, 1, 1));
+        mesh.castShadow = def.kind !== 'jelly';
+        mesh.receiveShadow = true;
+        mesh.frustumCulled = false;
+        out.push(mesh);
+      }
+      if (def.mat?.glow && !halo) {
+        halo = true;
+        const pts = new THREE.Points(geo, this.haloMaterial(def.mat.glow, 0.2));
+        pts.frustumCulled = false;
+        out.push(pts);
+      }
+    }
+    return out;
+  }
+
+  private haloMaterial(color: number, size: number): THREE.PointsMaterial {
+    return new THREE.PointsMaterial({
+      map: this.haloTex,
+      color,
+      size,
+      sizeAttenuation: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+      opacity: 0.85,
+    });
+  }
+
   private writeAll(rt: SpeciesRuntime) {
     rt.slot = 0;
+    rt.minD = 1e9;
     rt.agents.forEach((a, i) => {
       this.orient(rt, a, 1);
       this.writeInstance(rt, a, i);
     });
     rt.mesh!.count = rt.slot;
     rt.mesh!.instanceMatrix.needsUpdate = true;
+    this.shadowFor(rt);
+  }
+
+  /** Only large animals close to the diver cast a sun shadow (PHASE8-DESIGN §6.3-①). */
+  private shadowFor(rt: SpeciesRuntime): void {
+    rt.mesh!.castShadow = rt.def.kind !== 'jelly' && rt.def.size >= SHADOW.creatureSize && (rt.minD ?? 1e9) < SHADOW.creatureDist;
   }
 
   private orient(rt: SpeciesRuntime, a: Agent, k: number) {
@@ -725,7 +847,9 @@ export class Creatures {
     const dx = a.p.x - this.viewPos.x, dy = a.p.y - this.viewPos.y, dz = a.p.z - this.viewPos.z;
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
     const reach = s * 1.5 + 2;
-    if (d > (s < 0.12 ? 20 : s < 0.35 ? 34 : s < 1 ? 46 : 52 + s * 3)) return;
+    if (d > drawCut(s)) return;
+    rt.lastNear = this.time;
+    if (!rt.mesh) return; // not built yet (nothing of it has been in sight)
     if (d > reach && (dx * this.viewDir.x + dy * this.viewDir.y + dz * this.viewDir.z) < -reach) return;
     const i = rt.slot++;
     if (d < (rt.minD ?? 1e9)) rt.minD = d;
@@ -1060,7 +1184,7 @@ export class Creatures {
     const cands: SpeciesDef[] = [];
     for (const rt of this.list) {
       const d = rt.def;
-      if (!rt.active || !rt.mesh || d.kind === 'none' || d.size < minSize || d.behavior === 'buried' || this.stage.has(d.id)) continue;
+      if (!rt.active || d.kind === 'none' || d.size < minSize || d.behavior === 'buried' || this.stage.has(d.id)) continue;
       if (rt.agents.some((a) => !rt.groups[a.g].absent && a.p.distanceTo(p) < radius)) cands.push(d);
     }
     return cands.length ? cands[Math.floor(Math.random() * cands.length)] : null;
@@ -1131,15 +1255,21 @@ export class Creatures {
     const r = this.rnd;
     const pFast = Math.min(1, playerVel.length() / 1.4);
     let buildMs = 0, built = 0; // 0 = drifting / slow, 1 = finning hard
+    /** species in range only behind the camera: built after the others, when there is time and room */
+    const later: SpeciesRuntime[] = [];
     for (const rt of this.list) {
       let near = false;
       for (const g of rt.groups) if (Math.abs(g.c.x - player.x) < 68 && Math.abs(g.c.z - player.z) < 68) { near = true; break; }
-      if ((this.pin && this.pin.id === rt.def.id) || (this.companion && this.companion.id === rt.def.id) || this.stage.has(rt.def.id)) near = true;
+      const forced = this.pin?.id === rt.def.id || this.companion?.id === rt.def.id || this.stage.has(rt.def.id);
+      if (forced) near = true;
       if (near && !rt.mesh && rt.def.kind !== 'none') {
         // lazy build, a few species per frame so a dive never stalls on texture painting
-        // (the budget counts build time only, and at least one species is built every frame)
-        if (built > 0 && buildMs > this.buildBudgetMs && this.pin?.id !== rt.def.id && this.companion?.id !== rt.def.id && !this.stage.has(rt.def.id)) near = false;
-        else {
+        // (the budget counts build time only, and at least one species is built every frame).
+        // A species is built once it could be drawn, not merely because it lives within 68 m (§6.3-⑥).
+        const want = forced ? 2 : this.drawable(rt);
+        if (want) rt.lastNear = this.time;
+        if (want === 1) later.push(rt);
+        else if (want === 2 && (forced || built === 0 || buildMs <= this.buildBudgetMs)) {
           const t0 = performance.now();
           this.buildMesh(rt);
           buildMs += performance.now() - t0;
@@ -1149,7 +1279,8 @@ export class Creatures {
       rt.active = near;
       if (rt.mesh) rt.mesh.visible = near;
       if (rt.halo) rt.halo.visible = near;
-      if (!near || !rt.mesh) continue;
+      // an unbuilt species is still simulated (sonar, requests and bait see it); it just draws nothing
+      if (!near) continue;
       rt.slot = 0;
       rt.minD = 1e9;
       const def = rt.def;
@@ -1240,11 +1371,16 @@ export class Creatures {
         }
         if (g.absent || a.taken) continue;
         if (Math.abs(g.c.x - player.x) > 100 || Math.abs(g.c.z - player.z) > 100) continue;
-        // far individuals are simulated every third frame (with three frames' worth of time): nobody sees the difference
-        const lod = Math.abs(a.p.x - player.x) + Math.abs(a.p.z - player.z) > 45 && !a.aggro ? 3 : 1;
-        if (lod > 1 && (this.frameNo + i) % lod !== 0) { this.writeInstance(rt, a, i); continue; }
-        const dt = dt0 * lod;
+        // far individuals are simulated every 2nd or 4th frame, with the skipped time added up (§6.3-⑦);
+        // anything the diver is interacting with is simulated every frame
         const dPlayer = a.p.distanceTo(player);
+        const busy = a.aggro || a.alarm > 0 || a.lured || (a.watch ?? 0) > 0 || !!g.cur || a === this.focus || this.grab?.a === a
+          || (def.flee > 0 && dPlayer < Math.max(fleeR * 2.6, 2.6));
+        const every = busy ? 1 : dPlayer > THIN.far ? 4 : dPlayer > THIN.mid ? 2 : 1;
+        a.pend = Math.min(THIN.maxDt, (a.pend ?? 0) + dt0);
+        if (every > 1 && (this.frameNo + i) % every !== 0) { this.writeInstance(rt, a, i); continue; }
+        const dt = a.pend;
+        a.pend = 0;
         if (def.behavior === 'buried') {
           const want = dPlayer < def.flee + playerVel.length() * 1.5 ? 1 : 0;
           a.retract += (want - a.retract) * Math.min(1, dt * (want ? 6 : 0.35));
@@ -1426,13 +1562,24 @@ export class Creatures {
         this.orient(rt, a, 1 - Math.exp(-dt * (def.size > 3 ? 1.2 : 5)));
         this.writeInstance(rt, a, i);
       }
+      if (!rt.mesh) continue;
       rt.mesh.count = rt.slot;
       rt.mesh.visible = rt.slot > 0;
       if (rt.halo) { rt.halo.visible = rt.slot > 0; rt.halo.geometry.setDrawRange(0, rt.slot); }
       rt.mesh.instanceMatrix.needsUpdate = true;
       if (rt.mesh.instanceColor) rt.mesh.instanceColor.needsUpdate = true;
       if (rt.halo) rt.halo.geometry.attributes.position.needsUpdate = true;
+      this.shadowFor(rt);
     }
+    for (const rt of later) {
+      if (this.held.size >= KEEP.species || (built > 0 && buildMs > this.buildBudgetMs)) break;
+      const t0 = performance.now();
+      this.buildMesh(rt);
+      buildMs += performance.now() - t0;
+      built++;
+      rt.mesh!.visible = false; // behind the camera: shown by the next frame that packs it
+    }
+    this.evict();
     // draw budget: only the nearest species meshes are drawn (far small schools are lost in the haze anyway)
     const drawn = this.list.filter((rt) => rt.mesh?.visible);
     if (drawn.length > this.maxDrawn) {
