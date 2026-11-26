@@ -12,8 +12,9 @@
  *
  * Budget rows (§6.1) are printed as OK / OVER and do not fail the run on their own: several of them
  * depend on later steps (S5 LOD). Behaviour checks are PASS / FAIL and set the exit code.
- * Item 9 (swim v2) is covered from S3; S4 adds the triangle budgets of every generated fish (L0 / L1) and aAO.
- * Not covered yet (later steps): item 3 (L2 draw call), 4 (L0 target), 10 (3D models).
+ * Item 9 (swim v2) is covered from S3; S4 adds the triangle budgets of every generated fish (L0 / L1) and aAO;
+ * S5 adds item 3 (L0 / L1 / L2 counts, the cards in one draw call, the level thresholds) and 4 (the photo target on L0).
+ * Not covered (S7 not done): item 10 (3D models).
  */
 const http = require('http');
 const fs = require('fs');
@@ -161,11 +162,11 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
       g.creatures.group.visible = false;
       const c = window.__measure(false);
       g.creatures.group.visible = true;
-      return { a, b, cr: { calls: a.calls - c.calls, tris: a.tris - c.tris }, held: g.creatures.list.filter((x) => x.mesh).length, progs: g.renderer.info.programs.length };
+      return { a, b, cr: { calls: a.calls - c.calls, tris: a.tris - c.tris }, held: g.creatures.list.filter((x) => x.mesh).length, progs: g.renderer.info.programs.length, lod: g.creatures.lodCounts() };
     });
     rows.push({ pl, ...r });
     await newSince(start, pl);
-    console.log(`  ${pl}: calls ${r.a.calls}/${r.b.calls}  tris ${r.a.tris}/${r.b.tris}  creatures ${r.cr.calls} calls ${r.cr.tris} tris  built ${r.held}  programs ${r.progs}`);
+    console.log(`  ${pl}: calls ${r.a.calls}/${r.b.calls}  tris ${r.a.tris}/${r.b.tris}  creatures ${r.cr.calls} calls ${r.cr.tris} tris  L0/L1/L2 ${r.lod.l0}/${r.lod.l1}/${r.lod.l2}  built ${r.held}  programs ${r.progs}`);
   }
   console.log('--- §6.1（サンゴ礁）');
   const reef = rows.find((r) => r.pl === 'reef');
@@ -198,7 +199,8 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
         for (const t of list) if (t && !seen.has(t.uuid)) seen.set(t.uuid, bytes(t));
       }
     });
-    let creature = 0;
+    // the creatures' share: one painted / photo texture per built species, and the shared L2 atlas
+    let creature = bytes(g.creatures.imp.atlas.texture);
     for (const rt of g.creatures.list) if (rt.mesh?.material.map) creature += bytes(rt.mesh.material.map);
     return { all: [...seen.values()].reduce((a, b) => a + b, 0) / 1048576, creature: creature / 1048576, gpu: g.renderer.info.memory.textures };
   });
@@ -425,6 +427,85 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
   check('S4: 生成魚に aAO 属性', tri.noAO === 0, `なし ${tri.noAO}`);
   console.log(`  生成魚 1 種の生成時間（buildMesh、この VM）: 平均 ${tri.msMean}ms・最大 ${tri.msMax}ms`);
 
+  // ---------- 3: levels of detail (§1.1, §1.3)
+  await go('reef');
+  const lod = await page.evaluate(() => {
+    const g = window.__THREE_GAME_TEST_HOOKS__.game, c = g.creatures, cp = g.camera.position;
+    const V = cp.constructor, dir = g.camera.getWorldDirection(new V());
+    for (let i = 0; i < 20 && c.imp.waiting; i++) c.update(0.05, cp, g.vel, dir);
+    const counts = c.lodCounts();
+    // the cards alone: one draw call for every species
+    const shown = [];
+    for (const o of c.group.children) if (o.visible && o !== c.imp.mesh) { o.visible = false; shown.push(o); }
+    const only = window.__measure(false);
+    const none = (() => { c.imp.mesh.visible = false; const r = window.__measure(false); c.imp.mesh.visible = true; return r; })();
+    for (const o of shown) o.visible = true;
+    const species = new Set();
+    const cards = c.imp.mesh.count;
+    // every drawn individual sits on the level its on-screen height asks for (or is held by the hysteresis)
+    let bad = 0, n = 0;
+    const want = [0, 0, 0];
+    for (const rt of c.list) {
+      if (!rt.mesh || !rt.active) continue;
+      for (const [i, a] of rt.agents.entries()) {
+        if (a.lod === undefined || rt.groups[a.g].absent || a.taken) continue;
+        const d = a.p.distanceTo(cp), h = (a.s * rt.hR * c.lodFocal) / d;
+        if (c.forcedL0(rt, a, i)) { if (a.lod !== 0) bad++; continue; }
+        n++; want[a.lod]++;
+        if (a.lod === 0 && h < 102) bad++;
+        if (a.lod === 1 && (h >= 120 || h < 20.4)) bad++;
+        if (a.lod === 2 && h >= 24) bad++;
+        if (a.lod === 2) species.add(rt.def.id);
+      }
+    }
+    // hysteresis: an individual just under 120 px stays on L0 if it was there, on L1 if it came from L1
+    const rt = c.list.find((r) => r.mesh1 && r.cell && r.def.kind === 'fish');
+    const a = rt.agents[0], d0 = a.p.distanceTo(cp);
+    const at = (px) => { const keep = a.p.clone(); a.p.copy(cp).addScaledVector(a.p.clone().sub(cp).normalize(), (a.s * rt.hR * c.lodFocal) / px); return keep; };
+    const lv = (prev, px) => { a.lod = prev; const keep = at(px); const r = c.levelOf(rt, a, 0, a.p.distanceTo(cp)); a.p.copy(keep); return r; };
+    const hyst = [lv(0, 110), lv(1, 110), lv(1, 125), lv(0, 100), lv(1, 22), lv(2, 22), lv(1, 19), lv(2, 30)];
+    void d0;
+    return { counts, only, none, cards, species: species.size, bad, n, want, hyst };
+  });
+  console.log(`  サンゴ礁 L0/L1/L2: ${lod.counts.l0}/${lod.counts.l1}/${lod.counts.l2}（L2 は ${lod.species} 種）`);
+  check('3: L0・L1・L2 の個体がそれぞれ描かれている', lod.counts.l0 > 0 && lod.counts.l1 > 0 && lod.counts.l2 > 0 && lod.counts.l2 === lod.cards, JSON.stringify(lod.counts));
+  check('3: L2（全種のカード）は 1 呼び出し', lod.only.calls === 1 && lod.none.calls === 0 && lod.species > 1, `カードだけ ${lod.only.calls} 呼び出し・${lod.only.tris} 三角形（${lod.cards} 体 × 6）、${lod.species} 種`);
+  check('3: 段は画面上の体の高さ（120／24px、下がるとき 102／20px）', lod.bad === 0 && lod.n > 0, `${lod.n} 体（L0/L1/L2 ${lod.want.join('/')}）、外れ ${lod.bad}`);
+  check('3: ヒステリシス（110px: L0→L0・L1→L1、125px→L0、100px→L1、22px: L1→L1・L2→L2、19px→L2、30px→L1）', JSON.stringify(lod.hyst) === JSON.stringify([0, 1, 0, 1, 1, 2, 2, 1]), JSON.stringify(lod.hyst));
+
+  // ---------- 4: the photo target is drawn on L0, and the shot is judged as before (Phase 4: 3 m ok, haze murky)
+  const shot = await page.evaluate(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game, c = g.creatures;
+    const out = {};
+    for (const id of ['rurisuzu', 'nijihata']) {
+      const rt = c.list.find((r) => r.def.id === id);
+      rt.groups[0].absent = false;
+      if (!rt.mesh) c.buildMesh(rt);
+      const clear = 0.83 / g.env.fog.density;
+      const res = [];
+      for (const dist of [3, clear * 1.15]) {
+        const t = h.probe(id, dist);
+        const a = rt.agents[0];
+        const free = c.levelOf(rt, a, 99, dist); // the level it would get if it were not the target
+        a.lod = undefined;
+        const V = g.camera.position.constructor;
+        const tgt = c.findTarget(g.camera, { clear, dark: false, lightOn: false, cropX: 0.6, cropY: 0.8 });
+        c.focus = tgt?.agent ?? null;
+        c.update(0, g.camera.position, g.vel, g.camera.getWorldDirection(new V()));
+        // is agent 0 among the L0 instances?
+        let inL0 = false;
+        const M = rt.mesh.instanceMatrix.array;
+        for (let k = 0; k < rt.mesh.count; k++) if (Math.hypot(M[k * 16 + 12] - a.p.x, M[k * 16 + 13] - a.p.y, M[k * 16 + 14] - a.p.z) < 1e-4) inL0 = true;
+        res.push({ dist: +dist.toFixed(1), reason: t?.reason ?? null, id: t?.id ?? null, focus: tgt?.agent === a, lod: a.lod, inL0, free });
+        c.focus = null;
+      }
+      out[id] = res;
+    }
+    return out;
+  });
+  const shotOk = Object.values(shot).every((r) => r[0].reason === 'ok' && r[1].reason === 'murky' && r.every((x) => x.focus && x.lod === 0 && x.inL0));
+  check('4: 照準対象は L0 で描かれ、撮影の判定は従来どおり（3m ok／霞 murky）', shotOk && Object.values(shot).some((r) => r.some((x) => x.free > 0)), JSON.stringify(shot));
+
   const evict = await page.evaluate(() => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game, c = g.creatures;
     const cp = g.camera.position;
@@ -442,7 +523,10 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
     window.__measure(false);
     const old = built().length;
     const inRange = c.list.filter((rt) => rt.mesh && c.time - rt.lastNear < 90).length;
-    const orphans = c.group.children.length - built().length - c.list.filter((x) => x.halo).length;
+    const orphans = c.group.children.length - built().length - c.list.filter((x) => x.mesh1).length - c.list.filter((x) => x.halo).length - 1;
+    // atlas cells: one per built species with a card, none left over by the dropped ones
+    const cells = c.list.filter((x) => x.cell).map((x) => x.cell.index);
+    const cellsOk = new Set(cells).size === cells.length && c.list.every((x) => !x.cell || x.mesh) && cells.length + c.imp.free.length === 256;
     // a dropped species comes back when it is needed again
     const gone = c.list.find((rt) => !rt.mesh && rt.def.kind === 'fish');
     c.pin = { id: gone.def.id, p: cp.clone().addScaledVector(dir, 2), yaw: 0 };
@@ -450,10 +534,11 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
     const back = !!gone.mesh && gone.mesh.visible && gone.mesh.count > 0;
     c.pin = null;
     window.__measure(false);
-    return { all, young, old, inRange, orphans, back, tex0, tex1: g.renderer.info.memory.textures, size: c.held.size, real: built().length };
+    return { all, young, old, inRange, orphans, cellsOk, back, tex0, tex1: g.renderer.info.memory.textures, size: c.held.size, real: built().length };
   });
   check('⑥ 90秒未満の種は破棄しない', evict.young === evict.all, JSON.stringify(evict));
   check('⑥ 離れて90秒の種を破棄して 120 以下（近くの種は残す）', evict.old <= Math.max(120, evict.inRange) && evict.old < evict.all && evict.orphans === 0 && evict.size === evict.real, JSON.stringify(evict));
+  check('⑥ 破棄した種の L1 メッシュとアトラスのコマも返す（重複・取り残しなし）', evict.orphans === 0 && evict.cellsOk);
   check('⑥ 破棄した種は必要になれば作り直す', evict.back);
   const after = await programs();
   check('⑥⑧ 破棄と作り直しでプログラムが増えない', after.every((k) => atEnd.includes(k)), `${atEnd.length} -> ${after.length}`);

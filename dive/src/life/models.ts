@@ -614,9 +614,10 @@ export function buildFish(s: FishShape, o: FishBuildOpts = {}): { geo: THREE.Buf
 
 export type RayShape = { span: number; len: number; thick: number; manta?: boolean; tail?: number; flounder?: boolean };
 
-export function buildRay(s: RayShape): { geo: THREE.BufferGeometry; xMax: number; zMin: number; zMax: number } {
+export function buildRay(s: RayShape, detail: 0 | 1 = 0): { geo: THREE.BufferGeometry; xMax: number; zMin: number; zMax: number } {
   const parts: Part[] = [];
-  const NX = 18, NZ = 14;
+  // detail 1 = L1 (PHASE8-DESIGN §1.2): the same outline and uv on a coarser grid
+  const NX = detail ? 8 : 18, NZ = detail ? 7 : 14;
   const halfW = s.span / 2;
   // outline half-width as function of z in [-len/2, len/2]
   const outline = (t: number) => {
@@ -683,7 +684,7 @@ export function buildRay(s: RayShape): { geo: THREE.BufferGeometry; xMax: number
     parts.push(f);
     // eyes on top
     for (const sx of [-0.06, 0.02]) {
-      const e = new THREE.SphereGeometry(0.03, 8, 6);
+      const e = new THREE.SphereGeometry(0.03, detail ? 5 : 8, detail ? 3 : 6);
       e.translate(sx * s.span, s.thick * 0.9, s.len * 0.3);
       e.userData.top = true;
       parts.push(e);
@@ -712,7 +713,7 @@ export function buildRay(s: RayShape): { geo: THREE.BufferGeometry; xMax: number
 
 // --------------------------------------------------------------------------- jellies
 
-export function buildJelly(opts: { tentacles: number; tentLen: number; oral?: boolean; flat?: number; glowRim?: boolean }): THREE.BufferGeometry {
+export function buildJelly(opts: { tentacles: number; tentLen: number; oral?: boolean; flat?: number; glowRim?: boolean }, detail: 0 | 1 = 0): THREE.BufferGeometry {
   const r = mulberry32(17);
   const parts: Part[] = [];
   const pts: THREE.Vector2[] = [];
@@ -726,14 +727,14 @@ export function buildJelly(opts: { tentacles: number; tentLen: number; oral?: bo
     const a = (i / 8) * (Math.PI / 2);
     pts.push(new THREE.Vector2(Math.sin(a) * 0.44, Math.cos(a) * 0.4 * flat - 0.04));
   }
-  const bell = new THREE.LatheGeometry(pts, 18);
+  const bell = new THREE.LatheGeometry(detail ? pts.filter((_, i) => i % 2 === 0 || i === 8) : pts, detail ? 10 : 18);
   setAttr(bell, 'aPulse', (x, y, z) => Math.min(1, Math.hypot(x, z) * 2) * (1 - Math.max(0, y) / (0.5 * flat) * 0.5));
   if (opts.glowRim) setAttr(bell, 'aGlow', (x, y, z) => (Math.hypot(x, z) > 0.4 && y < 0.08 ? 1 : 0));
   parts.push(bell);
   for (let i = 0; i < opts.tentacles; i++) {
     const a = (i / opts.tentacles) * Math.PI * 2;
     const len = opts.tentLen * (0.6 + r() * 0.5);
-    const t = new THREE.CylinderGeometry(0.004, 0.008, len, 3, 4, true);
+    const t = new THREE.CylinderGeometry(0.004, 0.008, len, 3, detail ? 2 : 4, true);
     t.translate(0, -len / 2, 0);
     t.translate(Math.cos(a) * 0.48, 0, Math.sin(a) * 0.48);
     setAttr(t, 'aBend', (_x, y) => Math.min(1, -y / opts.tentLen) * 1.5);
@@ -754,15 +755,16 @@ export function buildJelly(opts: { tentacles: number; tentLen: number; oral?: bo
 
 // --------------------------------------------------------------------------- cephalopods
 
-export function buildSquid(opts: { armLen: number; tentLen: number; finSize: number }): THREE.BufferGeometry {
+export function buildSquid(opts: { armLen: number; tentLen: number; finSize: number }, detail: 0 | 1 = 0): THREE.BufferGeometry {
   const parts: Part[] = [];
   // mantle points +Z (squid swims mantle-first)
   const prof: THREE.Vector2[] = [];
-  for (let i = 0; i <= 14; i++) {
-    const t = i / 14;
+  const NP = detail ? 7 : 14;
+  for (let i = 0; i <= NP; i++) {
+    const t = i / NP;
     prof.push(new THREE.Vector2(Math.max(0.005, 0.11 * Math.pow(Math.sin(Math.PI * (0.5 + t * 0.5)), 0.6) * (t < 0.2 ? 0.8 + t : 1)), t * 0.55));
   }
-  const mantle = new THREE.LatheGeometry(prof, 14);
+  const mantle = new THREE.LatheGeometry(prof, detail ? 8 : 14);
   mantle.rotateX(Math.PI / 2);
   parts.push(mantle);
   for (const side of [-1, 1]) {
@@ -770,12 +772,12 @@ export function buildSquid(opts: { armLen: number; tentLen: number; finSize: num
     setAttr(fin, 'aFlap', (x) => Math.min(1, Math.abs(x) * 4));
     parts.push(fin);
   }
-  const head = new THREE.SphereGeometry(0.085, 12, 8);
+  const head = new THREE.SphereGeometry(0.085, detail ? 7 : 12, detail ? 5 : 8);
   head.scale(1, 0.9, 1.2);
   head.translate(0, 0, -0.04);
   parts.push(head);
   for (const side of [-1, 1]) {
-    const e = new THREE.SphereGeometry(0.04, 10, 8);
+    const e = new THREE.SphereGeometry(0.04, detail ? 6 : 10, detail ? 4 : 8);
     e.translate(side * 0.075, 0.01, -0.04);
     parts.push(e);
   }
@@ -784,7 +786,7 @@ export function buildSquid(opts: { armLen: number; tentLen: number; finSize: num
     const long = i >= arms;
     const a = (i / arms) * Math.PI * 2;
     const len = long ? opts.tentLen : opts.armLen * (0.8 + 0.2 * Math.sin(i));
-    const g = new THREE.CylinderGeometry(long ? 0.006 : 0.012, long ? 0.01 : 0.03, len, 5, 10, true);
+    const g = new THREE.CylinderGeometry(long ? 0.006 : 0.012, long ? 0.01 : 0.03, len, detail ? 3 : 5, detail ? 4 : 10, true);
     g.translate(0, -len / 2, 0);
     g.rotateX(-Math.PI / 2);
     const sp = long ? 0.02 : 0.05;
@@ -797,7 +799,7 @@ export function buildSquid(opts: { armLen: number; tentLen: number; finSize: num
       p.setY(k, p.getY(k) + Math.sin(a) * d * (long ? 0.04 : 0.12));
     }
     if (long) {
-      const club = new THREE.SphereGeometry(0.025, 6, 4);
+      const club = new THREE.SphereGeometry(0.025, detail ? 4 : 6, detail ? 3 : 4);
       club.scale(1, 0.6, 3);
       club.translate(Math.cos(a) * 0.04, Math.sin(a) * 0.04, -0.1 - len);
       setAttr(club, 'aBend', () => 1);
@@ -809,16 +811,16 @@ export function buildSquid(opts: { armLen: number; tentLen: number; finSize: num
   return finalize(parts, (x, y, z) => [(z + 0.1 + opts.tentLen) / (0.56 + 0.1 + opts.tentLen), (y + 0.15) / 0.3]);
 }
 
-export function buildOctopus(opts: { dumbo?: boolean }): THREE.BufferGeometry {
+export function buildOctopus(opts: { dumbo?: boolean }, detail: 0 | 1 = 0): THREE.BufferGeometry {
   const parts: Part[] = [];
   const r = mulberry32(31);
   if (opts.dumbo) {
-    const bell = new THREE.SphereGeometry(0.5, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.62);
+    const bell = new THREE.SphereGeometry(0.5, detail ? 10 : 20, detail ? 6 : 12, 0, Math.PI * 2, 0, Math.PI * 0.62);
     bell.scale(1, 0.75, 1);
     setAttr(bell, 'aPulse', (x, y, z) => Math.min(1, Math.hypot(x, z) * 2) * (y < 0.1 ? 1 : 0.3));
     parts.push(bell);
     // web skirt
-    const skirt = new THREE.CylinderGeometry(0.42, 0.6, 0.18, 24, 1, true);
+    const skirt = new THREE.CylinderGeometry(0.42, 0.6, 0.18, detail ? 12 : 24, 1, true);
     skirt.translate(0, -0.1, 0);
     setAttr(skirt, 'aPulse', () => 1);
     parts.push(skirt);
@@ -828,21 +830,21 @@ export function buildOctopus(opts: { dumbo?: boolean }): THREE.BufferGeometry {
       parts.push(ear);
     }
     for (const side of [-1, 1]) {
-      const e = new THREE.SphereGeometry(0.05, 8, 6);
+      const e = new THREE.SphereGeometry(0.05, detail ? 5 : 8, detail ? 3 : 6);
       e.translate(side * 0.22, 0.12, 0.33);
       parts.push(e);
     }
     return finalize(parts, (x, _y, z) => [x + 0.5, z + 0.5]);
   }
-  const mantle = new THREE.SphereGeometry(0.18, 16, 12);
+  const mantle = new THREE.SphereGeometry(0.18, detail ? 9 : 16, detail ? 6 : 12);
   mantle.scale(1, 1.25, 1.1);
   mantle.translate(0, 0.22, -0.12);
   parts.push(mantle);
-  const head = new THREE.SphereGeometry(0.12, 12, 10);
+  const head = new THREE.SphereGeometry(0.12, detail ? 7 : 12, detail ? 5 : 10);
   head.translate(0, 0.1, 0.06);
   parts.push(head);
   for (const side of [-1, 1]) {
-    const e = new THREE.SphereGeometry(0.035, 8, 6);
+    const e = new THREE.SphereGeometry(0.035, detail ? 5 : 8, detail ? 3 : 6);
     e.translate(side * 0.09, 0.17, 0.11);
     parts.push(e);
   }
@@ -857,7 +859,7 @@ export function buildOctopus(opts: { dumbo?: boolean }): THREE.BufferGeometry {
       const d = 0.06 + t * L;
       pts.push(new THREE.Vector3(Math.cos(ang) * d, 0.04 * (1 - t) + 0.02 * Math.sin(t * 9 + i), Math.sin(ang) * d + 0.04));
     }
-    const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, 0.03, 5, false);
+    const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), detail ? 7 : 16, 0.03, detail ? 3 : 5, false);
     const p = tube.attributes.position as THREE.BufferAttribute;
     // taper toward tip
     const c = pts[0];
@@ -880,21 +882,21 @@ export function buildOctopus(opts: { dumbo?: boolean }): THREE.BufferGeometry {
 
 // --------------------------------------------------------------------------- turtle
 
-export function buildTurtle(): THREE.BufferGeometry {
+export function buildTurtle(detail: 0 | 1 = 0): THREE.BufferGeometry {
   const parts: Part[] = [];
-  const shell = new THREE.SphereGeometry(0.5, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+  const shell = new THREE.SphereGeometry(0.5, detail ? 12 : 22, detail ? 5 : 12, 0, Math.PI * 2, 0, Math.PI / 2);
   shell.scale(0.8, 0.32, 1);
   parts.push(shell);
-  const plastron = new THREE.CircleGeometry(0.5, 22);
+  const plastron = new THREE.CircleGeometry(0.5, detail ? 12 : 22);
   plastron.rotateX(Math.PI / 2);
   plastron.scale(0.78, 1, 0.98);
   plastron.translate(0, -0.02, 0);
   parts.push(plastron);
-  const head = new THREE.SphereGeometry(0.11, 12, 8);
+  const head = new THREE.SphereGeometry(0.11, detail ? 7 : 12, detail ? 5 : 8);
   head.scale(0.85, 0.75, 1.3);
   head.translate(0, 0.02, 0.58);
   parts.push(head);
-  const neck = new THREE.CylinderGeometry(0.08, 0.1, 0.16, 10);
+  const neck = new THREE.CylinderGeometry(0.08, 0.1, 0.16, detail ? 6 : 10);
   neck.rotateX(Math.PI / 2);
   neck.translate(0, 0.01, 0.47);
   parts.push(neck);
@@ -911,13 +913,13 @@ export function buildTurtle(): THREE.BufferGeometry {
 
 // --------------------------------------------------------------------------- crustaceans / slugs / eels
 
-export function buildCrustacean(opts: { lobster?: boolean; shrimp?: boolean }): THREE.BufferGeometry {
+export function buildCrustacean(opts: { lobster?: boolean; shrimp?: boolean }, detail: 0 | 1 = 0): THREE.BufferGeometry {
   if (opts.shrimp) return buildShrimp();
   const parts: Part[] = [];
   const segs = opts.lobster ? 7 : 8;
   for (let i = 0; i < segs; i++) {
     const t = i / (segs - 1);
-    const s = new THREE.SphereGeometry(1, 12, 8);
+    const s = new THREE.SphereGeometry(1, detail ? 7 : 12, detail ? 4 : 8);
     const w = opts.lobster ? (i < 2 ? 0.16 : 0.13 * (1 - t * 0.4)) : 0.22 * Math.sin(Math.PI * (0.2 + t * 0.7));
     s.scale(w, opts.lobster ? 0.1 : 0.09, opts.lobster ? (i < 2 ? 0.16 : 0.07) : 0.075);
     const z = opts.lobster ? 0.4 - (i < 2 ? i * 0.2 : 0.2 + i * 0.11) : 0.42 - t * 0.84;
@@ -928,7 +930,7 @@ export function buildCrustacean(opts: { lobster?: boolean; shrimp?: boolean }): 
     const tail = flatPoly([[-0.12, 0], [0.12, 0], [0.16, -0.12], [-0.16, -0.12]], (a, b) => [a, 0.06, -0.5 + b]);
     parts.push(tail);
     for (const side of [-1, 1]) {
-      const ant = new THREE.CylinderGeometry(0.004, 0.018, 1.1, 5);
+      const ant = new THREE.CylinderGeometry(0.004, 0.018, 1.1, detail ? 3 : 5);
       ant.rotateX(Math.PI / 2 - 0.2);
       ant.rotateY(side * 0.35);
       ant.translate(side * 0.2, 0.16, 0.92);

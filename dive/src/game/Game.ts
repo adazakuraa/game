@@ -215,6 +215,7 @@ export class Game {
     mark('flora');
     this.scene.add(this.flora.group);
     this.creatures = new Creatures(this.flora.homes);
+    this.creatures.renderer = this.renderer; // draws the L2 atlas cells (PHASE8-DESIGN §1.3)
     mark('creatures');
     this.scene.add(this.creatures.group);
     this.missions = new Missions();
@@ -710,6 +711,8 @@ export class Game {
     this.camera.aspect = w / h;
     this.camera.fov = w < h ? 74 : 64;
     this.camera.updateProjectionMatrix();
+    // creature LOD (§1.1): on-screen size in px at the device's top resolution (the adaptive steps do not move it)
+    this.creatures.lodFocal = (h * this.dprRange().max) / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
   }
 
   // ------------------------------------------------------------------ UI
@@ -1229,6 +1232,8 @@ export class Game {
       );
       bait.frustumCulled = false;
       this.warm.add(...this.creatures.warmupObjects(), ...this.terrain.warmupObjects(), this.finds.warmupObject(), bait);
+      // the atlas cells are drawn into a render target: those shaders are compiled by drawing a blank cell
+      this.creatures.imp.warm(this.renderer);
     }
     const warm = this.warm;
     // species meshes may be disposed while the compile is being waited for: leave them out of this pass
