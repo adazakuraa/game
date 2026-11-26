@@ -227,13 +227,18 @@ const check = (name, ok, extra = '') => { results.push([name, ok]); console.log(
     const bad = Object.entries(want).filter(([k, v]) => d[k] !== v).map(([k, v]) => `${k}:${d[k]}!=${v}`);
     check('P4-1: kawahagi family / アジアコショウダイ / カスミアジ / ギンガメアジ -> meat; small アジ -> plankton; weed eaters stay weed', bad.length === 0, bad.join(',') || JSON.stringify(d));
     check('P4-1: ハタタテハゼ is not meat (size/behaviour fallback)', d.hatatatehaze !== 'meat', String(d.hatatatehaze));
-    const s = await page.evaluate(() => { // P4-2: a schooling fish of 15cm+ is no longer a predator by size alone
-      const h = window.__THREE_GAME_TEST_HOOKS__; const l = h.game.creatures.list;
-      const sch = l.filter((rt) => rt.def.behavior === 'school' && rt.def.size >= 0.15 && !/ハギ|アジ|ダイ|ハタ|ベラ|フグ|カサゴ|ソイ|メバル|イサキ|カマス|モンガラ|フエダイ/.test(rt.def.name));
-      const bad = sch.filter((rt) => h.dietOf(rt.def.id) === 'meat').map((rt) => rt.def.name);
-      return { n: sch.length, bad: bad.slice(0, 5) };
-    });
-    check('P4-2: schooling fish (no meat word in the name) are not meat via the size fallback', s.n > 0 && s.bad.length === 0, JSON.stringify(s));
+    // F1: the sea breams spelled ダイ are meat by name; ダイ plankton/weed families keep their category (longest match)
+    const names = await page.evaluate(() => { const h = window.__THREE_GAME_TEST_HOOKS__; const o = {}; for (const rt of h.game.creatures.list) o[rt.def.name] = h.dietOf(rt.def.id); return o; });
+    const want1 = { マダイ: 'meat', クロダイ: 'meat', ヘダイ: 'meat', イシダイ: 'meat', イシガキダイ: 'meat', スズメダイ: 'plankton', ブダイ: 'weed', キンギョハナダイ: 'plankton', アオブダイ: 'weed', スミツキトノサマダイ: null };
+    const bad1 = Object.entries(want1).filter(([k, v]) => names[k] !== v).map(([k, v]) => `${k}:${names[k]}!=${v}`);
+    check('F1: マダイ/クロダイ/ヘダイ/イシダイ/イシガキダイ -> meat; スズメダイ plankton, ブダイ weed, ハナダイ系 plankton unchanged; トノサマダイ not hit by マダイ', bad1.length === 0, bad1.join(',') || 'ok');
+    // F2 (AV): the size fallback includes schools (PHASE4-DESIGN §9)
+    const want2 = { カツオ: 'meat', キハダ: 'meat', ブリ: 'meat' };
+    const bad2 = Object.entries(want2).filter(([k, v]) => names[k] !== v).map(([k, v]) => `${k}:${names[k]}!=${v}`);
+    check('F2: school fish of 0.15-2.5m with no word match (カツオ・キハダ・ブリ) -> meat', bad2.length === 0, bad2.join(',') || 'ok');
+    // F4: ハタタテダイ family no longer hits ハタ (grouper); they fall to the fallback by size
+    const fam = Object.entries(names).filter(([k]) => k.includes('ハタタテ'));
+    check('F4: ハタタテダイ family decided by fallback (ダイ: meat by size, ハゼ: null)', fam.length >= 5 && fam.every(([k, v]) => v === (k.includes('ハゼ') ? null : 'meat')), JSON.stringify(Object.fromEntries(fam)));
     await page.context().close();
   }
 

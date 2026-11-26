@@ -360,7 +360,7 @@ export function segmentBlocked(a, b, skipEnd = 0.3): boolean {
 
 ### 9.4 新規ファイル
 
-- `src/game/bait.ts`：`BAIT = { life: 40, pack: 3, kinds: [{id:'krill', name:'オキアミ', price:300, diet:'plankton', color:'#f0a080'}, {id:'chunk', name:'魚の切り身', price:500, diet:'meat', color:'#e8d0c0'}, {id:'weed', name:'海藻だんご', price:300, diet:'weed', color:'#7aa050'}] }`、`dietOf(def)`（§3.1：名前の語の表 `DIET_WORDS` を順に見て最初に当たった語で決める。草食の語（ハギ・ブダイ・アイゴ・メジナ・ニザダイ・イスズミ・ハコフグ・オヤビッチャ）を「タイ」「ハタ」より先に置くこと。当たらなければ「school かつ 0.15m 未満 → plankton」「0.15〜2.5m → meat」「それ以外 → 寄らない」）、`eatsBait(id)`。
+- `src/game/bait.ts`：`BAIT = { life: 40, pack: 3, kinds: [{id:'krill', name:'オキアミ', price:300, diet:'plankton', color:'#f0a080'}, {id:'chunk', name:'魚の切り身', price:500, diet:'meat', color:'#e8d0c0'}, {id:'weed', name:'海藻だんご', price:300, diet:'weed', color:'#7aa050'}] }`、`dietOf(def)`（§3.1：名前の語の表 `DIET_WORDS` のうち名前に含まれる**最長の語**で決める（長い語ほど具体的。例：カワハギ＞ハギ、スズメダイ＞タイ、コショウダイ・カスミアジ・ギンガメアジ＞アジ）。「ダイ」綴りのタイ類は語『タイ』に当たらないため、マダイ・クロダイ・ヘダイ・イシダイ・イシガキダイは名前の完全一致で meat。『ハゼ』を含む名前は語判定から外し、『ハタタテ』を含む名前は語『ハタ』に当てない。語の順序には依存しない（最長一致。草食の語の先置きは不要になった。修正バッチ1 F3）。当たらなければ「school かつ 0.15m 未満 → plankton」「0.15〜2.5m → meat」「それ以外 → 寄らない」）、`eatsBait(id)`。
 - `src/game/weather.ts`：`WEATHER`（割合・名前・アイコン ☀☁☂🌀・光 `{1, 0.9, 0.8, 0.7}`・霧 `{1, 1.05, 1.1, 1.2}`・朝の一言 §6.3）、`weatherOf(day)`（1日目は晴れ。`hash(day + 1013)` を累積割合で引く。前日も荒天なら曇り）、`weatherMult(def, w)`（§6.2 の表。範囲 0.75〜1.35 で clamp）。
 
 ### 9.5 ゲーム側（`src/game/Game.ts`・`kitchen.ts`・`environment.ts`・`index.html`・`styles.css`）
