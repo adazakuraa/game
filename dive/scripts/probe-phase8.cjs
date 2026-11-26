@@ -210,6 +210,9 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
 
   const size = fs.statSync(ARTIFACT).size / 1024;
   budget('8: 単一 HTML', Math.round(size), 4500, ' KB');
+  // §6.4: terrain and vegetation textures as embedded (base64), read from the source tree (S2)
+  const texDir = path.join(__dirname, '..', 'src', 'assets', 'tex');
+  if (fs.existsSync(texDir)) budget('§6.4: 地形・植生テクスチャ（base64）', Math.round(fs.readdirSync(texDir).filter((f) => /\.(jpg|webp)$/.test(f)).reduce((a, f) => a + fs.statSync(path.join(texDir, f)).size, 0) * 4 / 3 / 1024), 1250, ' KB');
 
   // ---------- S1 behaviour
   await go('reef');

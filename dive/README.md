@@ -35,6 +35,7 @@ npm install
 npm run dev        # http://127.0.0.1:5190
 npm run artifact   # dist/artifact.html（1ファイルにインライン化）
 python3 scripts/gen_textures.py   # 表面テクスチャの再生成
+python3 scripts/prep_pbr.py --recompress <元のフォルダ>   # テクスチャの再圧縮（JPEG q75・WebP q85）
 ```
 
 ## 撮影の判定
