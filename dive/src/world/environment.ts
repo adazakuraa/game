@@ -4,9 +4,9 @@ import { UW } from '../render/underwater';
 import { makeBubble } from '../render/textures';
 import { SHADOW } from '../game/render';
 import { heightAt, zoneAt, type ZoneId } from './layout';
-import { clamp, lerp, mulberry32 } from '../utils/noise';
+import { clamp, lerp, mulberry32, smoothstep } from '../utils/noise';
 
-const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
+export const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
   // horizontal water color at ~5 m (linear RGB) and visibility in meters
   lagoon: [0.035, 0.27, 0.36, 38],
   reef: [0.02, 0.19, 0.34, 46],
@@ -19,9 +19,17 @@ const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
   bluehole: [0.006, 0.1, 0.38, 60],
   cave: [0.01, 0.16, 0.2, 34],
   kelp: [0.03, 0.2, 0.19, 30],
-  // Phase 9: placeholders until S1/S2 tune them (brackish: browner, river: clearer but greener)
-  estuary: [0.05, 0.2, 0.17, 18],
+  // Phase 9: estuary = tea-green, 16 m (BR: real estuaries see 1-3 m; exaggerated for a photo game). River: S2 tunes it.
+  estuary: [0.05, 0.17, 0.13, 16],
   river: [0.03, 0.2, 0.2, 24],
+};
+
+/** Phase 9 S1 (CB): the estuary's salt wedge, expressed with fog only. Above 1.8 m the water is the river's, below it the sea's;
+ * the fog thickens 1.4x right at the boundary. */
+export const ESTUARY_WEDGE = {
+  depth: 1.8, half: 0.6, bump: 1.4,
+  upper: [0.06, 0.16, 0.1, 10] as [number, number, number, number],
+  lower: [0.03, 0.18, 0.2, 20] as [number, number, number, number],
 };
 
 /** Water volume visuals: fog, lighting by depth, surface with Snell's window, god rays, marine snow, bubbles. */
@@ -43,6 +51,10 @@ export class Environment {
   private waterCol = new THREE.Color();
   private tmpCol = new THREE.Color();
   private smoothedZone = new THREE.Vector4(0.04, 0.27, 0.4, 46);
+  /** 0..1: how much the estuary's salt wedge applies (follows the zone with the same smoothing) */
+  private wedgeK = 0;
+  /** the fog-density multiplier of the salt wedge's boundary layer (1 elsewhere); read by tests */
+  wedgeBump = 1;
   lightOn = false;
   lightPower = 1;
   /** the day's weather (Phase 4): sunlight multiplier and haze multiplier, set by the game */
@@ -318,14 +330,26 @@ export class Environment {
     this.smoothedZone.z = lerp(this.smoothedZone.z, zw[2], k);
     this.smoothedZone.w = lerp(this.smoothedZone.w, zw[3], k);
 
+    // salt wedge: inside the estuary the layers above / below 1.8 m differ (colour and visibility), mixed by the camera's depth
+    const W = ESTUARY_WEDGE;
+    this.wedgeK = lerp(this.wedgeK, zone === 'estuary' ? 1 : 0, k);
+    const ws = smoothstep(W.depth - W.half, W.depth + W.half, depth);
+    const wk = this.wedgeK;
+    const base = ZONE_WATER.estuary;
+    const zr = this.smoothedZone.x + wk * (lerp(W.upper[0], W.lower[0], ws) - base[0]);
+    const zg = this.smoothedZone.y + wk * (lerp(W.upper[1], W.lower[1], ws) - base[1]);
+    const zb = this.smoothedZone.z + wk * (lerp(W.upper[2], W.lower[2], ws) - base[2]);
+    const zv = this.smoothedZone.w + wk * (lerp(W.upper[3], W.lower[3], ws) - base[3]);
+    this.wedgeBump = 1 + (W.bump - 1) * wk * Math.exp(-(((depth - W.depth) / (W.half * 0.75)) ** 2));
+
     // water color darkens with depth, red and green absorbed first
     const att = Math.exp(-Math.max(0, depth - 4) / 38);
     const attR = Math.exp(-depth / 9);
     const attG = Math.exp(-Math.max(0, depth - 3) / 46);
     this.waterCol.setRGB(
-      this.smoothedZone.x * (0.4 + 0.6 * attR) * att,
-      this.smoothedZone.y * attG * att,
-      this.smoothedZone.z * att * (0.35 + 0.65 * Math.exp(-depth / 160)),
+      zr * (0.4 + 0.6 * attR) * att,
+      zg * attG * att,
+      zb * att * (0.35 + 0.65 * Math.exp(-depth / 160)),
     );
     this.shadeS = lerp(this.shadeS, this.shade, 1 - Math.exp(-dt * 2.5));
     const D = Math.max(this.night * 0.97, this.shadeS * 0.95);
@@ -336,11 +360,11 @@ export class Environment {
     this.waterCol.g = Math.max(this.waterCol.g, 0.0025);
     this.waterCol.b = Math.max(this.waterCol.b, 0.006);
     this.fog.color.copy(this.waterCol);
-    let vis = this.smoothedZone.w;
+    let vis = zv;
     if (depth > 120) vis = lerp(vis, 40, clamp((depth - 120) / 150, 0, 1));
     vis *= 1 - this.narcosis * 0.3;
     vis /= this.weatherFog;
-    this.fog.density = 1.75 / vis;
+    this.fog.density = (1.75 / vis) * this.wedgeBump;
 
     // daylight
     const day = Math.exp(-depth / 24);

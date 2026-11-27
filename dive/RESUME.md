@@ -2,7 +2,8 @@
 
 最終更新: 2026-11-27（Phase 8 完了、Phase 9 S0 を PR #34 でマージ）
 
-## Phase 9 の進捗（S0 を PR #34 でマージ済み）
+## Phase 9 の進捗（S0 を PR #34 でマージ済み、S1 は `claude/phase9-s1`）
+- **S1（河口の地形と水）実装済み**（ブランチ `claude/phase9-s1`、設計 §2・§7 S1）。`layout.ts`：`ESTUARY`・`estuaryU`・`estuaryWeight`・`estuaryCarve`（澪筋 6.8→5m・干潟・砂州と 30m の切れ目・流木の掘れ `DRIFTWOOD`・岸・奥は閉じる）、`southTerrain` で陸と `min` 合成、`zoneAt` の estuary、`bottomMaterial` の泥・貝殻・カニの穴・岸の土（`z ≥ -60` は不変）、`flowAt`（澪筋 0.15m/s 海向きのみ。ダイバーの押し流しは入れた。エア・トースト・生き物の向きは S2）、`DIVE_POINTS` に河口（`yaw: 0`、`DivePoint.yaw` 新設）。`environment.ts`：`ZONE_WATER.estuary = [0.05,0.17,0.13,16]`、`ESTUARY_WEDGE`（1.8m の上下で霧の色と視程 10m／20m、境目で霧 1.4 倍。シェーダ変更なし）。`Game.ts`：上流向きの開始とボートの向き（`placeBoat` に向き引数）、ボート画面の色とアイコン、テストフック `flowAt`・`estuaryWater`。S1 では種・川・景色（S3）は未実装。
 - **S0（世界の延長と岸）完了**（設計 `docs/PHASE9-DESIGN.md` §1・§7 S0・§7.1）。`ZoneId` に `estuary`・`river`（`Record<ZoneId>` の表は埋めた。種は 0）、`WORLD.minZ = -660`、`SHORE_Z`・`SHORE_BLOCK`・`landTopAt`・`southTerrain`（陸だけ。河口・川の掘り込みは S1・S2）、`heightCore` のクランプは `z ≥ -60` だけ、ダイバーと生き物の岸判定、浜のトースト、海図の陸の色。
 - 検証（Muse が独立実行）：`scripts/terrain-dump.ts`（`rolldown scripts/terrain-dump.ts --format esm --platform node -o x.mjs` で束ねて `node x.mjs out.json`）を変更前後で流し、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` が完全一致（差分 0）。`scripts/probe-phase9.cjs`（S0 の項目）7/7。`probe-s8.cjs` 回帰：岩礁で全可視 102 コール / 301,511 tris、シャドウパス 26 コール / 54,385 tris、§6.1 の予算はすべて満たす。単一 HTML 3,403 KB。
 - Sonnet レビュー（PR #34）は safe with caveats。Medium 1 件（流氷の入り江の `z = -60` 段差、最大 2.3m）は `southTerrain` の重み 0 の間に旧クランプを維持する 1 行修正で解消し、再検証済み（x=-326.5 で z=-60/-60.01 ともに -0.90、probe-phase9 7/7、地形照合 0 差分）。レビュー時の `terrain-dump.ts` の絶対パス import も相対パスに修正済み。Low 4 件は要確認事項 CE・CF に記録。
