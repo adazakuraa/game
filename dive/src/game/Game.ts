@@ -14,14 +14,14 @@ import { BIG_KG, DISH, FISHING, PENALTY, STORY, edibleInfo, isFugu, isGoodCatch,
 import { AIR_TANK, evaluateShot, sAdvice, LEGACY_NEED, LEGACY_NEED_PCT, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
-import { Environment } from '../world/environment';
+import { ESTUARY_WEDGE, Environment, ZONE_WATER } from '../world/environment';
 import { Flora } from '../world/flora';
 import { Creatures, OCTO, type PhotoTarget } from '../life/creatures';
 import { BAIT, dietOf, eatsBait, type BaitId } from './bait';
 import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
-import { BLUEHOLE, caveRoofAt, DIVE_POINTS, heightAt, RUINS, SHORE_BLOCK, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
+import { BLUEHOLE, caveRoofAt, DIVE_POINTS, flowAt, heightAt, RUINS, SHORE_BLOCK, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
@@ -85,6 +85,7 @@ export class Game {
   /** chapters whose S has already been shot on this dive: no more S advice for them (reset at dive start) */
   private sDoneCh = new Set<number>();
   private point: DivePoint = DIVE_POINTS[1];
+  private flowTmp = { x: 0, z: 0 };
   private ads = false;
   private captureReq: PhotoTarget | null | undefined = undefined;
   private target: PhotoTarget | null = null;
@@ -771,7 +772,7 @@ export class Game {
     const n = this.foundCount;
     this.advanceStory();
     this.renderStory();
-    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70', kelp: '#8ab060' };
+    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70', kelp: '#8ab060', estuary: '#8a9a60' };
     const pts = $('points');
     pts.innerHTML = '';
     const known = this.discovered;
@@ -782,7 +783,7 @@ export class Game {
       b.className = 'pt';
       b.type = 'button';
       b.disabled = locked;
-      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : dp.id === 'kelp' ? '森' : '12m'}</span>
+      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : dp.id === 'kelp' ? '森' : dp.id === 'estuary' ? '汽水' : '12m'}</span>
         <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `写真の稼ぎで「大気圧潜水服」を買うと行ける` : dp.sub}</div></span>
         <span class="pr"><span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
       b.addEventListener('click', () => this.startDive(dp));
@@ -1096,10 +1097,11 @@ export class Game {
       // a few metres down after the giant-stride entry, clear of the boat's keel (~1.8 m draft)
       const startY = this.ads ? -175 : -3.2;
       this.camera.position.set(dp.x, startY, dp.z);
-      this.yaw = Math.PI; // face offshore (+z)
+      this.yaw = dp.yaw ?? Math.PI; // face offshore (+z); the estuary / river face upstream (-z)
       this.pitch = this.ads ? -0.5 : -0.35;
       // moored ~12 m up-current behind the diver, stern (ladder) facing the diver
-      this.flora.placeBoat(dp.x - 2, dp.z - 12);
+      if (dp.yaw === 0) this.flora.placeBoat(dp.x + 2, dp.z + 12, 0.15); // upstream-facing dive: the boat is downstream (+z)
+      else this.flora.placeBoat(dp.x - 2, dp.z - 12);
       this.ensureMinimap();
       this.flora.boat.visible = !this.ads;
       this.terrain.prime(dp.x, dp.z, 80);
@@ -1596,6 +1598,12 @@ export class Game {
     this.vel.lerp(want, 1 - Math.exp(-dt * (boosting ? 2.4 : 1.6)));
     const prevX = cam.position.x, prevZ = cam.position.z;
     cam.position.addScaledVector(this.vel, dt);
+    // Phase 9 S1: the estuary channel's weak seaward flow carries the diver (the river's strong flow comes with S2)
+    if (!this.ads && cam.position.z < -60) {
+      flowAt(cam.position.x, cam.position.z, this.flowTmp);
+      cam.position.x += this.flowTmp.x * dt;
+      cam.position.z += this.flowTmp.z * dt;
+    }
     // Phase 9: the island's shore (south): where the floor is shallower than SHORE_BLOCK.diver the diver cannot go.
     // Undo the horizontal step and cancel the velocity toward the land (the uphill direction), so he slides along the shore.
     if (cam.position.z < -60 && heightAt(cam.position.x, cam.position.z) > SHORE_BLOCK.diver) {
@@ -2535,6 +2543,10 @@ export class Game {
       /** Phase 9: seabed / land height at (x, z) and its zone */
       heightAt: (x: number, z: number) => heightAt(x, z),
       zoneAt: (x: number, z: number) => zoneAt(x, z),
+      /** Phase 9 S1: the estuary's water table (zone base + salt-wedge layers) */
+      estuaryWater: () => ({ base: ZONE_WATER.estuary, wedge: ESTUARY_WEDGE }),
+      /** Phase 9 S1: water flow (m/s) at (x, z) */
+      flowAt: (x: number, z: number) => { const o = { x: 0, z: 0 }; flowAt(x, z, o); return o; },
       offerMission: () => { this.missions.forceOffer = true; },
       /** Phase 3: photo spots with their focus points */
       spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r }; }),

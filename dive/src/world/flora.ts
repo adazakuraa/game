@@ -1332,9 +1332,9 @@ export class Flora {
     resolveCapsule(p, rad, a.x, a.y, a.z, c.x, c.y, c.z, 2.0, vel);
   }
 
-  placeBoat(x: number, z: number): void {
+  placeBoat(x: number, z: number, yaw = Math.PI + 0.15): void {
     this.boat.position.set(x, 0, z);
-    this.boat.rotation.y = Math.PI + 0.15;
+    this.boat.rotation.y = yaw;
     this.boat.updateMatrixWorld(true);
   }
 

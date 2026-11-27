@@ -315,12 +315,77 @@ export function landTopAt(x: number, z: number): number {
   return lerp(-1.6, 1.8, smoothstep(-72, -100, z)) + 0.8 * fbm2(x * 0.02 + 11, z * 0.02 - 4, 2);
 }
 
-/** Phase 9: replaces the sea floor with land to the south (estuary / river carving comes in later steps) */
+/** Phase 9 S1: the estuary (PHASE9-DESIGN §1.2・§2.1). Centre line x = c(z), half-width W(z) (funnel: mouth 110 m -> head 35 m). */
+export const ESTUARY = { x: 300, mouthZ: -60, headZ: -300, wMouth: 110, wHead: 35 };
+/** Phase 9 S1: driftwood piles in the channel (3–5 m pits, 1 m deep; S3 puts the logs on them). x is the offset from the centre line. */
+export const DRIFTWOOD: { z: number; dx: number; r: number }[] = [
+  [-104, -9, 4], [-128, 12, 3.5], [-150, -14, 5], [-172, 8, 3], [-190, -6, 4.5], [-208, 13, 3.5],
+  [-226, -10, 4], [-240, 5, 3], [-254, -8, 5], [-266, 9, 3.5], [-278, -4, 4], [-290, 6, 3],
+].map(([z, dx, r]) => ({ z, dx, r }));
+
+const estC = (z: number) => ESTUARY.x + 15 * Math.sin(z * 0.02);
+const estW = (z: number) => lerp(ESTUARY.wMouth, ESTUARY.wHead, smoothstep(-60, -300, z));
+/** lateral position in the estuary: 0 on the centre line, 1 at the nominal bank */
+export function estuaryU(x: number, z: number): number {
+  return Math.abs(x - estC(z)) / estW(z);
+}
+/** 0..1: how much (x, z) is inside the estuary's water footprint (0 at the sea side z >= -52 and beyond the head) */
+export function estuaryWeight(x: number, z: number): number {
+  if (z > -52 || z < -316) return 0;
+  return smoothstep(-52, -66, z) * (1 - smoothstep(-300, -312, z)) * (1 - smoothstep(0.88, 1.0, estuaryU(x, z)));
+}
+/** Phase 9 S1: seabed depth (positive down) of the estuary at lateral position u (before the mouth bar) */
+function estuaryDepth(u: number, z: number): number {
+  const Dc = lerp(6.8, 5, smoothstep(-60, -300, z)); // channel (みおすじ) ~7 m at the mouth -> 5 m at the head (6.5 m at the dive point)
+  if (u < 0.28) return lerp(Dc, 2.5, smoothstep(0.1, 0.28, u));
+  if (u < 0.55) return lerp(2.5, 1.2, smoothstep(0.28, 0.55, u));
+  return lerp(1.2, 1.1, smoothstep(0.55, 0.88, u));
+}
+/** Phase 9 S1: the floor the estuary wants at (x, z) (positive = bank / land). Returns +4 outside its footprint. */
+function estuaryCarve(x: number, z: number): number {
+  if (z > ESTUARY.mouthZ || z < -316) return 4;
+  const c = estC(z), W = estW(z), dx = x - c, u = Math.abs(dx) / W;
+  if (u > 1.2) return 4;
+  let d = estuaryDepth(u, z);
+  // the mouth bar (砂州): ~25 m wide, 2.5 m deep, with a 30 m wide, 4 m deep gap in the middle
+  const barW = 1 - smoothstep(-70, -86, z);
+  if (barW > 0) d = lerp(d, Math.min(d, lerp(4, 2.5, smoothstep(12, 24, Math.abs(dx)))), barW);
+  // mud flats are never quite level
+  if (u > 0.28) d += 0.12 * fbm2(x * 0.09 + 3, z * 0.09, 2) * smoothstep(0.28, 0.5, u);
+  // driftwood piles scoop the channel (the chart ignores them, like the wreck pit)
+  if (u < 0.3 && MODE !== 2) {
+    for (const p of DRIFTWOOD) {
+      const pd = Math.hypot(x - (estC(p.z) + p.dx), z - p.z);
+      if (pd < p.r) d += (1 - pd / p.r) ** 2;
+    }
+  }
+  // bank: rises from the flats to the land (the water line is near u = 0.95)
+  let h = lerp(-d, 2.6, smoothstep(0.86, 1.12, u));
+  // the head is closed here; the river (Phase 9 S2) will open it
+  h = lerp(h, 4, smoothstep(-296, -314, z));
+  return h;
+}
+
+/** Phase 9: replaces the sea floor with land to the south; the estuary is carved into it (the river comes in S2) */
 function southTerrain(x: number, z: number, h: number): number {
   const w = smoothstep(-70, -95, z);
   // w = 0 (-70 < z < -60) keeps the old clamp: without it the cold cove's raw
   // floor (up to +2.4 m) would form a cliff at z = -60 (Sonnet review, PR #34).
-  return w > 0 ? lerp(h, landTopAt(x, z), w) : Math.min(h, -0.9);
+  let r = w > 0 ? lerp(h, landTopAt(x, z), w) : Math.min(h, -0.9);
+  const e = estuaryCarve(x, z);
+  if (e < r) r = lerp(r, e, smoothstep(-60, -74, z));
+  return r;
+}
+
+/**
+ * Phase 9 S1: water flow (m/s, horizontal) at (x, z). Only the estuary's channel flows so far: a weak 0.15 m/s seaward (+z).
+ * The river's flow and the diver's strong drift come with S2.
+ */
+export function flowAt(x: number, z: number, out: { x: number; z: number }): void {
+  out.x = 0; out.z = 0;
+  const ew = estuaryWeight(x, z);
+  if (ew <= 0) return;
+  out.z = 0.15 * ew * (1 - smoothstep(0.15, 0.28, estuaryU(x, z)));
 }
 
 /** Height of reef "bommies" above the surrounding reef flat (0 outside the reef). */
@@ -332,6 +397,7 @@ export function bommieAt(x: number, z: number): number {
 }
 
 export function zoneAt(x: number, z: number): ZoneId {
+  if (z < -45 && estuaryWeight(x, z) > 0.5) return 'estuary';
   if (coldWeight(x, z) > 0.5) return 'cold';
   if (kelpWeight(x, z) > 0.5) return 'kelp';
   if (blueWeight(x, z) > 0.5) return 'bluehole';
@@ -401,6 +467,36 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
     sand *= 1 - t;
     rockHard = Math.max(rockHard, t);
   }
+  // Phase 9 S1: estuary ground (nothing changes at z >= -60: the weights are 0 there)
+  const ez = smoothstep(-60, -76, z) * (1 - smoothstep(-296, -314, z));
+  if (ez > 0) {
+    const eu = estuaryU(x, z);
+    const ew = ez * (1 - smoothstep(0.95, 1.3, eu));
+    if (ew > 0) {
+      // sandy mud in the channel, dark mud on the flats, shell bands on the slope, crab holes, bank earth
+      const mud = ew * smoothstep(0.3, 0.62, eu);
+      const west = x < estC(z);
+      const bank = ew * smoothstep(-0.9, -0.2, h);
+      r = lerp(r, 0.52 + 0.05 * n, ew * (1 - smoothstep(0, 0.3, eu)) * 0.55);
+      g = lerp(g, 0.47 + 0.05 * n, ew * (1 - smoothstep(0, 0.3, eu)) * 0.55);
+      b = lerp(b, 0.36 + 0.04 * n, ew * (1 - smoothstep(0, 0.3, eu)) * 0.55);
+      r = lerp(r, 0.3 + 0.04 * n, mud);
+      g = lerp(g, 0.24 + 0.04 * n, mud);
+      b = lerp(b, 0.17 + 0.03 * n, mud);
+      const shell = ew * smoothstep(0.7, 0.95, Math.sin(eu * 70 + 4 * n) * 0.5 + 0.5 + 0.2 * n2) * smoothstep(0.26, 0.34, eu) * (1 - smoothstep(0.5, 0.6, eu));
+      r = lerp(r, 0.86, shell * 0.8);
+      g = lerp(g, 0.84, shell * 0.8);
+      b = lerp(b, 0.76, shell * 0.8);
+      const crab = mud * smoothstep(0.74, 0.86, simplex2(x * 0.95 + 2, z * 0.95));
+      r = lerp(r, 0.11, crab);
+      g = lerp(g, 0.08, crab);
+      b = lerp(b, 0.05, crab);
+      r = lerp(r, west ? 0.22 : 0.33, bank);
+      g = lerp(g, west ? 0.19 : 0.3, bank);
+      b = lerp(b, west ? 0.13 : 0.16, bank);
+      sand *= 1 - Math.max(mud, bank) * 0.85;
+    }
+  }
   out[0] = r;
   out[1] = g;
   out[2] = b;
@@ -416,6 +512,8 @@ export type DivePoint = {
   x: number;
   z: number;
   requires?: 'ads';
+  /** facing at the start of the dive (default Math.PI = offshore, +z); the estuary / river face upstream (0 = -z) */
+  yaw?: number;
 };
 
 export const DIVE_POINTS: DivePoint[] = [
@@ -428,6 +526,7 @@ export const DIVE_POINTS: DivePoint[] = [
   { id: 'bluehole', name: 'ブルーホール', sub: '水深 7→55m・浅瀬に開いた底なしの青い穴', x: 300, z: 545 },
   { id: 'cave', name: '水中洞窟', sub: '水深 22–28m・セノーテから暗い洞窟へ（ライト必須）', x: -330, z: 850 },
   { id: 'kelp', name: '海藻の森', sub: '水深 9–20m・水面まで伸びるジャイアントケルプの森', x: 330, z: 120 },
+  { id: 'estuary', name: '河口', sub: '水深 1–9m・マングローブと干潟。川の水と海の水が混ざる', x: 300, z: -110, yaw: 0 },
   { id: 'deep', name: '深海', sub: '水深 170–430m・大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },
 ];
 
