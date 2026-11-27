@@ -58,8 +58,8 @@ const AO = /アジ|サバ|イワシ|カツオ|マグロ|ブリ|カンパチ|ヒ�
 const SHIRO = /タイ|ハタ|フエ|メバル|カサゴ|ソイ|アイナメ|ホッケ|タラ|カレイ|ヒラメ|スズキ|イサキ|ムツ|キンメ|アマダイ|クエ|ブダイ|ベラ|コチ|ハゼ|メジナ|イシダイ|イシガキ|ヒメジ|オジサン|バス|ギンポ|ゲンゲ|カジカ|アブラコ/;
 const POISON = /ドクウツボ|フグ|ハリセンボン|キタマクラ|ソウシハギ|ハコフグ|オニダルマオコゼ/;
 const PROTECTED = /アオウミガメ|タイマイ|ナポレオン|メガネモチノウオ|タツノオトシゴ|ヒポカンパス|シーラカンス|ジャイアントシーバス|ガリバルディ|ジンベエ|マンボウ|ヨウジウオ/;
-/** Phase 9: protected by exact name (the substring regex above would hit other species). アカメ is the estuary's guardian. */
-const PROTECTED_EXACT = new Set(['アカメ']);
+/** Phase 9: protected by exact name (the substring regex above would hit other species). アカメ is the estuary's guardian, オオサンショウウオ the river's. */
+const PROTECTED_EXACT = new Set(['アカメ', 'オオサンショウウオ']);
 const NOT_FISH = /ザメ|^サメ|サメ$|シャチ|クジラ|イルカ|アシカ|アザラシ|オットセイ|ラッコ|トド|ペンギン|ウミヘビ|エイ$|マンタ|ウミガメ|タイマイ/;
 
 /**
@@ -85,6 +85,7 @@ export function edibleInfo(def: SpeciesDef): Edible {
   if (/ヒョウモンダコ/.test(n)) return { ok: true, cat: 'ika', poison: true };
   if (def.kind === 'squid' || def.kind === 'octopus') return { ok: true, cat: 'ika' };
   if (def.kind === 'ray' && def.ray?.flounder) return { ok: true, cat: 'shiro' };
+  if (def.kind !== 'fish' && PROTECTED_EXACT.has(n)) return { ok: true, cat: 'shiro', protected: true }; // オオサンショウウオ（川のヌシ）
   if (def.kind !== 'fish') return { ok: false, reason: '銛で獲るものではない' };
   if (def.fish?.tail === 'flukes' || /シャチ|クジラ|イルカ|アシカ|アザラシ|オットセイ|ラッコ|トド|ペンギン/.test(n)) return { ok: false, reason: '海の哺乳類や鳥は撃てない' };
   if (/ウミヘビ/.test(n)) return { ok: false, reason: '猛毒のウミヘビ。近寄らない' };

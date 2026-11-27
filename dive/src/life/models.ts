@@ -108,6 +108,8 @@ export type FishShape = {
   mouth?: 'term' | 'sup' | 'inf';
   /** 鱗の列数（体長 1 あたり）。0 で鱗の凹凸なし。既定 48 */
   scaleN?: number;
+  /** ひげの対の数（コイ・ナマズなど、Phase 9 S5）。口の両わきの細い板。L1 では省く */
+  barbels?: number;
 };
 
 /** One fin's grid in the texture's side view (z, y), for painting its margin and soft rays (§3.4). */
@@ -515,6 +517,17 @@ export function buildFish(s: FishShape, o: FishBuildOpts = {}): { geo: THREE.Buf
     for (const side of [-1, 1]) {
       const x0 = v2 ? Math.min(W * 0.15, surfX(t, yb) * 0.8) : W * 0.15;
       parts.push(finGrid({ root, edge: e, rows: detail ? 1 : 2, map: (a, b) => [side * (x0 + a * 0.4), yb - a * 0.6, t - 0.5 + b] }));
+    }
+  }
+  if (s.barbels && !detail) {
+    // barbels (Phase 9 S5): thin boards at the corners of the mouth, 2 triangles each
+    const zt = 0.5 - 0.03;
+    const my = mouthY(0.97);
+    for (let k = 0; k < s.barbels; k++) {
+      const L = 0.1 + 0.05 * (s.barbels - 1 - k);
+      for (const side of [-1, 1]) {
+        parts.push(flatPoly([[0, -0.01], [L, -0.006], [L, 0.006], [0, 0.01]], (a, b) => [side * (0.02 + a * 0.45 + k * 0.012), my - 0.012 - k * 0.02 - a * 0.3 + b, zt + a * 0.7]));
+      }
     }
   }
   if (s.ceph) {
@@ -1150,6 +1163,52 @@ export function buildClam(opts: { mantle: boolean }): THREE.BufferGeometry {
     parts.push(m);
   }
   return finalize(parts, (x, y, z) => [z + 0.5, y > 0.3 ? 0.62 + x * 1.3 : 0.1 + Math.max(0, y + 0.1) * 0.8]);
+}
+
+/**
+ * Giant salamander (Phase 9 S5, 川のヌシ): a flat capsule body, a flat broad head, four short legs and a vertically flattened tail.
+ * Length 1 along z (head at +z). detail 0 ≈ 1,100 triangles, 1 = no legs (≈ 300).
+ */
+export function buildSalamander(detail: 0 | 1 = 0): THREE.BufferGeometry {
+  const parts: Part[] = [];
+  const NS = detail ? 6 : 12, NR = detail ? 8 : 10;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  // body: rings along z from the tail tip (t 0) to the snout (t 1): a broad flat head, a thick trunk, a tail flattened sideways
+  for (let j = 0; j <= NR; j++) {
+    const t = j / NR;
+    const z = t - 0.5;
+    const w = t > 0.7 ? 0.2 * Math.sqrt(Math.max(0.02, 1 - ((t - 0.7) / 0.3) ** 2.4)) : 0.015 + 0.165 * Math.min(1, t / 0.4);
+    const hgt = t < 0.35 ? 0.012 + 0.07 * (t / 0.35) : 0.07 * Math.max(0.35, 1 - Math.max(0, t - 0.75) * 2.4);
+    for (let i = 0; i < NS; i++) {
+      const a = (i / NS) * Math.PI * 2;
+      pos.push(Math.cos(a) * w, Math.sin(a) * hgt + hgt * 0.8, z);
+    }
+  }
+  for (let j = 0; j < NR; j++)
+    for (let i = 0; i < NS; i++) {
+      const a = j * NS + i, b2 = j * NS + ((i + 1) % NS);
+      const c = a + NS, d = b2 + NS;
+      idx.push(a, c, b2, b2, c, d);
+    }
+  const body = new THREE.BufferGeometry();
+  body.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  body.setIndex(idx);
+  body.computeVertexNormals();
+  setAttr(body, 'aBend', (_x, _y, z) => Math.max(0, -z - 0.05) * 0.3);
+  parts.push(body);
+  if (!detail) {
+    for (const [zz, front] of [[0.3, 1], [-0.12, 0]] as const) {
+      for (const side of [-1, 1]) {
+        const leg = new THREE.CylinderGeometry(0.018, 0.03, 0.14, 6, 3);
+        leg.rotateZ(side * 1.25);
+        leg.rotateY(side * (front ? 0.5 : -0.5));
+        leg.translate(side * 0.15, 0.03, zz);
+        parts.push(leg);
+      }
+    }
+  }
+  return finalize(parts, (x, _y, z) => [x * 2.4 + 0.5, z + 0.5]);
 }
 
 /** Christmas tree worm: two spiral plumes. */

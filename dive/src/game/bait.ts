@@ -41,7 +41,10 @@ const MEAT_EXACT = ['マダイ', 'クロダイ', 'ヘダイ', 'イシダイ', '�
  * Phase 9: estuary / river species are never judged by the word lists above (substring hits: 'コイ' is inside コイボウミウシ, 'アナゴ' inside チンアナゴ).
  * This exact-name table overrides them; the rest fall through to the size / behaviour fallback.
  */
-const DIET_EXACT = new Map<string, Diet>([['アカメ', 'meat']]);
+const DIET_EXACT = new Map<string, Diet>([
+  ['アカメ', 'meat'], ['ナマズ', 'meat'], ['ウナギ', 'meat'], // 魚の切り身
+  ['コイ', 'weed'], ['ゲンゴロウブナ', 'weed'], ['アユ', 'weed'], // 海藻だんご（アユは藻を食べる）
+]);
 
 /** Names containing 'ハゼ' are not judged by the word lists (ハタタテハゼ is a tiny goby, not a ハタ): size / behaviour decides. */
 const NO_WORDS = ['ハゼ'];

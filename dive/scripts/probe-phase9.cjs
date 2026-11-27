@@ -1,7 +1,7 @@
 /**
- * Phase 9 probe (PHASE9-DESIGN §8.1). S4 (estuary species: 18 species / 14 fish, lagoon 21, the guardian アカメ, exact-name protection and diet, placement, photo targets, dex section) comes before the page-error check. S3 (scenery + homes) is the last block before the page-error check. S2 (river: depths, flow, air, waterfall, water by position, dive point, Low fixes) is the last block. S0 (world extension + shore) and S1 (estuary terrain, water, dive point):
+ * Phase 9 probe (PHASE9-DESIGN §8.1). S5 (river species: 24 species / 19 fish, exact-name protection and diet, triangle limits, placement, upstream-facing fish, territorial ayu, photo targets, dex section) comes right after S4. S4 (estuary species: 18 species / 14 fish, lagoon 21, the guardian アカメ, exact-name protection and diet, placement, photo targets, dex section) comes before the page-error check. S3 (scenery + homes) is the last block before the page-error check. S2 (river: depths, flow, air, waterfall, water by position, dive point, Low fixes) is the last block. S0 (world extension + shore) and S1 (estuary terrain, water, dive point):
  *   - the shore stops the diver (heightAt stays <= -0.8) and says so; it slides instead of sticking
- *   - the creatures never leave the water in the south; no species lives in the new zones yet
+ *   - the creatures never leave the water in the south; no species lives in the new zones yet (S0 only; S4 and S5 add them)
  *   - the chart shows the island as land (green), the margin south of the world is land too
  *   - S1: estuary floor depths 0.9–9 m, dive point 6.5 m, zoneAt along the channel, channel swimmable (BFS + a steered swim),
  *     tea-green water 16 m with the 1.8 m salt wedge (fog colour / density above vs below), discovery banner + boat-screen entry,
@@ -476,7 +476,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     };
   }, EST);
   console.log('  estuary species', JSON.stringify({ n: sp.estIds.length, fish: sp.estFish, nativeEst: sp.nativeEst.length, nativeLag: sp.nativeLag.length, moved: sp.moved }));
-  check('species: 18 estuary species (16 new + bora and kurohoshimanjuu moved from the lagoon), none missing, none in the river yet', sp.estIds.length === 18 && sp.missing.length === 0 && sp.riverN === 0, JSON.stringify(sp.missing));
+  check('species: 18 estuary species (16 new + bora and kurohoshimanjuu moved from the lagoon), none missing', sp.estIds.length === 18 && sp.missing.length === 0, JSON.stringify(sp.missing));
   check('species: 14 estuary fish (kind fish / ray / gardenEel)', sp.estFish === 14, `estuary=${sp.estFish}`);
   check('species: native fish by home zone (Phase 5 §6.1, >= 80% of the groups): estuary >= 10 (target 14), lagoon >= 10', sp.nativeEst.length >= 10 && sp.nativeLag.length >= 10, `estuary=${sp.nativeEst.length} lagoon=${sp.nativeLag.length}`);
   check('species: bora → estChannel, kurohoshimanjuu → mangrove (ids unchanged)', sp.moved[0] === 'estuary:estChannel' && sp.moved[1] === 'estuary:mangrove', sp.moved.join(','));
@@ -500,10 +500,10 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
         n++;
         const fl = h.heightAt(a.p.x, a.p.z);
         if (a.p.y < -0.05) under++;
-        if (a.p.y >= fl - 0.05) aboveFloor++;
-        if (h.zoneAt(a.p.x, a.p.z) === 'estuary') inZone++;
+        if (a.p.y >= fl - 0.4) aboveFloor++; // heightFast (grid) vs heightAt (exact) differ by up to ~0.3 m on the steep banks and riffles
+        { const zz = h.zoneAt(a.p.x, a.p.z); if (zz === 'estuary' || (zz === 'lagoon' && a.p.z > -100)) inZone++; } // the mouth (z > -100) still counts
       }
-      if (under < n || aboveFloor < n || inZone < n * 0.7) bad.push(`${id}: n=${n} under=${under} aboveFloor=${aboveFloor} inZone=${inZone}`);
+      if (under < n || aboveFloor < n || inZone < n * 0.7) bad.push(`${id}: n=${n} under=${under} aboveFloor=${aboveFloor} inZone=${inZone} zones=${rt.agents.map((a) => h.zoneAt(a.p.x, a.p.z)[0] + Math.round(a.p.z / 10)).join(',')} maxY=${Math.max(...rt.agents.map((a) => a.p.y)).toFixed(2)} ${rt.agents.filter((a) => a.p.y >= -0.05).map((a) => a.mode + '/' + a.lured + '/' + (rt.active ? 'act' : 'idle')).join()}`);
     }
     return bad;
   }, EST);
@@ -525,16 +525,20 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
       rt.active = true;
       const a = rt.agents[0];
       const d = Math.max(0.8, Math.min(3, rt.def.size * 10 + 0.5));
-      pos.set(a.p.x + d * 0.8, Math.min(a.p.y + 0.1, -0.7), a.p.z + d * 0.6); a.retract = 0;
-      const dx = a.p.x - pos.x, dy = a.p.y - pos.y, dz = a.p.z - pos.z;
-      g.camera.rotation.order = 'YXZ'; g.camera.rotation.set(Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0);
-      g.camera.updateMatrixWorld();
       for (const o of g.creatures.list) if (o !== rt) o.active = false; // only this species is a candidate (a fish swimming past would otherwise take the target)
       let hit = null;
-      for (let k = 0; k < 3 && !hit; k++) {
-        const t = g.creatures.findTarget(g.camera, { clear: 30, dark: false, lightOn: true, cropX: 0.95, cropY: 0.95, macro: true, wide: false });
-        if (t && t.rt.def.id === id) hit = t;
-        else { for (let i = 0; i < 4; i++) g.creatures.update(0.1, pos, g.vel, dir); const b = rt.agents[0]; const ex = b.p.x - pos.x, ey = b.p.y - pos.y, ez = b.p.z - pos.z; g.camera.rotation.set(Math.atan2(ey, Math.hypot(ex, ez)), Math.atan2(-ex, -ez), 0); g.camera.updateMatrixWorld(); }
+      // try several sides (an animal can sit behind a trunk or a log from one side; a diver would swim round)
+      for (let k = 0; k < 16 && !hit; k++) {
+        const az = 0.64 + k * Math.PI / 6; // 16 tries on different bearings, camera low or high
+        pos.set(a.p.x + d * Math.cos(az), Math.min(a.p.y + ((k >> 1) % 2 ? 1.0 : 0.1), -0.7), a.p.z + d * Math.sin(az)); a.retract = 0; // odd tries look down from above (a boulder collider can shadow a perch seen from the side)
+        const dx = a.p.x - pos.x, dy = a.p.y - pos.y, dz = a.p.z - pos.z;
+        g.camera.rotation.order = 'YXZ'; g.camera.rotation.set(Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0);
+        g.camera.updateMatrixWorld();
+        for (let q = 0; q < 2 && !hit; q++) {
+          const t = g.creatures.findTarget(g.camera, { clear: 30, dark: false, lightOn: true, cropX: 0.95, cropY: 0.95, macro: true, wide: false });
+          if (t && t.rt.def.id === id) hit = t;
+          else { for (let i = 0; i < 4; i++) g.creatures.update(0.1, pos, g.vel, dir); const b = rt.agents[0]; const ex = b.p.x - pos.x, ey = b.p.y - pos.y, ez = b.p.z - pos.z; g.camera.rotation.set(Math.atan2(ey, Math.hypot(ex, ez)), Math.atan2(-ex, -ez), 0); g.camera.updateMatrixWorld(); }
+        }
       }
       out.push(hit ? { id, ok: true, reason: hit.reason } : { id, ok: false });
     }
@@ -555,6 +559,159 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     return { titles, n };
   });
   check('dex: a 河口 section follows ラグーン and holds 18 cards', dx.titles.indexOf('河口') === dx.titles.indexOf('浅瀬ラグーン') + 1 && dx.n === 18, JSON.stringify(dx));
+
+
+  // ---------------------------------------------------------------- S5: river species
+  const RIV = ['koi', 'gengorobuna', 'nigoi', 'namazu', 'unagi', 'gigi', 'dojou', 'nipponbaratanago', 'medaka', 'ayu', 'oikawa', 'ugui', 'kawamutsu', 'kamatsuka', 'kawayoshinobori', 'yamame', 'iwana', 'aburahaya', 'kajika', 'minamitenagaebi', 'mokuzugani', 'sawagani', 'dobugai', 'oosanshouuo'];
+  const rs = await ev((ids) => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    const isFish = (d) => d.kind === 'fish' || d.kind === 'ray' || d.kind === 'gardenEel';
+    const list = g.creatures.list.map((r) => r.def);
+    const river = list.filter((d) => d.zone === 'river');
+    const native = (zone) => g.creatures.list.filter((r) => isFish(r.def) && r.groups.filter((gr) => h.zoneAt(gr.home.x, gr.home.z) === zone).length >= 0.8 * r.groups.length).map((r) => r.def.id);
+    const byName = new Map(); for (const d of list) byName.set(d.name, (byName.get(d.name) || 0) + 1);
+    const sal = list.find((d) => d.id === 'oosanshouuo');
+    const fallback = (d) => (d.behavior === 'school' && d.size < 0.15 ? 'plankton' : d.size >= 0.15 && d.size <= 2.5 ? 'meat' : null);
+    const exactDiet = { koi: 'weed', gengorobuna: 'weed', ayu: 'weed', namazu: 'meat', unagi: 'meat' };
+    const sub = (w) => list.filter((d) => d.name.includes(w) && d.name !== w).map((d) => d.name);
+    return {
+      ids: river.map((d) => d.id), fish: river.filter(isFish).length, estN: list.filter((d) => d.zone === 'estuary').length,
+      missing: ids.filter((i) => !river.some((d) => d.id === i)), nativeRiver: native('river'), nativeEst: native('estuary'), nativeLag: native('lagoon'),
+      dup: [...byName.entries()].filter(([k, n]) => n > 1 && river.some((d) => d.name === k)).map(([k]) => k),
+      sal: { kind: sal.kind, r: sal.rarity, size: sal.size, prot: !!h.edible('oosanshouuo')?.protected, behavior: sal.behavior },
+      akameProt: !!h.edible('akame')?.protected,
+      protectedRiver: river.filter((d) => h.edible(d.id)?.protected).map((d) => d.id),
+      // names that merely contain a protected / exact-diet name must not be judged by it
+      partialProt: [...sub('アカメ'), ...sub('オオサンショウウオ')].map((n) => n + ':' + !!h.edible(list.find((d) => d.name === n).id)?.protected),
+      exactOK: Object.entries(exactDiet).every(([id, dd]) => h.dietOf(id) === dd),
+      partialDiet: ['コイ', 'ウナギ', 'ナマズ', 'アユ'].flatMap((w) => sub(w).map((n) => { const d = list.find((x) => x.name === n); return n + ':' + h.dietOf(d.id); })),
+      // the other river species fall through to the word lists / size rule; none of them may hit a sea-fish word by accident
+      dietOther: river.filter((d) => !(d.id in exactDiet)).map((d) => ({ id: d.id, diet: h.dietOf(d.id), fb: fallback(d) })).filter((x) => x.diet !== x.fb).map((x) => x.id + ':' + x.diet + '!=' + x.fb),
+      ayu: list.find((d) => d.id === 'ayu').aggro, night: list.filter((d) => d.when === 'night' && d.zone === 'river').map((d) => d.id),
+    };
+  }, RIV);
+  console.log('  river species', JSON.stringify({ n: rs.ids.length, fish: rs.fish, nativeRiver: rs.nativeRiver.length, nativeEst: rs.nativeEst.length, nativeLag: rs.nativeLag.length }));
+  check('river: 24 species in the river zone (all new), none missing; the estuary still has its 18', rs.ids.length === 24 && rs.missing.length === 0 && rs.estN === 18, JSON.stringify(rs.missing) + ' est=' + rs.estN);
+  check('river: 19 river fish (kind fish / ray / gardenEel)', rs.fish === 19, `fish=${rs.fish}`);
+  check('river: native fish by home zone (>= 80% of the groups): river >= 10 (target 19), estuary >= 10, lagoon >= 10', rs.nativeRiver.length >= 10 && rs.nativeEst.length >= 10 && rs.nativeLag.length >= 10, `river=${rs.nativeRiver.length} estuary=${rs.nativeEst.length} lagoon=${rs.nativeLag.length}`);
+  check('river: no species name appears twice (against all species)', rs.dup.length === 0, rs.dup.join(','));
+  check('river: オオサンショウウオ is the guardian (kind inv, crevice, rarity 3, 1.0 m) and protected by exact name; アカメ stays protected; no other river species is', rs.sal.kind === 'inv' && rs.sal.behavior === 'crevice' && rs.sal.r === 3 && rs.sal.size === 1 && rs.sal.prot && rs.akameProt && rs.protectedRiver.join() === 'oosanshouuo', JSON.stringify(rs.sal) + ' ' + rs.protectedRiver.join());
+  check('river: exact-name tables — 6 diets (コイ・ゲンゴロウブナ・アユ=weed, ナマズ・ウナギ・アカメ=meat) hold; a name that only contains one (チンアナゴ, コイボウミウシ…) is not protected by it; the other river species keep the size / word fallback', rs.exactOK && rs.partialProt.every((n) => n.endsWith(':false')) && rs.dietOther.length === 0, JSON.stringify({ partialProt: rs.partialProt, partialDiet: rs.partialDiet, dietOther: rs.dietOther }));
+  check('river: アユ is a harmless territory guard (aggro territory, bite 0); ギギ is night-only', rs.ayu?.kind === 'territory' && rs.ayu.bite === 0 && rs.night.join() === 'gigi', JSON.stringify(rs.ayu) + ' night=' + rs.night.join());
+  // placement + triangle limits (the mesh is built when the species is first near the diver)
+  const rp = await ev(async (ids) => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.input.poll = () => {};
+    const bad = [], tris = {};
+    const tri = (geo) => (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
+    g.creatures.night = false;
+    for (const id of ids) {
+      const rt = g.creatures.list.find((r) => r.def.id === id);
+      const a0 = rt.agents[0];
+      h.teleport(a0.p.x + 1.5, Math.min(a0.p.y + 0.3, -0.8), a0.p.z + 1.5);
+      for (const gr of rt.groups) gr.absent = false;
+      const pos = g.camera.position, dir = g.camera.getWorldDirection(g.tmpDir);
+      for (let i = 0; i < 12; i++) g.creatures.update(0.25, pos, g.vel, dir);
+      let n = 0, under = 0, inZone = 0, aboveFloor = 0;
+      for (const a of rt.agents) {
+        n++;
+        const fl = h.heightAt(a.p.x, a.p.z);
+        if (a.p.y < -0.05) under++;
+        if (a.p.y >= fl - 0.4) aboveFloor++; // heightFast (grid) vs heightAt (exact) differ by up to ~0.3 m on the steep banks and riffles
+        if (h.zoneAt(a.p.x, a.p.z) === 'river') inZone++;
+      }
+      if (under < n || aboveFloor < n || inZone < n * 0.7) bad.push(`${id}: n=${n} under=${under} aboveFloor=${aboveFloor} inZone=${inZone} minAboveFloor=${Math.min(...rt.agents.map((a) => a.p.y - h.heightAt(a.p.x, a.p.z))).toFixed(3)} high=[${rt.agents.filter((a) => a.p.y >= -0.05).map((a) => 'g' + a.g + ':' + a.p.y.toFixed(2) + ':' + (rt.groups[a.g].absent ? 'abs' : 'pres') + ':' + (rt.active ? 'act' : 'idle')).join(' ')}] zones=${rt.agents.map((a) => h.zoneAt(a.p.x, a.p.z)[0]).join('')}`);
+      tris[id] = rt.mesh ? tri(rt.mesh.geometry) : -1;
+    }
+    return { bad, tris };
+  }, RIV);
+  console.log('  river tris', JSON.stringify(rp.tris));
+  check('placement: every individual of the 24 river species is under water, above the floor and inside the river zone (>= 70%, like the estuary: the channel is 14–22 m wide, so a fish near a bank is in the zone-less margin)', rp.bad.length === 0, rp.bad.join(' | '));
+  const sizes = await ev((ids) => Object.fromEntries(ids.map((id) => [id, window.__THREE_GAME_TEST_HOOKS__.game.creatures.list.find((r) => r.def.id === id).def.size])), RIV);
+  const isFishId = Object.fromEntries(await ev((ids) => ids.map((id) => [id, window.__THREE_GAME_TEST_HOOKS__.game.creatures.list.find((r) => r.def.id === id).def.kind === 'fish']), RIV));
+  // the fish limit (FISH_TRIS) is the generated-fish builder's; the crabs / shrimp / clam use the shared invertebrate builders (crab 1,568 like every existing crab)
+  const overT = RIV.filter((id) => { const t = rp.tris[id]; const lim = id === 'oosanshouuo' ? 1100 : !isFishId[id] ? 1600 : sizes[id] < 0.4 ? 1500 : 2500; return t < 0 || t > lim; });
+  check('models: every river species is built and within the triangle limits (fish < 0.4 m 1,500 / >= 0.4 m 2,500; salamander 1,100; crabs, shrimp, clam <= 1,600 = the shared builders)', overT.length === 0, overT.map((id) => id + ':' + rp.tris[id]).join(','));
+  // upstream-facing: fish holding station in the river face upstream (mean angle <= 45 deg)
+  const up = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.input.poll = () => {};
+    const fl = { x: 0, z: 0 };
+    const rows = [];
+    for (const [x, z] of [[300, -340], [256, -420], [292, -540], [236, -600]]) {
+      h.teleport(x, -1.2, z);
+      const pos = g.camera.position, dir = g.camera.getWorldDirection(g.tmpDir);
+      for (let i = 0; i < 80; i++) g.creatures.update(0.1, pos, g.vel, dir);
+      for (const rt of g.creatures.list) {
+        const d = rt.def;
+        if (d.zone !== 'river' || d.kind !== 'fish' || (d.behavior !== 'school' && d.behavior !== 'solo') || !rt.active) continue;
+        for (const a of rt.agents) {
+          if (rt.groups[a.g].absent || Math.hypot(a.p.x - x, a.p.z - z) > 40) continue;
+          if (a.v.length() >= 0.35) continue;
+          const f = h.flowAt(a.p.x, a.p.z, a.p.y);
+          const fm = Math.hypot(f.x, f.z);
+          if (fm < 0.05) continue;
+          const hx = Math.sin(a.yaw), hz = Math.cos(a.yaw);
+          const cos = (hx * -f.x + hz * -f.z) / fm; // against the flow = upstream
+          rows.push({ id: d.id, ang: Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI });
+        }
+      }
+    }
+    const mean = rows.reduce((s, r) => s + r.ang, 0) / Math.max(1, rows.length);
+    const ids = [...new Set(rows.map((r) => r.id))];
+    return { n: rows.length, mean: +mean.toFixed(1), ids };
+  });
+  console.log('  upstream facing', JSON.stringify(up));
+  check('upstream: stopped river fish (school / solo, speed < 0.35, flow >= 0.05 m/s) face upstream, mean angle <= 45° (design §3.3)', up.n >= 20 && up.mean <= 45, JSON.stringify(up));
+  // photo: each species 2 m away through findTarget (ギギ at night)
+  const rph = await ev(async (ids) => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.input.poll = () => {};
+    const out = [];
+    for (const id of ids) {
+      const rt = g.creatures.list.find((r) => r.def.id === id);
+      const a0 = rt.agents[0];
+      h.teleport(a0.p.x + 2, a0.p.y + 0.3, a0.p.z + 2);
+      g.creatures.night = id === 'gigi';
+      for (const gr of rt.groups) gr.absent = false;
+      const pos = g.camera.position, dir = g.camera.getWorldDirection(g.tmpDir);
+      for (let i = 0; i < 12; i++) g.creatures.update(0.25, pos, g.vel, dir);
+      for (const gr of rt.groups) gr.absent = false;
+      rt.active = true;
+      const a = rt.agents[0];
+      const d = Math.max(0.8, Math.min(3, rt.def.size * 10 + 0.5));
+      for (const o of g.creatures.list) if (o !== rt) o.active = false;
+      let hit = null;
+      // the boulders upstream can hide an animal from one side: try 16 bearings, camera low or high (a diver would swim round)
+      for (let k = 0; k < 16 && !hit; k++) {
+        const az = 0.64 + k * Math.PI / 6; // 16 tries on different bearings, camera low or high
+        pos.set(a.p.x + d * Math.cos(az), Math.min(a.p.y + ((k >> 1) % 2 ? 1.0 : 0.1), -0.7), a.p.z + d * Math.sin(az)); a.retract = 0; // odd tries look down from above (a boulder collider can shadow a perch seen from the side)
+        const dx = a.p.x - pos.x, dy = a.p.y - pos.y, dz = a.p.z - pos.z;
+        g.camera.rotation.order = 'YXZ'; g.camera.rotation.set(Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0);
+        g.camera.updateMatrixWorld();
+        for (let q = 0; q < 2 && !hit; q++) {
+        const t = g.creatures.findTarget(g.camera, { clear: 30, dark: false, lightOn: true, cropX: 0.95, cropY: 0.95, macro: true, wide: false });
+        if (t && t.rt.def.id === id) hit = t;
+        else { for (let i = 0; i < 4; i++) g.creatures.update(0.1, pos, g.vel, dir); const b = rt.agents[0]; const ex = b.p.x - pos.x, ey = b.p.y - pos.y, ez = b.p.z - pos.z; g.camera.rotation.set(Math.atan2(ey, Math.hypot(ex, ez)), Math.atan2(-ex, -ez), 0); g.camera.updateMatrixWorld(); }
+        }
+      }
+      out.push(hit ? { id, ok: true } : { id, ok: false });
+    }
+    g.creatures.night = false;
+    return out;
+  }, RIV);
+  check('photo: each of the 24 river species can be targeted by findTarget from a short distance', rph.every((p) => p.ok), rph.filter((p) => !p.ok).map((p) => p.id).join(','));
+  const rdx = await ev(async () => {
+    const h = window.__THREE_GAME_TEST_HOOKS__;
+    h.setState('dex'); await new Promise((r) => setTimeout(r, 200));
+    const titles = [...document.querySelectorAll('#dex-grid .dz-title')].map((e) => e.textContent);
+    const i = titles.indexOf('川');
+    const grids = [...document.querySelectorAll('#dex-grid .dz-grid')];
+    const n = i >= 0 ? grids[i].children.length : -1;
+    document.getElementById('dex-close')?.click();
+    return { titles, n };
+  });
+  check('dex: a 川 section follows 河口 and holds 24 cards', rdx.titles.indexOf('川') === rdx.titles.indexOf('河口') + 1 && rdx.n === 24, JSON.stringify(rdx));
 
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close(); server.close();
