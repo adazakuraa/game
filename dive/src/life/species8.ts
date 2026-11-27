@@ -71,11 +71,11 @@ export const WILD_SPECIES: SpeciesDef[] = [
     look: { c: ['#20304a', '#2a3c5a', '#3a4a66'], fin: '#22324c', spots: [[46, 0.01, 0.022, 'rgba(230,236,240,0.85)']], iris: '#7ab0c8' },
     desc: '「生きている化石」。4億年前とほとんど姿を変えていない。肉厚のヒレを足のように交互に動かしてゆっくり泳ぐ。' }),
   F({ id: 'dunkleosteus', name: 'ダンクルオステウス', sci: 'Dunkleosteus terrelli', zone: 'offshore', d: [10, 60], size: 6, r: 4, body: sh('shark', { H: 0.24, W: 0.22, nose: 0.95, peak: 0.66, eyes: 0.06, eyeT: 0.88 }), hab: 'midwater', region: OFF, n: 1, g: 1, speed: 1.4, behavior: 'solo',
-    aggro: { kind: 'shark', chance: 0.6, range: 16, bite: 20, speed: 3.2 },
+    aggro: { kind: 'shark', chance: 0.6, range: 16, bite: 80, speed: 3.2 },
     look: { c: ['#4a4a40', '#5a5a4e', '#8a8a78'], fin: '#3a3a32', front: [0.22, '#6a6250'], bars: [[0.22, 0.02, 'rgba(30,26,20,0.6)']], iris: '#e0c040' },
     desc: '約3億7000万年前の海の覇者。頭と胸を厚い骨の鎧で覆い、刃のような顎で何でも噛み砕いた。' }),
   F({ id: 'megalodon', name: 'メガロドン', sci: 'Otodus megalodon', zone: 'offshore', d: [5, 80], size: 16, r: 4, body: sh('shark', { H: 0.24, W: 0.22, nose: 0.75, eyes: 0.04 }), hab: 'midwater', region: OFF, n: 1, g: 1, speed: 1.6, behavior: 'pelagic',
-    aggro: { kind: 'shark', chance: 0.5, range: 26, bite: 30, speed: 4 },
+    aggro: { kind: 'shark', chance: 0.5, range: 26, bite: 30, speed: 4, lethal: true },
     look: { c: ['#4e5862', '#66727c', '#e8ecee'], mid: 0.55, fin: '#4a545e', tail: '#4a545e' },
     desc: '全長15mを超えた史上最大級のサメ。クジラを襲って食べていたと考えられている。歯の化石は手のひらほどもある。' }),
   {

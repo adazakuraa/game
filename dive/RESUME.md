@@ -1,6 +1,13 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-27（Phase 10 完了＝(3)(4) を `claude/phase10-34` で実装。Phase 9 完了。S0〜S7 は PR #34〜#41、S8（仕上げ）は `claude/phase9-s8` で PR・マージ。次は Phase 10 の残り・Phase 11・Phase 12）
+最終更新: 2026-11-27（Phase 11 の攻撃・撃退を実装＝`claude/phase11-attack`。Phase 10 完了＝(3)(4) を `claude/phase10-34` で実装。Phase 9 完了。S0〜S7 は PR #34〜#41、S8（仕上げ）は `claude/phase9-s8` で PR・マージ。次は Phase 10 の残り・Phase 11・Phase 12）
+
+## Phase 11 の「攻撃・撃退」（`claude/phase11-attack`、`main` 0059fa8 から）
+- **bite の差別化・lethal・エアの床**：モンガラ 6／ゴマモンガラ 10／オキザヨリ 8／ツマジロ 25／ヨゴレ 35／オオメジロ 40／ダンクルオステウス 80（chance・range・speed は不変）。`SpeciesDef.aggro.lethal` をメガロドンに付け、ヒットで `air = 0` → 既存の `endDive('blackout')`（専用文案なし）。`Game.ts` の `handleEncounters` の aggro ヒットだけ床を 1 → 0 に。タコの grab・銛の haul の床 1 は維持。
+- **撃退**：`Game.ts` の `tryRepel`（`fireSpear` の先頭から呼ぶ）。突進中（mode 2）の aggro 個体が対象で、体表換算距離（距離 − size×0.45）≤ 射程かつヒット判定距離（size×0.45＋0.55）に届く前なら撃退。成功で即 mode 3＋`Agent.repelT`（30 秒、ジャスト＝ヒット距離＋1.2m 以内は 90 秒）。`creatures.ts` の aggro 発動条件と `bloodIn` が `repelT` を見る。段階は `FISHING.tools.*.tier`（0/1/2）と `repelTier(def)`（lethal・rarity 4 のサメ＝2、ほかのサメ＝1、その他＝0）。段階不足は空振り＋ヒント、窓の外は空振り、いずれもリロードを消費。数値は `FISHING.repel`。水中銃・大物用水中銃のショップ説明に撃退を追記。
+- **検証**：`terrain-dump.ts` の前後比較で z ≥ -60 の 100,003 点が `cmp` 一致（差分 0）。新規 `scripts/probe-phase11.cjs` 44/44（bite・lethal から blackout・床・段階別・窓・ジャスト・クールダウン実時間・シールド併用）。`probe-phase9`・`probe-s8` の結果は PR 本文に記載。
+- **未確認・注意**：実機の突きやすさ（窓の広さ・ジャストの 1.2m）は未確認（体感で広すぎ・狭すぎなら `FISHING.repel` と各道具の `range` を調整）。撃退の窓は距離だけで判定し、命中率の乱数は使わない（要確認事項 CM）。territory の「威嚇中」（突進前の mode 2）も撃退の対象になる。プローブの注意：blackout の後は再潜水が通らないので、`probe-phase11` は blackout の確認を最後に置いてある。
+- 次の一手：Phase 11 の残り（総合確認・バランス調整の各項目）。Phase 12 の手前で止めてユーザーの確認を待つ。
 
 ## Phase 10 の (3)(4)（`claude/phase10-34`、`main` 0055e12 から）
 - **(3) ウミガメの綱切り**：タップ起点のナイフ動作は Phase 3 からあった（`startCut` → `cutTime` 1.8 秒・3 ストローク）。追加：①`missions.ts` に綱 3 本（海底の杭から甲羅へ。2 分割の細い円柱）。ストロークの中ほど（k = 0.5/3, 1.5/3, 2.5/3）で 1 本ずつ切れ、海底側は沈み・甲羅側ははね返って 0.8 秒で消える（`cutFx()`）。②`Game.ts` のナイフは、タップ直後に前へ突き出す（lunge）→ 画面を横切る大きな振り、綱が切れる瞬間にシェイク 0.22。`MISSION.rescue` の数値・条件（reach 2.4 m、報酬 3500、頻度 5%）は不変。

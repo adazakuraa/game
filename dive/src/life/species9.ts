@@ -52,7 +52,7 @@ export const SITE_SPECIES: SpeciesDef[] = [
     count: 3, groups: 2, behavior: 'drift', region: HOLE, speed: 0.12, flee: 0, swim: [0.8, 0.02, 2], spread: 6, photoRange: 5,
   },
   F({ id: 'oomejirozame', name: 'オオメジロザメ', sci: 'Carcharhinus leucas', zone: 'bluehole', d: [10, 50], size: 2.4, r: 3, body: sh('shark', { H: 0.24, nose: 0.85 }), hab: 'midwater', region: HOLE, n: 2, g: 1, speed: 0.9,
-    aggro: { kind: 'shark', chance: 0.3, range: 14, bite: 15, speed: 3.4 },
+    aggro: { kind: 'shark', chance: 0.3, range: 14, bite: 40, speed: 3.4 },
     look: { c: ['#6a6e70', '#868a8c', '#e4e6e6'], mid: 0.55, fin: '#5a5e60' }, desc: 'ずんぐりした体の大型のサメ。川をさかのぼることもある適応力の持ち主。縦穴の中層を回り、ときに大胆に近づいてくる。' }),
   F({ id: 'kasurihata', name: 'カスリハタ', sci: 'Epinephelus tukula', zone: 'bluehole', d: [7, 40], size: 1.4, r: 2, body: sh('grouper'), hab: 'rockyRoam', region: RIM, n: 2, g: 1, speed: 0.4,
     look: { c: ['#6a6a5a', '#8a8a76', '#c8c4b0'], fin: '#5a5a4a', blotch: [30, ['rgba(40,40,30,0.6)', 'rgba(180,170,140,0.3)']] }, desc: '大きな黒い斑紋が並ぶ大型のハタ。好奇心が強く、穴の縁でダイバーに寄ってくることもある。' }),

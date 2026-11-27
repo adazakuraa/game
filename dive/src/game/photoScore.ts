@@ -107,8 +107,8 @@ export const SHOP: readonly ShopItem[] = [
   // fishing gear: comes into stock as the diner's reputation grows (【入荷に必要な評判】rep)
   { id: 'cooler', need: 0, rep: 2, price: 3000, name: 'クーラーボックス', desc: '獲物を15kgまで持ち帰れる', icon: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M8 8V5h8v3" fill="none" stroke="currentColor" stroke-width="2"/>' },
   { id: 'license', need: 0, rep: 3, price: 8000, name: '漁業権（遊漁承認）', desc: '水中銃を使ってよい許可', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5" stroke="#0b2a3a" stroke-width="1.6"/>' },
-  { id: 'speargun', need: 0, rep: 3, req: 'license', price: 12000, name: '水中銃', desc: '射程6m・大物も獲れる（要 漁業権）', icon: '<path d="M2 12h14l2-2h4v4h-4l-2-2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 12v5h3v-5z"/>' },
-  { id: 'powerhead', need: 0, rep: 5, req: 'speargun', price: 25000, name: '大物用水中銃', desc: 'サメも仕留められる強力な銃', icon: '<path d="M1 12h15l3-3h4v6h-4l-3-3" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M5 12v6h4v-6z"/>' },
+  { id: 'speargun', need: 0, rep: 3, req: 'license', price: 12000, name: '水中銃', desc: '射程6m・大物も獲れる。突進してくるサメ・縄張りの魚・ライトに寄る魚を、引きつけて突けば撃退できる（要 漁業権）', icon: '<path d="M2 12h14l2-2h4v4h-4l-2-2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 12v5h3v-5z"/>' },
+  { id: 'powerhead', need: 0, rep: 5, req: 'speargun', price: 25000, name: '大物用水中銃', desc: 'サメも仕留められる強力な銃。ダンクルオステウスやメガロドンの突進も、引きつけて突けば撃退できる', icon: '<path d="M1 12h15l3-3h4v6h-4l-3-3" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M5 12v6h4v-6z"/>' },
   { id: 'bigcooler', need: 0, rep: 4, price: 12000, name: '大型クーラー', desc: '獲物を40kgまで持ち帰れる', icon: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M7 7V4h10v3M2 12h20" fill="none" stroke="currentColor" stroke-width="2"/>' },
 ];
 export type GearId = string;
