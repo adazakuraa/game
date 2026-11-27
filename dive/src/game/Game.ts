@@ -2826,6 +2826,8 @@ export class Game {
       },
       baitInfo: () => this.creatures.baitInfo(),
       /** Fix batch 1 (P4-1): the diet the bait system infers for a species id */
+      /** Phase 9 S4: what happens if this species is speared (protected / poison / category) */
+      edible: (id: string) => { const d = SPECIES_BY_ID.get(id); return d ? edibleInfo(d) : undefined; },
       dietOf: (id: string) => { const d = SPECIES_BY_ID.get(id); return d ? dietOf(d) : undefined; },
       placeOcto: (id: string) => {
         const rt = this.creatures.list.find((r) => r.def.id === id);

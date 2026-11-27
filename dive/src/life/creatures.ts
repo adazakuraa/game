@@ -269,6 +269,8 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       uPulse: { value: new THREE.Vector2(...pulse) },
       uGlowCol: { value: glow },
       uGlowAmt: { value: 1 },
+      // Phase 9 S4: eye-only emissive (the estuary's guardian Akame: red eyes caught in the light); 0 for everything else
+      uEyeGlow: { value: new THREE.Color(m.emissive ?? 0x000000) },
       uSheen: { value: m.metal ?? 0.05 },
       uUvAspect: { value: uvAspect },
       uFishSize: { value: def.size },
@@ -381,7 +383,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       #ifdef GLOW_SPIN
         vGlow *= 0.15 + pow( 0.5 + 0.5 * sin( atan( position.z, position.x ) * 2.0 - uTime * 4.0 ), 3.0 ) * 1.6;
       #endif`,
-    fragHead: `uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; varying float vAO; uniform float uSheen; uniform float uUvAspect; uniform float uFishSize;
+    fragHead: `uniform vec3 uEyeGlow; uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; varying float vAO; uniform float uSheen; uniform float uUvAspect; uniform float uFishSize;
       #ifdef FISH_V2
         varying float vScaleV; uniform float uScaleN; uniform float uHalfH; uniform float uBodyLen; uniform float uGillU;
       #endif`,
@@ -451,6 +453,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
         // fin translucency: sunlight scattering through the membrane, strongest at the thin margin
         if ( vFin > 0.5 && vFin < 1.5 ) totalEmissiveRadiance += diffuseColor.rgb * uSunCol * clamp( ( vFin - 1.0 ) / 0.49, 0.0, 1.0 ) * 0.3 * exp( min( vUwPos.y, 0.0 ) / 30.0 );
       }
+      totalEmissiveRadiance += uEyeGlow * step( 1.5, vFin );
       #ifdef RAINBOW
         vec3 hue = 0.5 + 0.5 * cos( 6.2831 * ( vUwPos.y * 4.0 - uTime * 0.9 + vec3( 0.0, 0.33, 0.67 ) ) );
         totalEmissiveRadiance += hue * vGlow * 1.4;
@@ -745,6 +748,7 @@ export class Creatures {
       }
       default: out.set(g.home.x + rnd(-1, 1) * g.roam, 0, g.home.z + rnd(-1, 1) * g.roam);
     }
+    if (SOUTH_REGIONS.has(def.region as string) && heightFast(out.x, out.z) > -0.9) out.set(g.home.x, 0, g.home.z); // Phase 9 S4: never target the bank
     if (b.anchor === 'home') out.y = g.home.y + rnd(b.lo, b.hi);
     else if (b.anchor === 'abs') out.y = rnd(b.lo, b.hi);
     else out.y = Math.min(this.groundY(def, out.x, out.z) + rnd(b.lo, b.hi), -0.8);
@@ -852,6 +856,11 @@ export class Creatures {
         if (def.kind === 'none') a.p.set(VENT.x, heightFast(VENT.x, VENT.z) + 1.5, VENT.z);
       }
       if (def.instColors) a.col = new THREE.Color(def.instColors[Math.floor(r() * def.instColors.length)]);
+      if (SOUTH_REGIONS.has(def.region as string) && def.behavior !== 'static' && def.behavior !== 'buried' && def.behavior !== 'bottom' && def.behavior !== 'crevice') {
+        // Phase 9 S4: a swimmer starts inside the water column of the estuary / river (the first update would do this, but far groups are not stepped yet)
+        const fl = heightFast(a.p.x, a.p.z);
+        a.p.y = Math.min(-0.5, Math.max(a.p.y, fl + Math.max(0.1, a.s * 0.3)));
+      }
       rt.agents.push(a);
     }
     for (const g of rt.groups) rt.bounds.expandByPoint(g.home);
@@ -1743,6 +1752,7 @@ export class Creatures {
           if (!this.habTarget(def, g, g.t)) {
             const rr = g.roam;
             g.t.set(g.home.x + (r() - 0.5) * 2 * rr, g.home.y + (r() - 0.5) * Math.min(rr * 0.4, 6), g.home.z + (r() - 0.5) * 2 * rr);
+            if (SOUTH_REGIONS.has(def.region as string) && heightFast(g.t.x, g.t.z) > -0.9) g.t.set(g.home.x, g.t.y, g.home.z); // Phase 9 S4: never target the bank
           }
         }
         if (def.behavior === 'bottom') {
@@ -1991,7 +2001,14 @@ export class Creatures {
         // keep a minimum cruising speed for pelagics so they never hover
         if (def.behavior === 'pelagic' && vl < def.speed * 0.4) a.v.add(_v2.set(Math.sin(a.yaw), 0, Math.cos(a.yaw)).multiplyScalar(def.speed * 0.4 * dt * 3));
         a.p.addScaledVector(a.v, dt);
-        const gy = this.groundY(def, a.p.x, a.p.z);
+        let gy = this.groundY(def, a.p.x, a.p.z);
+        if (a.p.z < -50 && gy > -0.8) {
+          // Phase 9 S4: the south's banks and flats are land: a fish that drifts onto one is eased back toward its group (the water is never left)
+          const k = Math.min(1, dt * 3);
+          a.p.x += (g.c.x - a.p.x) * k; a.p.z += (g.c.z - a.p.z) * k;
+          a.v.multiplyScalar(0.5);
+          gy = this.groundY(def, a.p.x, a.p.z);
+        }
         const minY = gy + Math.max(0.06, def.behavior === 'bottom' ? this.altitude(def) : def.hab === 'sandForage' ? a.s * 0.15 : a.s * 0.3);
         if (a.p.y < minY) { a.p.y = minY; a.v.y = Math.max(a.v.y, 0); }
         if (a.p.y > -0.4) { a.p.y = -0.4; a.v.y = Math.min(a.v.y, 0); }

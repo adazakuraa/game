@@ -1,5 +1,5 @@
 /**
- * Phase 9 probe (PHASE9-DESIGN §8.1). S3 (scenery + homes) is the last block before the page-error check. S2 (river: depths, flow, air, waterfall, water by position, dive point, Low fixes) is the last block. S0 (world extension + shore) and S1 (estuary terrain, water, dive point):
+ * Phase 9 probe (PHASE9-DESIGN §8.1). S4 (estuary species: 18 species / 14 fish, lagoon 21, the guardian アカメ, exact-name protection and diet, placement, photo targets, dex section) comes before the page-error check. S3 (scenery + homes) is the last block before the page-error check. S2 (river: depths, flow, air, waterfall, water by position, dive point, Low fixes) is the last block. S0 (world extension + shore) and S1 (estuary terrain, water, dive point):
  *   - the shore stops the diver (heightAt stays <= -0.8) and says so; it slides instead of sticking
  *   - the creatures never leave the water in the south; no species lives in the new zones yet
  *   - the chart shows the island as land (green), the margin south of the world is land too
@@ -450,6 +450,111 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
   });
   console.log('  budget (scenery+terrain only)', JSON.stringify(bud));
   check('budget: at E1 / E2 / R1 / R2 / R3 the scenery stays in §6.1 (calls <= 140, triangles <= 350k, shadow pass <= 35 calls / 100k tris)', Object.values(bud).every((b) => b.calls <= 140 && b.tris <= 350000 && b.sCalls <= 35 && b.sTris <= 100000), JSON.stringify(bud));
+
+
+  // ---------------------------------------------------------------- S4: estuary species
+  const EST = ['akame', 'mahaze', 'tobihaze', 'teppouuo', 'gomafuedai', 'minamikurodai', 'shimaisaki', 'hiiragi', 'sappa', 'konoshiro', 'maanago', 'himetsubameuo', 'bora', 'kurohoshimanjuu', 'nokogirigazami', 'shiomaneki', 'yamatoshijimi', 'magaki'];
+  const sp = await ev((ids) => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    const isFish = (d) => d.kind === 'fish' || d.kind === 'ray' || d.kind === 'gardenEel';
+    const list = g.creatures.list.map((r) => r.def);
+    const est = list.filter((d) => d.zone === 'estuary');
+    const river = list.filter((d) => d.zone === 'river');
+    // Phase 5 §6.1 count: a species is native to a zone when >= 80% of its group homes lie in that zone (zoneAt of the point)
+    const native = (zone) => g.creatures.list.filter((r) => isFish(r.def) && r.groups.filter((gr) => h.zoneAt(gr.home.x, gr.home.z) === zone).length >= 0.8 * r.groups.length).map((r) => r.def.id);
+    const akame = list.find((d) => d.id === 'akame');
+    const named = list.filter((d) => d.name.includes('アカメ')).map((d) => d.name + ':' + !!h.edible(d.id)?.protected);
+    const byName = new Map(); for (const d of list) byName.set(d.name, (byName.get(d.name) || 0) + 1);
+    return {
+      estIds: est.map((d) => d.id), estFish: est.filter(isFish).length, riverN: river.length,
+      nativeEst: native('estuary'), nativeLag: native('lagoon'),       missing: ids.filter((i) => !est.some((d) => d.id === i)),
+      akame: { r: akame.rarity, size: akame.size, emissive: akame.mat?.emissive, protectedA: !!h.edible('akame')?.protected, diet: h.dietOf('akame') },
+      named, dupNames: [...byName.entries()].filter(([k, n]) => n > 1 && est.some((d) => d.name === k)).map(([k]) => k),
+      moved: ['bora', 'kurohoshimanjuu'].map((i) => { const d = list.find((x) => x.id === i); return d.zone + ':' + d.region; }),
+      protectedOthers: list.filter((d) => d.id !== 'akame' && h.edible(d.id)?.protected && d.zone === 'estuary').map((d) => d.id),
+      nightOnly: list.filter((d) => d.when === 'night' && d.zone === 'estuary').map((d) => d.id),
+    };
+  }, EST);
+  console.log('  estuary species', JSON.stringify({ n: sp.estIds.length, fish: sp.estFish, nativeEst: sp.nativeEst.length, nativeLag: sp.nativeLag.length, moved: sp.moved }));
+  check('species: 18 estuary species (16 new + bora and kurohoshimanjuu moved from the lagoon), none missing, none in the river yet', sp.estIds.length === 18 && sp.missing.length === 0 && sp.riverN === 0, JSON.stringify(sp.missing));
+  check('species: 14 estuary fish (kind fish / ray / gardenEel)', sp.estFish === 14, `estuary=${sp.estFish}`);
+  check('species: native fish by home zone (Phase 5 §6.1, >= 80% of the groups): estuary >= 10 (target 14), lagoon >= 10', sp.nativeEst.length >= 10 && sp.nativeLag.length >= 10, `estuary=${sp.nativeEst.length} lagoon=${sp.nativeLag.length}`);
+  check('species: bora → estChannel, kurohoshimanjuu → mangrove (ids unchanged)', sp.moved[0] === 'estuary:estChannel' && sp.moved[1] === 'estuary:mangrove', sp.moved.join(','));
+  check('species: アカメ is the guardian (rarity 3, 1.0 m, red eyes via mat.emissive) and is protected; its diet is meat by exact name', sp.akame.r === 3 && sp.akame.size === 1 && sp.akame.emissive > 0 && sp.akame.protectedA && sp.akame.diet === 'meat', JSON.stringify(sp.akame));
+  check('species: protection / diet use exact names — no other species named *アカメ* is protected, no estuary species besides アカメ is protected, and no species name appears twice', sp.named.every((n) => n.startsWith('アカメ:') || n.endsWith(':false')) && sp.protectedOthers.length === 0 && sp.dupNames.length === 0, JSON.stringify({ named: sp.named, others: sp.protectedOthers, dup: sp.dupNames }));
+  check('species: アナゴ is a night-only species (when: night)', sp.nightOnly.join() === 'maanago', sp.nightOnly.join());
+  // placement: every individual under water above the floor, inside its zone, and inside the estuary
+  const pl = await ev(async (ids) => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.input.poll = () => {};
+    // start the creatures near the estuary so the species are built / active, then check initial positions of every agent
+    h.teleport(300, -3, -120);
+    const pos = g.camera.position, dir = g.camera.getWorldDirection(g.tmpDir);
+    for (let i = 0; i < 40; i++) g.creatures.update(0.25, pos, g.vel, dir);
+    const bad = [];
+    for (const id of ids) {
+      const rt = g.creatures.list.find((r) => r.def.id === id);
+      let n = 0, under = 0, inZone = 0, aboveFloor = 0;
+      for (const a of rt.agents) {
+        if (rt.groups[a.g].absent) continue; // hidden groups (day / night presence) are not placed in the water yet
+        n++;
+        const fl = h.heightAt(a.p.x, a.p.z);
+        if (a.p.y < -0.05) under++;
+        if (a.p.y >= fl - 0.05) aboveFloor++;
+        if (h.zoneAt(a.p.x, a.p.z) === 'estuary') inZone++;
+      }
+      if (under < n || aboveFloor < n || inZone < n * 0.7) bad.push(`${id}: n=${n} under=${under} aboveFloor=${aboveFloor} inZone=${inZone}`);
+    }
+    return bad;
+  }, EST);
+  check('placement: every individual of the 18 species is under water, above the floor and (>= 70%, the rest at the mouth) inside the estuary', pl.length === 0, pl.join(' | '));
+  // photo: put each species 2 m from the camera and ask findTarget for it (nocturnal アナゴ: at night, the absent flags cleared)
+  const ph = await ev(async (ids) => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.input.poll = () => {};
+    const out = [];
+    for (const id of ids) {
+      const rt = g.creatures.list.find((r) => r.def.id === id);
+      const a0 = rt.agents[0];
+      h.teleport(a0.p.x + 2, a0.p.y + 0.3, a0.p.z + 2);
+      g.creatures.night = id === 'maanago';
+      for (const gr of rt.groups) gr.absent = false;
+      const pos = g.camera.position, dir = g.camera.getWorldDirection(g.tmpDir);
+      for (let i = 0; i < 12; i++) g.creatures.update(0.25, pos, g.vel, dir);
+      for (const gr of rt.groups) gr.absent = false;
+      rt.active = true;
+      const a = rt.agents[0];
+      const d = Math.max(0.8, Math.min(3, rt.def.size * 10 + 0.5));
+      pos.set(a.p.x + d * 0.8, Math.min(a.p.y + 0.1, -0.7), a.p.z + d * 0.6); a.retract = 0;
+      const dx = a.p.x - pos.x, dy = a.p.y - pos.y, dz = a.p.z - pos.z;
+      g.camera.rotation.order = 'YXZ'; g.camera.rotation.set(Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0);
+      g.camera.updateMatrixWorld();
+      for (const o of g.creatures.list) if (o !== rt) o.active = false; // only this species is a candidate (a fish swimming past would otherwise take the target)
+      let hit = null;
+      for (let k = 0; k < 3 && !hit; k++) {
+        const t = g.creatures.findTarget(g.camera, { clear: 30, dark: false, lightOn: true, cropX: 0.95, cropY: 0.95, macro: true, wide: false });
+        if (t && t.rt.def.id === id) hit = t;
+        else { for (let i = 0; i < 4; i++) g.creatures.update(0.1, pos, g.vel, dir); const b = rt.agents[0]; const ex = b.p.x - pos.x, ey = b.p.y - pos.y, ez = b.p.z - pos.z; g.camera.rotation.set(Math.atan2(ey, Math.hypot(ex, ez)), Math.atan2(-ex, -ez), 0); g.camera.updateMatrixWorld(); }
+      }
+      out.push(hit ? { id, ok: true, reason: hit.reason } : { id, ok: false });
+    }
+    g.creatures.night = false;
+    return out;
+  }, EST);
+  console.log('  photo targets', JSON.stringify(ph.map((p) => p.id + (p.ok ? '' : ':NO'))));
+  check('photo: each of the 18 estuary species can be targeted by findTarget from a short distance', ph.every((p) => p.ok), ph.filter((p) => !p.ok).map((p) => p.id).join(','));
+  // dex: the 河口 heading lists all 18
+  const dx = await ev(async () => {
+    const h = window.__THREE_GAME_TEST_HOOKS__;
+    h.setState('dex'); await new Promise((r) => setTimeout(r, 200));
+    const titles = [...document.querySelectorAll('#dex-grid .dz-title')].map((e) => e.textContent);
+    const i = titles.indexOf('河口');
+    const grids = [...document.querySelectorAll('#dex-grid .dz-grid')];
+    const n = i >= 0 ? grids[i].children.length : -1;
+    document.getElementById('dex-close')?.click();
+    return { titles, n };
+  });
+  check('dex: a 河口 section follows ラグーン and holds 18 cards', dx.titles.indexOf('河口') === dx.titles.indexOf('浅瀬ラグーン') + 1 && dx.n === 18, JSON.stringify(dx));
 
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close(); server.close();
