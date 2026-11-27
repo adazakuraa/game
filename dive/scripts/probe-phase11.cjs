@@ -174,8 +174,8 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     const run = (id, surf, total) => {
       const rt = g.creatures.list.find((r) => r.def.id === id);
       const gr = rt.groups[0], a = rt.agents.find((x) => x.g === 0);
-      // the whole group sits 6 m ahead of the diver so the species is near and active
-      const c = pos.clone().addScaledVector(dir, 6);
+      // the whole group sits 1.3 m ahead of the diver: inside the territory trigger range, so the species is active
+      const c = pos.clone().addScaledVector(dir, 1.3);
       gr.absent = false; gr.c.copy(c); gr.t.copy(c); gr.home.copy(c);
       for (const x of rt.agents) if (x.g === 0) x.p.copy(c).add(x.off);
       g.creatures.update(0.1, pos, g.vel, dir);
@@ -189,7 +189,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
       for (let t = 0; t < total; t += 0.25) {
         g.creatures.update(0.25, pos, g.vel, dir);
         // keep the animal close so the trigger condition stays true all the time
-        for (const x of rt.agents) if (x.g === 0 && !x.taken && x.p.distanceTo(pos) > 9) x.p.copy(pos).addScaledVector(dir, 8);
+        for (const x of rt.agents) if (x.g === 0 && !x.taken && x.p.distanceTo(pos) > 1.6) x.p.copy(pos).addScaledVector(dir, 1.3);
         gr.home.copy(c);
         if (o.againAt === null && (a.mode === 1 || a.mode === 2)) o.againAt = +(t + 0.25).toFixed(2);
       }
@@ -200,9 +200,9 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     return { plain: run('monngara', 1.9, 80), just: run('monngara', 1.0, 140), ctrl: (() => {
       // control: the same animal never repelled gets aggro again quickly
       const rt = g.creatures.list.find((r) => r.def.id === 'monngara'), a = rt.agents.find((x) => x.g === 0);
-      a.aggro = true; a.mode = 0; a.modeT = 0; a.repelT = 0;
+      a.aggro = true; a.mode = 0; a.modeT = 0; a.repelT = 0; a.taken = false;
       let at = null;
-      for (let t = 0; t < 12; t += 0.25) { g.creatures.update(0.25, pos, g.vel, dir); if (at === null && (a.mode === 1 || a.mode === 2)) at = t; }
+      for (let t = 0; t < 12; t += 0.25) { g.creatures.update(0.25, pos, g.vel, dir); for (const x of rt.agents) if (x.g === 0 && x.p.distanceTo(pos) > 1.6) x.p.copy(pos).addScaledVector(dir, 1.3); if (at === null && (a.mode === 1 || a.mode === 2)) at = t; }
       g.creatures.events.length = 0;
       return { againAt: at };
     })() };
