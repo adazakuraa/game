@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { UW } from '../render/underwater';
 import { makeBubble } from '../render/textures';
 import { SHADOW } from '../game/render';
-import { heightAt, zoneAt, type ZoneId } from './layout';
+import { heightAt, riverDist, WATERFALL, zoneAt, type ZoneId } from './layout';
 import { clamp, lerp, mulberry32, smoothstep } from '../utils/noise';
 
 export const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
@@ -21,7 +21,15 @@ export const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
   kelp: [0.03, 0.2, 0.19, 30],
   // Phase 9: estuary = tea-green, 16 m (BR: real estuaries see 1-3 m; exaggerated for a photo game). River: S2 tunes it.
   estuary: [0.05, 0.17, 0.13, 16],
-  river: [0.03, 0.2, 0.2, 24],
+  river: [0.04, 0.205, 0.17, 26],
+};
+
+/** Phase 9 S2 (§3.2): the river's water clears towards upstream (t 0 = mouth end -> 1 = waterfall); only read while the zone is river.
+ * Near the waterfall (<= foam.r m) white foam whitens the fog and cuts the visibility. */
+export const RIVER_WATER = {
+  down: [0.05, 0.19, 0.14, 18] as [number, number, number, number],
+  up: [0.03, 0.22, 0.2, 34] as [number, number, number, number],
+  foam: { r: 8, color: [0.5, 0.6, 0.6] as [number, number, number], maxMix: 0.25, maxVisCut: 0.4 },
 };
 
 /** Phase 9 S1 (CB): the estuary's salt wedge, expressed with fog only. Above 1.8 m the water is the river's, below it the sea's;
@@ -55,6 +63,11 @@ export class Environment {
   private wedgeK = 0;
   /** the fog-density multiplier of the salt wedge's boundary layer (1 elsewhere); read by tests */
   wedgeBump = 1;
+  /** river position t (0..1) of the camera while in the river zone, else 0; and the waterfall foam's strength (0..1); read by tests */
+  riverT = 0;
+  foamK = 0;
+  /** the point-sprite scale uniform (shared with other point clouds) */
+  get pointScale(): { value: number } { return this.snowMat.uniforms.uScale as { value: number }; }
   lightOn = false;
   lightPower = 1;
   /** the day's weather (Phase 4): sunlight multiplier and haze multiplier, set by the game */
@@ -323,7 +336,19 @@ export class Environment {
     UW.uCamY.value = cp.y;
 
     const zone = zoneAt(cp.x, cp.z);
-    const zw = ZONE_WATER[zone];
+    let zw = ZONE_WATER[zone];
+    let foam = 0;
+    this.riverT = 0;
+    if (zone === 'river') {
+      const rv = riverDist(cp.x, cp.z);
+      this.riverT = rv.t;
+      const tt = smoothstep(0, 1, rv.t);
+      const A = RIVER_WATER.down, B = RIVER_WATER.up;
+      zw = [lerp(A[0], B[0], tt), lerp(A[1], B[1], tt), lerp(A[2], B[2], tt), lerp(A[3], B[3], tt)];
+      const wd = Math.hypot(cp.x - WATERFALL.x, cp.z - WATERFALL.z);
+      foam = 1 - smoothstep(0, RIVER_WATER.foam.r, wd);
+    }
+    this.foamK = foam;
     const k = 1 - Math.exp(-dt * 0.6);
     this.smoothedZone.x = lerp(this.smoothedZone.x, zw[0], k);
     this.smoothedZone.y = lerp(this.smoothedZone.y, zw[1], k);
@@ -336,10 +361,11 @@ export class Environment {
     const ws = smoothstep(W.depth - W.half, W.depth + W.half, depth);
     const wk = this.wedgeK;
     const base = ZONE_WATER.estuary;
-    const zr = this.smoothedZone.x + wk * (lerp(W.upper[0], W.lower[0], ws) - base[0]);
-    const zg = this.smoothedZone.y + wk * (lerp(W.upper[1], W.lower[1], ws) - base[1]);
-    const zb = this.smoothedZone.z + wk * (lerp(W.upper[2], W.lower[2], ws) - base[2]);
-    const zv = this.smoothedZone.w + wk * (lerp(W.upper[3], W.lower[3], ws) - base[3]);
+    const fm = RIVER_WATER.foam, fk = foam * fm.maxMix;
+    const zr = lerp(this.smoothedZone.x + wk * (lerp(W.upper[0], W.lower[0], ws) - base[0]), fm.color[0], fk);
+    const zg = lerp(this.smoothedZone.y + wk * (lerp(W.upper[1], W.lower[1], ws) - base[1]), fm.color[1], fk);
+    const zb = lerp(this.smoothedZone.z + wk * (lerp(W.upper[2], W.lower[2], ws) - base[2]), fm.color[2], fk);
+    const zv = (this.smoothedZone.w + wk * (lerp(W.upper[3], W.lower[3], ws) - base[3])) * (1 - fm.maxVisCut * foam);
     this.wedgeBump = 1 + (W.bump - 1) * wk * Math.exp(-(((depth - W.depth) / (W.half * 0.75)) ** 2));
 
     // water color darkens with depth, red and green absorbed first

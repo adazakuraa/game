@@ -366,7 +366,7 @@ function estuaryCarve(x: number, z: number): number {
   return h;
 }
 
-/** Phase 9: replaces the sea floor with land to the south; the estuary is carved into it (the river comes in S2) */
+/** Phase 9: replaces the sea floor with land to the south; the estuary and the river are carved into it */
 function southTerrain(x: number, z: number, h: number): number {
   const w = smoothstep(-70, -95, z);
   // w = 0 (-70 < z < -60) keeps the old clamp: without it the cold cove's raw
@@ -374,18 +374,89 @@ function southTerrain(x: number, z: number, h: number): number {
   let r = w > 0 ? lerp(h, landTopAt(x, z), w) : Math.min(h, -0.9);
   const e = estuaryCarve(x, z);
   if (e < r) r = lerp(r, e, smoothstep(-60, -74, z));
+  if (z < RIVER_ZMAX) {
+    // Phase 9 S2: the river is carved into the land (it opens the estuary's closed head); the waterfall's cliff closes its end
+    const rc = riverCarve(x, z);
+    if (rc < r) r = rc;
+    const cl = cliffAt(x, z);
+    if (cl > r) r = cl;
+  }
   return r;
 }
 
+
+// ---- Phase 9 S2: the river (PHASE9-DESIGN §1.2・§3)
+/** centre line, downstream -> upstream: [x, z, half-width, depth]. Depth 1.5–2.2 = riffle (瀬), 4–7 = pool (淵). The last point is the plunge pool. */
+export const RIVER_PATH: [number, number, number, number][] = [
+  [320, -300, 11, 4.5], [300, -340, 10, 5], [272, -380, 9, 3], [256, -420, 8, 1.6], [270, -460, 9, 5.5],
+  [300, -500, 7, 1.5], [292, -540, 8, 4], [252, -575, 7, 2.2], [226, -608, 9, 7], [216, -631, 9, 7],
+];
+/** the waterfall (落差 h above the water), at the upstream end; the fall's plane lies on the cliff ramp z = -634 .. -638 */
+export const WATERFALL = { x: 215, z: -635, h: 6, rampZ0: -634, rampLen: 4 };
+/** river terrain exists north of this z only (cheap early-out) */
+const RIVER_ZMAX = -285;
+/** below this depth (m) the water carries the diver; at the surface nothing pushes (same for the estuary and the river) */
+export const FLOW_MIN_DEPTH = 0.5;
+export type RiverInfo = { d: number; w: number; D: number; t: number; tx: number; tz: number };
+const riverTmp: RiverInfo = { d: 0, w: 0, D: 0, t: 0, tx: 0, tz: -1 };
+/** Distance from (x, z) to the river's centre line plus the interpolated half-width, depth, position t (0..1) and the downstream tangent. Shared object: copy what you keep. */
+export function riverDist(x: number, z: number, out: RiverInfo = riverTmp): RiverInfo {
+  let best = 1e9;
+  const n = RIVER_PATH.length - 1;
+  for (let i = 0; i < n; i++) {
+    const [ax, az, aw, aD] = RIVER_PATH[i], [bx, bz, bw, bD] = RIVER_PATH[i + 1];
+    const dx = bx - ax, dz = bz - az;
+    const u = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+    const d = Math.hypot(x - (ax + dx * u), z - (az + dz * u));
+    if (d < best) {
+      best = d; out.d = d; out.w = lerp(aw, bw, u); out.D = lerp(aD, bD, u); out.t = (i + u) / n;
+      const L = Math.hypot(dx, dz); out.tx = -dx / L; out.tz = -dz / L; // downstream = towards the path's start
+    }
+  }
+  return out;
+}
+const riverBox = (x: number, z: number) => z < RIVER_ZMAX && z > -660 && x > 180 && x < 350;
+/** 0..1: inside the river's water (0 on the bank, 0 north of the head where the estuary takes over) */
+export function riverWeight(x: number, z: number): number {
+  if (!riverBox(x, z)) return 0;
+  const r = riverDist(x, z);
+  return (1 - smoothstep(0.85, 1.0, r.d / r.w)) * smoothstep(-292, -300, z);
+}
+/** The floor the river wants (positive = bank). Pool cross-section -D (1 - (d/w)^2)^0.7, then the bank rises 3 m to +2.4 m. */
+function riverCarve(x: number, z: number): number {
+  if (!riverBox(x, z)) return 4;
+  const r = riverDist(x, z);
+  if (r.d >= r.w + 3) return 4;
+  if (r.d < r.w) return -r.D * Math.pow(1 - (r.d / r.w) ** 2, 0.7);
+  return lerp(0, 2.4, smoothstep(r.w, r.w + 3, r.d));
+}
+/** the cliff behind the waterfall: a 6.5 m ramp (4 m long) closing the plunge pool, a plateau beyond */
+function cliffAt(x: number, z: number): number {
+  if (z > WATERFALL.rampZ0 || x < 180 || x > 250) return -99;
+  return (WATERFALL.h + 0.5) * clamp((WATERFALL.rampZ0 - z) / WATERFALL.rampLen, 0, 1) * (1 - smoothstep(20, 32, Math.abs(x - WATERFALL.x)));
+}
+
 /**
- * Phase 9 S1: water flow (m/s, horizontal) at (x, z). Only the estuary's channel flows so far: a weak 0.15 m/s seaward (+z).
- * The river's flow and the diver's strong drift come with S2.
+ * Water flow (m/s, horizontal) at (x, z). Estuary channel: 0.15 m/s seaward (+z, S1). River (S2, §3.3): downstream along the
+ * centre line, v = 0.35 (3.5 / D) clamped to 0.2–0.8 m/s (riffles fast, pools slow), slower towards the banks, half-speed within
+ * 0.5 m of the floor when y is given; within 6 m of the waterfall the plunge pool pushes 0.6 m/s away from it.
  */
-export function flowAt(x: number, z: number, out: { x: number; z: number }): void {
+export function flowAt(x: number, z: number, out: { x: number; z: number }, y?: number): void {
   out.x = 0; out.z = 0;
   const ew = estuaryWeight(x, z);
-  if (ew <= 0) return;
-  out.z = 0.15 * ew * (1 - smoothstep(0.15, 0.28, estuaryU(x, z)));
+  if (ew > 0) out.z = 0.15 * ew * (1 - smoothstep(0.15, 0.28, estuaryU(x, z)));
+  if (!riverBox(x, z)) return;
+  const r = riverDist(x, z);
+  if (r.d >= r.w) return;
+  const v = clamp(0.35 * (3.5 / r.D), 0.2, 0.8) * (1 - (r.d / r.w) ** 2) * smoothstep(-290, -302, z);
+  let fx = r.tx * v, fz = r.tz * v;
+  const wd = Math.hypot(x - WATERFALL.x, z - WATERFALL.z);
+  if (wd < 6) {
+    const k = 0.6 * (1 - wd / 6);
+    fx += ((x - WATERFALL.x) / Math.max(wd, 0.1)) * k; fz += ((z - WATERFALL.z) / Math.max(wd, 0.1)) * k;
+  }
+  if (y !== undefined && y - heightAt(x, z) < 0.5) { fx *= 0.5; fz *= 0.5; }
+  out.x += fx; out.z += fz;
 }
 
 /** Height of reef "bommies" above the surrounding reef flat (0 outside the reef). */
@@ -397,7 +468,11 @@ export function bommieAt(x: number, z: number): number {
 }
 
 export function zoneAt(x: number, z: number): ZoneId {
-  if (z < -45 && estuaryWeight(x, z) > 0.5) return 'estuary';
+  // the estuary's zone starts where its terrain does (z < -60; the lagoon's terrain is untouched north of that), then the river
+  if (z < -60) {
+    if (estuaryWeight(x, z) > 0.5) return 'estuary';
+    if (riverWeight(x, z) > 0.5) return 'river';
+  }
   if (coldWeight(x, z) > 0.5) return 'cold';
   if (kelpWeight(x, z) > 0.5) return 'kelp';
   if (blueWeight(x, z) > 0.5) return 'bluehole';
@@ -497,6 +572,25 @@ export function bottomMaterial(x: number, z: number, slope: number, out: number[
       sand *= 1 - Math.max(mud, bank) * 0.85;
     }
   }
+  // Phase 9 S2: river bed — sand and mud downstream, gravel and pebbles in the middle reach, bare rock upstream
+  if (riverBox(x, z)) {
+    const rv = riverDist(x, z);
+    const rw = 1 - smoothstep(1.0, 1.35, rv.d / rv.w);
+    if (rw > 0) {
+      const lowT = 1 - smoothstep(0.3, 0.4, rv.t), upT = smoothstep(0.7, 0.8, rv.t), midT = Math.max(0, 1 - lowT - upT);
+      const edge = smoothstep(0.55, 0.95, rv.d / rv.w);
+      const bank = smoothstep(-0.9, -0.2, h);
+      const mix = (cr: number, cg: number, cb: number, k: number) => { r = lerp(r, cr, k); g = lerp(g, cg, k); b = lerp(b, cb, k); };
+      mix(0.42 + 0.05 * n, 0.36 + 0.05 * n, 0.26 + 0.04 * n, rw * lowT * (1 - edge));
+      mix(0.27 + 0.04 * n, 0.21 + 0.04 * n, 0.14 + 0.03 * n, rw * lowT * edge);
+      const peb = 0.5 + 0.5 * n2;
+      mix(0.44 + 0.1 * peb, 0.41 + 0.09 * peb, 0.36 + 0.08 * peb, rw * midT);
+      mix(0.35 + 0.05 * n, 0.34 + 0.05 * n, 0.32 + 0.04 * n, rw * upT);
+      mix(0.3, 0.26, 0.15, rw * bank);
+      sand *= 1 - rw * (lowT * 0.3 + midT * 0.75 + upT * 0.95);
+      rockHard = Math.max(rockHard, rw * (midT * (0.4 + 0.15 * n2) + upT * 0.9));
+    }
+  }
   out[0] = r;
   out[1] = g;
   out[2] = b;
@@ -527,6 +621,7 @@ export const DIVE_POINTS: DivePoint[] = [
   { id: 'cave', name: '水中洞窟', sub: '水深 22–28m・セノーテから暗い洞窟へ（ライト必須）', x: -330, z: 850 },
   { id: 'kelp', name: '海藻の森', sub: '水深 9–20m・水面まで伸びるジャイアントケルプの森', x: 330, z: 120 },
   { id: 'estuary', name: '河口', sub: '水深 1–9m・マングローブと干潟。川の水と海の水が混ざる', x: 300, z: -110, yaw: 0 },
+  { id: 'river', name: '川', sub: '水深 1–7m・瀬と淵。流れに逆らって上流の滝へ', x: 300, z: -340, yaw: 0 },
   { id: 'deep', name: '深海', sub: '水深 170–430m・大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },
 ];
 
