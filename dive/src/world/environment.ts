@@ -345,8 +345,12 @@ export class Environment {
       const tt = smoothstep(0, 1, rv.t);
       const A = RIVER_WATER.down, B = RIVER_WATER.up;
       zw = [lerp(A[0], B[0], tt), lerp(A[1], B[1], tt), lerp(A[2], B[2], tt), lerp(A[3], B[3], tt)];
-      const wd = Math.hypot(cp.x - WATERFALL.x, cp.z - WATERFALL.z);
-      foam = 1 - smoothstep(0, RIVER_WATER.foam.r, wd);
+    }
+    // Phase 9 S6 (S2 review Low-2): the foam follows the river's own width (d < w), not the zone label — at the plunge
+    // pool's rim zoneAt flips for a moment and the visibility cut used to vanish there.
+    if (cp.z < -60) {
+      const rf = riverDist(cp.x, cp.z);
+      if (rf.d < rf.w) foam = 1 - smoothstep(0, RIVER_WATER.foam.r, Math.hypot(cp.x - WATERFALL.x, cp.z - WATERFALL.z));
     }
     this.foamK = foam;
     const k = 1 - Math.exp(-dt * 0.6);

@@ -24,6 +24,8 @@ const ZONE_LABELS = [
   { x: 300, z: 610, label: 'ブルーホール', id: 'bluehole' },
   { x: -330, z: 900, label: '水中洞窟', id: 'cave' },
   { x: 330, z: 220, label: '海藻の森', id: 'kelp' },
+  { x: 300, z: -160, label: '河口', id: 'estuary' },
+  { x: 262, z: -470, label: '川', id: 'river' },
 ];
 
 /**

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Creatures } from '../life/creatures';
-import { heightAt } from '../world/layout';
+import { heightAt, riverDist } from '../world/layout';
 import { SCENES, type SceneId } from './story';
 
 /** Fixed places for the sights the story points to; the others happen near where the diver goes in. */
@@ -9,6 +9,9 @@ export const SCENE_AT: Partial<Record<SceneId, { x: number; z: number; r: number
   whalesleep: { x: 14, z: 590, r: 30 },
   // the reef flat: coral heads release their bundles together
   spawning: { x: -30, z: 225, r: 55 },
+  // Phase 9: a driftwood pile deep in the estuary channel (night) and a riffle of the river (day)
+  akameeyes: { x: 318, z: -240, r: 25 },
+  ayurun: { x: 258, z: -420, r: 25 },
 };
 
 type Pose = { p: THREE.Vector3; yaw: number; pitch: number; s?: number; still?: boolean; k?: number[] };
@@ -236,6 +239,20 @@ export class Scenes {
           case 'whaleshark':
             p.yaw = Math.sin(T * 0.1) * 0.3;
             return;
+          case 'akameeyes': // one fish hanging in the shade of the driftwood, facing the diver's way in
+            p.p.set(c.x + 1.2, Math.min(-1.2, c.y + 1.3), c.z + 1.5);
+            p.yaw = Math.PI * 0.05; p.pitch = 0;
+            return;
+          case 'ayurun': { // a loose shoal holding against the current over the riffle, facing upstream
+            const rv = riverDist(c.x, c.z);
+            const ux = -rv.tx, uz = -rv.tz; // upstream
+            const al = (k[0] - 0.5) * 9 + Math.sin(T * 0.5 + i) * 0.4;
+            const cr = (k[1] - 0.5) * 7;
+            const x = c.x + ux * al - uz * cr, z = c.z + uz * al + ux * cr;
+            p.p.set(x, Math.min(-0.8, heightAt(x, z) + 0.45 + k[2] * 0.4), z);
+            p.yaw = Math.atan2(ux, uz); p.pitch = 0;
+            return;
+          }
           default:
             return;
         }

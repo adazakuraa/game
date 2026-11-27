@@ -149,7 +149,7 @@ function check(name, ok, detail = '') {
   await ev(() => window.__THREE_GAME_TEST_HOOKS__.setState('reef'));
   await page.waitForTimeout(1500);
   const chestList = await ev(() => window.__THREE_GAME_TEST_HOOKS__.chests());
-  check('chests: 10 placed', chestList.length === 10, chestList.map((c) => c.id).join(','));
+  check('chests: 12 placed (10 + Phase 9 estuary and river)', chestList.length === 12, chestList.map((c) => c.id).join(','));
   const bh = chestList.find((c) => c.id === 'c_bluehole');
   check('chests: blue-hole chest above the scuba limit', !!bh && bh.y > -57, `y=${bh?.y?.toFixed(1)}`);
   const flow = await ev(() => {
@@ -183,7 +183,7 @@ function check(name, ok, detail = '') {
     // mark every sight as photographed by way of the scenes the game knows
     const before = g.save.money ?? 0;
     g.save.scenes = g.save.scenes ?? {};
-    for (const id of ['whalesleep', 'spawning', 'baitball', 'mantatrain', 'whaleshark', 'humpback', 'dolphins', 'hammers', 'noctiluca', 'orcas', 'tornado', 'mantanight', 'lanternrise', 'flashlight']) g.save.scenes[id] = { photo: '', t: 0 };
+    for (const id of ['whalesleep', 'spawning', 'baitball', 'mantatrain', 'whaleshark', 'humpback', 'dolphins', 'hammers', 'noctiluca', 'orcas', 'tornado', 'mantanight', 'lanternrise', 'flashlight', 'akameeyes', 'ayurun']) g.save.scenes[id] = { photo: '', t: 0 };
     h.openChest('c_lagoon');
     return (g.save.money ?? 0) - before;
   });

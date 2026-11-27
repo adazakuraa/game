@@ -1,5 +1,5 @@
 /**
- * Phase 9 probe (PHASE9-DESIGN §8.1). S5 (river species: 24 species / 19 fish, exact-name protection and diet, triangle limits, placement, upstream-facing fish, territorial ayu, photo targets, dex section) comes right after S4. S4 (estuary species: 18 species / 14 fish, lagoon 21, the guardian アカメ, exact-name protection and diet, placement, photo targets, dex section) comes before the page-error check. S3 (scenery + homes) is the last block before the page-error check. S2 (river: depths, flow, air, waterfall, water by position, dive point, Low fixes) is the last block. S0 (world extension + shore) and S1 (estuary terrain, water, dive point):
+ * Phase 9 probe (PHASE9-DESIGN §8.1). S6 (system integration: Low-1/Low-2 fixes, river spear ban, kitchen pool, found-box charts, board requests, photo spots, chests, sights) comes right before the page-error check. S5 (river species: 24 species / 19 fish, exact-name protection and diet, triangle limits, placement, upstream-facing fish, territorial ayu, photo targets, dex section) comes right after S4. S4 (estuary species: 18 species / 14 fish, lagoon 21, the guardian アカメ, exact-name protection and diet, placement, photo targets, dex section) comes before the page-error check. S3 (scenery + homes) is the last block before the page-error check. S2 (river: depths, flow, air, waterfall, water by position, dive point, Low fixes) is the last block. S0 (world extension + shore) and S1 (estuary terrain, water, dive point):
  *   - the shore stops the diver (heightAt stays <= -0.8) and says so; it slides instead of sticking
  *   - the creatures never leave the water in the south; no species lives in the new zones yet (S0 only; S4 and S5 add them)
  *   - the chart shows the island as land (green), the margin south of the world is land too
@@ -712,6 +712,162 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     return { titles, n };
   });
   check('dex: a 川 section follows 河口 and holds 24 cards', rdx.titles.indexOf('川') === rdx.titles.indexOf('河口') + 1 && rdx.n === 24, JSON.stringify(rdx));
+
+
+  // ---------------------------------------------------------------- S6: system integration
+  // Low-1: swimming against the flow costs air in the river zone only (not the estuary's 0.15 m/s), whatever the flow speed
+  const low1 = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.input.poll = () => {};
+    const run = (x, z) => {
+      h.teleport(x, -2.5, z);
+      const f = h.flowAt(x, z, -2.5), m = Math.hypot(f.x, f.z) || 1;
+      g.input.moveX = 0; g.input.moveY = 0;
+      g.vel.set(-f.x / m * 1.5, 0, -f.z / m * 1.5);
+      g.updateDiver(0.05);
+      return { zone: h.zoneAt(x, z), flow: +m.toFixed(2), air: +g.flowAir.toFixed(3) };
+    };
+    return { est: run(300, -150), riv: run(272, -380), slow: run(270, -460) };
+  });
+  console.log('  low-1', JSON.stringify(low1));
+  check('Low-1: against the flow the air factor is 1 in the estuary (0.15 m/s) and > 1 in the river (any river flow, not only > 0.3 m/s)', low1.est.air === 1 && low1.est.zone === 'estuary' && low1.riv.zone === 'river' && low1.riv.air > 1 && low1.slow.air > 1, JSON.stringify(low1));
+  // Low-2: the fall's foam follows the river's width (riverDist.d < w), not the zone label
+  const low2 = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game, env = g.env;
+    let inW = 0, inWOk = 0, outW = 0, outWOk = 0, offLabel = 0, offLabelOk = 0;
+    for (let x = 195; x <= 236; x += 1) for (let z = -660; z <= -618; z += 1) {
+      const wd = Math.hypot(x - 215, z + 635);
+      if (wd > 7 || h.heightAt(x, z) > -1) continue;
+      const r = h.riverDist(x, z);
+      g.camera.position.set(x, -2.5, z);
+      for (let i = 0; i < 2; i++) env.update(0.5, g.camera, g.renderer, 10 + i);
+      if (r.d < r.w) { inW++; if (env.foamK > 0) inWOk++; if (h.zoneAt(x, z) !== 'river') { offLabel++; if (env.foamK > 0) offLabelOk++; } }
+      else { outW++; if (env.foamK === 0) outWOk++; }
+    }
+    return { inW, inWOk, outW, outWOk, offLabel, offLabelOk };
+  });
+  console.log('  low-2', JSON.stringify(low2));
+  check('Low-2: foam is on for every underwater point within 7 m of the fall that is inside the river (d < w), including where zoneAt is not river, and off outside it', low2.inW > 50 && low2.inW === low2.inWOk && low2.outW === low2.outWOk && low2.offLabel === low2.offLabelOk, JSON.stringify(low2));
+
+  // spear: hidden in the river (once-only toast, tool forced to camera), shown in the estuary
+  const spear = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game, btn = document.getElementById('btn-tool');
+    g.input.poll = () => {};
+    g.save.owned = [...new Set([...(g.save.owned ?? []), 'spear'])];
+    g.ads = false;
+    const step = (x, z) => { h.teleport(x, -2.5, z); g.input.moveX = 0; g.input.moveY = 0; g.vel.set(0, 0, 0); g.updateDiver(0.05); };
+    step(300, -150); // estuary
+    const est1 = !btn.classList.contains('hidden');
+    g.input.press('tool'); g.updateDiver(0.05); // pressing the button in the estuary swaps to the spear
+    const estTool = g.tool;
+    g.setTool('camera');
+    document.getElementById('toast').textContent = '';
+    g.riverToasted = false;
+    g.setTool('spear');
+    step(272, -380); // river
+    const riv = btn.classList.contains('hidden');
+    const rivTool = g.tool;
+    const toast1 = document.getElementById('toast').textContent;
+    g.input.press('tool'); g.updateDiver(0.05); // the button press does nothing in the river
+    const rivTool2 = g.tool;
+    step(300, -150); // back to the estuary
+    const est2 = !btn.classList.contains('hidden');
+    g.setTool('camera');
+    return { est1, estTool, riv, rivTool, rivTool2, est2, toast1 };
+  });
+  console.log('  spear', JSON.stringify(spear));
+  check('spear: the button shows in the estuary (and swaps tools), hides in the river (tool forced back to camera, toast), returns in the estuary', spear.est1 && spear.estTool === 'spear' && spear.riv && spear.rivTool === 'camera' && spear.rivTool2 === 'camera' && spear.est2 && /川では銛は使えない/.test(spear.toast1), JSON.stringify(spear));
+
+  // kitchen: no river species in the order pool; estuary species can be ordered
+  const pool = await ev(() => window.__THREE_GAME_TEST_HOOKS__.orderPool());
+  const pz = {}; for (const p of pool) pz[p.zone] = (pz[p.zone] || 0) + 1;
+  check('kitchen: the order pool holds no river species and does hold estuary species', !pz.river && (pz.estuary ?? 0) > 0, JSON.stringify(pz));
+
+  // charts from found boxes: only maps with creatures
+  const cc = await ev(() => { const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game; const saved = g.save.discovered; g.save.discovered = ['lagoon']; const out = h.chartCandidates(); g.save.discovered = saved; return out; });
+  check('found-box charts: unknown maps with species only (estuary and river included)', cc.includes('estuary') && cc.includes('river') && cc.length >= 10, cc.join(','));
+
+  // board requests: the estuary and the river come up, and the circle is in the water
+  const bq = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__;
+    const known = ['lagoon', 'reef', 'rocky', 'dropoff', 'kelp', 'cold', 'ruins', 'estuary', 'river'];
+    const kinds = {}; let n = 0; const bad = [];
+    for (let seed = 1; seed <= 600; seed++) {
+      const q = h.makeQuest(known, seed);
+      if (!q || (q.zone !== 'estuary' && q.zone !== 'river')) continue;
+      n++; kinds[q.zone + ':' + q.kind] = (kinds[q.zone + ':' + q.kind] || 0) + 1;
+      if (q.kind === 'trash') {
+        const hh = h.heightAt(q.x, q.z);
+        if (hh > (q.zone === 'estuary' ? -1.5 : -1.2) || h.zoneAt(q.x, q.z) !== q.zone) bad.push([q.zone, +q.x.toFixed(1), +q.z.toFixed(1), +hh.toFixed(2)]);
+      }
+    }
+    return { n, kinds, bad: bad.slice(0, 3), nbad: bad.length };
+  });
+  console.log('  board', JSON.stringify(bq));
+  check('board: estuary/river requests appear (survey, photo, trash) and trash circles are in water of their own zone', ['estuary', 'river'].every((z) => bq.kinds[z + ':trash'] > 0 && bq.kinds[z + ':survey'] > 0 && bq.kinds[z + ':photo'] > 0) && bq.nbad === 0, JSON.stringify(bq));
+
+  // photo spots, chests
+  const s6c = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    const spots = h.spots().filter((s) => s.id === 'mangrove' || s.id === 'waterfall').map((s) => ({ id: s.id, x: Math.round(s.x), y: +s.y.toFixed(1), z: Math.round(s.z), water: h.heightAt(s.x, s.z) < -0.9, zone: h.zoneAt(s.x, s.z) }));
+    const chests = h.chests().filter((c) => c.id === 'c_estuary' || c.id === 'c_river').map((c) => ({ id: c.id, x: Math.round(c.x), z: Math.round(c.z), floor: +h.heightAt(c.x, c.z).toFixed(1), zone: h.zoneAt(c.x, c.z) }));
+    g.save.chests = (g.save.chests ?? []).filter((id) => id !== 'c_estuary' && id !== 'c_river');
+    g.save.money = 0; g.save.sceneHints = []; g.save.scenes = {};
+    h.openChest('c_estuary'); h.openChest('c_estuary'); h.openChest('c_river'); h.openChest('c_river');
+    return { spots, chests, opened: (g.save.chests ?? []).filter((id) => id === 'c_estuary' || id === 'c_river'), hints: g.save.sceneHints };
+  });
+  console.log('  spots/chests', JSON.stringify(s6c));
+  check('spots: mangrove (estuary) and waterfall (river) lie in the water of their own zones', s6c.spots.length === 2 && s6c.spots.every((s) => s.water && s.zone === (s.id === 'mangrove' ? 'estuary' : 'river')), JSON.stringify(s6c.spots));
+  check('chests: one each in the estuary and the river, on the floor of their zone; each opens once and names its own map\'s sight', s6c.chests.length === 2 && s6c.chests.every((c) => c.floor < -1 && c.zone === (c.id === 'c_estuary' ? 'estuary' : 'river')) && s6c.opened.length === 2 && s6c.hints.length === 2 && s6c.hints.includes('akameeyes') && s6c.hints.includes('ayurun'), JSON.stringify(s6c));
+  const s6p = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    const out = {}, reshot = {};
+    g.input.poll = () => {};
+    g.tut.step = -1;
+    g.save.spots = (g.save.spots ?? []).filter((id) => id !== 'mangrove' && id !== 'waterfall');
+    g.pendingSpots.clear(); g.bonuses = [];
+    for (const s of h.spots().filter((q) => q.id === 'mangrove' || q.id === 'waterfall')) {
+      let hit = false;
+      for (let k = 0; k < 24 && !hit; k++) {
+        const az = k * Math.PI / 12, d = 6;
+        const px = s.x + d * Math.cos(az), pz = s.z + d * Math.sin(az);
+        if (h.heightAt(px, pz) > -1.2) continue;
+        h.teleport(px, Math.min(-1.5, Math.max(s.y, h.heightAt(px, pz) + 1.2)), pz);
+        const dx = s.x - px, dy = s.y - g.camera.position.y, dz = s.z - pz;
+        g.camera.rotation.order = 'YXZ'; g.camera.rotation.set(Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0); g.camera.updateMatrixWorld();
+        hit = g.spotShot('', false) === true && g.pendingSpots.has(s.id);
+      }
+      out[s.id] = hit;
+      if (hit) g.spotShot('', false); // the same spot again: no second pay
+    }
+    const pays = g.bonuses.filter((b) => /写真スポット/.test(b.label)).map((b) => b.value);
+    return { out, pays };
+  });
+  console.log('  spot shots', JSON.stringify(s6p));
+  check('spots: each of the two pays its first shot once (¥600 / ¥800) and a second shot pays nothing', s6p.out.mangrove && s6p.out.waterfall && s6p.pays.length === 2 && s6p.pays.includes(600) && s6p.pays.includes(800), JSON.stringify(s6p));
+
+  // sights: staged inside the water (night: one fish with the glowing eyes; day: the shoal facing upstream)
+  const stage = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.input.poll = () => {};
+    const out = {};
+    const scenes = g.scenes;
+    for (const [id, star, n] of [['akameeyes', 'akame', 1], ['ayurun', 'ayu', 40]]) {
+      h.teleport(id === 'ayurun' ? 258 : 318, -2, id === 'ayurun' ? -410 : -230);
+      scenes.start([id], g.camera.position.clone());
+      const rt = g.creatures.list.find((r) => r.def.id === star);
+      const poses = g.creatures.stage.get(star) ?? [];
+      for (let i = 0; i < 4; i++) scenes.update(0.25, id === 'akameeyes' ? 1 : 0, g.camera.position, 0);
+      let wet = 0; for (const p of poses) if (p.p.y < -0.7 && p.p.y > h.heightAt(p.p.x, p.p.z) + 0.05) wet++;
+      let up = 0;
+      if (id === 'ayurun') { for (const p of poses) { const f = h.flowAt(p.p.x, p.p.z, p.p.y), m = Math.hypot(f.x, f.z) || 1; up += Math.acos(Math.max(-1, Math.min(1, Math.sin(p.yaw) * -f.x / m + Math.cos(p.yaw) * -f.z / m))) * 180 / Math.PI; } up = poses.length ? up / poses.length : 999; }
+      out[id] = { n: poses.length, want: Math.min(n, rt ? rt.agents.length : 0), wet, up: +up.toFixed(1) };
+      scenes.stop();
+    }
+    return out;
+  });
+  console.log('  stage', JSON.stringify(stage));
+  check('sights: アカメの赤い目 (1 fish) and アユの群れ (40 fish, facing upstream within 45°) are staged under water', stage.akameeyes.n === 1 && stage.akameeyes.wet === 1 && stage.ayurun.n === stage.ayurun.want && stage.ayurun.n >= 30 && stage.ayurun.wet === stage.ayurun.n && stage.ayurun.up <= 45, JSON.stringify(stage));
 
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close(); server.close();

@@ -404,7 +404,8 @@ export class Missions {
   private propose(c: MissionCtx): void {
     const opts: Kind[] = ['photo'];
     if (c.zone === 'rocky' || c.zone === 'cold' || c.zone === 'kelp') opts.push('urchin', 'urchin');
-    if (c.zone === 'lagoon' || c.zone === 'reef') opts.push('trash', 'trash');
+    if (c.zone === 'lagoon' || c.zone === 'reef' || c.zone === 'estuary') opts.push('trash', 'trash');
+    if (c.zone === 'river') opts.push('trash');
     if (c.zone === 'reef' || c.zone === 'dropoff') opts.push('lost');
     if (c.zone === 'ruins') opts.push('treasure', 'treasure', 'treasure');
     if (c.zone === 'lagoon' || c.zone === 'reef' || c.zone === 'rocky') opts.push('rescue');
@@ -493,9 +494,13 @@ export class Missions {
     } else if (kind === 'trash') {
       const T = MISSION.trash;
       for (let i = 0; i < T.spawn; i++) {
-        const a = Math.random() * Math.PI * 2, d = 2 + Math.random() * 12;
-        const x = ahead.x + Math.cos(a) * d, z = ahead.z + Math.sin(a) * d;
-        const g = surfaceAt(x, z);
+        let x = ahead.x, z = ahead.z, g = surfaceAt(x, z);
+        // the estuary's flats and the river's banks are shallow or dry: keep the rubbish in the water (Phase 9 S6)
+        for (let tr = 0; tr < 30; tr++) {
+          const a = Math.random() * Math.PI * 2, d = 2 + Math.random() * 12;
+          x = ahead.x + Math.cos(a) * d; z = ahead.z + Math.sin(a) * d; g = surfaceAt(x, z);
+          if (c.zone !== 'estuary' && c.zone !== 'river' || g < -1.2) break;
+        }
         this.items.push(new THREE.Vector3(x, Math.min(-0.8, g + 0.3 + Math.random() * Math.max(0, -g - 1.5)), z));
         this.taken.push(false);
       }

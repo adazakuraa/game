@@ -38,6 +38,8 @@ export const CHESTS: ChestDef[] = [
   { id: 'c_bluehole', map: 'bluehole', x: BLUEHOLE.x + 23 * Math.cos(2.2), z: BLUEHOLE.z + 23 * Math.sin(2.2) },
   { id: 'c_cave', map: 'cave', x: -360, z: 968, gear: 'compass' },
   { id: 'c_kelp', map: 'kelp', x: 380, z: 330 },
+  { id: 'c_estuary', map: 'estuary', x: 318, z: -240 },
+  { id: 'c_river', map: 'river', x: 268, z: -458 },
   { id: 'c_deep', map: 'deep', x: VENT.x + 30, z: VENT.z + 20 },
 ];
 
