@@ -92,7 +92,7 @@ function check(name, ok, detail = '') {
     // (the SW corner is cold water; its warning toast would mask the edge one)
     h.teleport(428, -5, -66);
     g.vel.set(0, 0, 0);
-    g.lastEdgeWarn = -99;
+    g.lastEdgeWarn = -99; g.lastShoreWarn = -99;
     h.look(0, 0);
     g.input.moveX = 1;
     g.input.moveY = 1;
@@ -101,9 +101,9 @@ function check(name, ok, detail = '') {
     g.input.moveY = 0;
     const west = document.getElementById('toast').textContent;
     // pure shore: 2 m from the beach — push toward it
-    h.teleport(0, -2, -68);
-    g.vel.set(0, 0, 0);
-    g.lastEdgeWarn = -99;
+    h.teleport(0, -2, -84.3);
+    g.vel.set(0, 0, -2.4);
+    g.lastEdgeWarn = -99; g.lastShoreWarn = -99;
     g.input.moveY = 1;
     for (let i = 0; i < 10; i++) g.updateDiver(0.05);
     g.input.moveY = 0;
