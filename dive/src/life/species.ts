@@ -58,7 +58,7 @@ export type SpeciesDef = {
    * Some individuals are aggressive. territory: guards its nest and charges a diver who comes close
    * (triggerfish); shark: circles a diver, then makes a bumping pass. chance = share of individuals.
    */
-  aggro?: { kind: 'territory' | 'shark' | 'light'; chance: number; range: number; bite: number; speed: number };
+  aggro?: { kind: 'territory' | 'shark' | 'light'; chance: number; range: number; bite: number; speed: number; /** one hit empties the tank (air = 0 → blackout rescue) */ lethal?: boolean };
   /** fixed body pitch (e.g. razorfish swim head-down) */
   pitch?: number;
 };

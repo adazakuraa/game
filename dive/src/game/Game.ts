@@ -10,7 +10,7 @@ import { Diag } from '../ui/diag';
 import { makeQuest, QUEST, type Quest } from './quests';
 import { FIND_NAME, FINDS, Finds, openFind, type FindKind } from './finds';
 import { buildBar, buildHandSpear, buildKnife, buildSpeargun } from './gearModels';
-import { BIG_KG, DISH, FISHING, PENALTY, STORY, edibleInfo, isFugu, isGoodCatch, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
+import { BIG_KG, DISH, FISHING, PENALTY, STORY, edibleInfo, isFugu, isGoodCatch, repelTier, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
 import { AIR_TANK, evaluateShot, sAdvice, LEGACY_NEED, LEGACY_NEED_PCT, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
@@ -1413,12 +1413,14 @@ export class Game {
         continue;
       } else {
         const bite = e.def.aggro?.bite ?? 5;
-        this.air = Math.max(1, this.air - bite);
+        const lethal = !!e.def.aggro?.lethal;
+        // Phase 11: an aggro hit may empty the tank (the 1 bar floor stays only for the octopus and the haul)
+        this.air = lethal ? 0 : Math.max(0, this.air - bite);
         const push = this.camera.position.clone().sub(e.p).setY(0.3).normalize();
         this.vel.addScaledVector(push, shark ? 4.5 : 3);
         this.shake = 1;
         this.audio.warn();
-        this.toast(light ? `${name}のくちばしが刺さった！ エア −${bite}bar` : shark ? `${name}にぶつかられた！ エア −${bite}bar` : `${name}に噛まれた！ エア −${bite}bar`, 'danger', 3);
+        this.toast(lethal ? `${name}の一撃！ エアが一気に抜けた…` : light ? `${name}のくちばしが刺さった！ エア −${bite}bar` : shark ? `${name}にぶつかられた！ エア −${bite}bar` : `${name}に噛まれた！ エア −${bite}bar`, 'danger', 3);
         const f = $('flash');
         f.classList.remove('go');
         f.classList.add('hurt');
@@ -2087,6 +2089,40 @@ export class Game {
     return clamp(p, 0.05, 0.95);
   }
 
+  /**
+   * Phase 11: a thrust at a charging aggro animal. Returns true when the thrust was resolved here (repelled,
+   * or a miss with a hint); the animal is never taken. Window and tiers: FISHING.repel / repelTier.
+   */
+  private tryRepel(t: NonNullable<Game['spearT']>): boolean {
+    const T = this.spearTool;
+    const R = FISHING.repel;
+    const def = t.rt.def;
+    const a = t.agent;
+    const hitD = def.size * 0.45 + R.hitBase;
+    const d = a.p.distanceTo(this.camera.position);
+    const surf = d - def.size * 0.45;
+    if (T.tier < repelTier(def)) {
+      this.spearTo.copy(a.p);
+      this.toast(T.tier === 0 ? `${T.name}ではサメに効かない！` : `${T.name}では${def.name}を退けられない！ 大物用水中銃が要る`, 'warn', 2.2);
+      return true;
+    }
+    if (d < hitD || surf > T.range) {
+      // out of the window (too far / already reached): an ordinary miss, the reload stays spent
+      this.spearTo.copy(a.p);
+      this.toast(d < hitD ? '間に合わなかった…' : '突きが届かない… もっと引きつけてから突こう', 'warn', 1.8);
+      return true;
+    }
+    const just = d <= hitD + R.justBand;
+    this.spearTo.copy(a.p);
+    this.creatures.repel(a, just ? R.justCooldown : R.cooldown);
+    this.toast(just ? `ジャスト！ 突きが届いた！ ${def.name}が退いた` : `突きが届いた！ ${def.name}が退いた`, '', 2.4);
+    this.audio.chime(just);
+    this.freezeT = 0.1;
+    this.shake = Math.max(this.shake, just ? 0.5 : 0.3);
+    try { navigator.vibrate?.(just ? 60 : 35); } catch { /* not supported */ }
+    return true;
+  }
+
   private fireSpear(): void {
     if (this.reload > 0) return;
     const T = this.spearTool;
@@ -2098,6 +2134,7 @@ export class Game {
     this.reload = T.reload;
     this.audio.shutter();
     if (!t) return;
+    if (t.agent.aggro && t.agent.mode === 2 && t.rt.def.aggro && this.tryRepel(t)) return;
     const block = this.spearBlock(t);
     if (block) { this.toast(block, 'warn'); this.reload = 0.4; this.spearAnim = -1; return; }
     this.spearTo.copy(t.agent.p);

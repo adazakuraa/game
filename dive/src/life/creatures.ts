@@ -38,6 +38,8 @@ type Agent = {
   watch?: number;
   /** aggressive individual (see SpeciesDef.aggro): 0 idle, 1 circling, 2 charging, 3 retreating */
   aggro?: boolean; mode?: number; modeT?: number;
+  /** seconds left of the cooldown after being repelled by a spear thrust (no new aggro while > 0) */
+  repelT?: number;
   /** speared by the diver: gone for the rest of this dive */
   taken?: boolean;
   /** time not yet simulated while this far individual was being skipped (PHASE8-DESIGN §6.3-⑦) */
@@ -1694,7 +1696,7 @@ export class Creatures {
         if (!g.absent && movable) this.relocate(rt, gi, player, 4);
       });
       const ag = rt.def.aggro;
-      for (const a of rt.agents) { a.aggro = !!ag && this.rnd() < ag.chance; a.mode = 0; a.modeT = 0; a.taken = false; }
+      for (const a of rt.agents) { a.aggro = !!ag && this.rnd() < ag.chance; a.mode = 0; a.modeT = 0; a.repelT = 0; a.taken = false; }
       // always keep at least one group of common species
       if (rt.def.rarity === 1 && rt.groups.every((g) => g.absent)) rt.groups[0].absent = false;
     }
@@ -1985,6 +1987,7 @@ export class Creatures {
         if (a.aggro && def.aggro) {
           const ag = def.aggro;
           a.modeT = (a.modeT ?? 0) - dt;
+          if (a.repelT) a.repelT = Math.max(0, a.repelT - dt);
           const mode = a.mode ?? 0;
           const homeD = Math.hypot(player.x - g.home.x, player.z - g.home.z);
           if (mode === 0) {
@@ -1992,7 +1995,7 @@ export class Creatures {
             const trig = ag.kind === 'territory' ? dPlayer < rng && homeD < rng * 1.8
               : ag.kind === 'light' ? this.night && this.lightOn && player.y > -NIGHT.lightDepth && dPlayer < rng
               : dPlayer < rng;
-            if (trig && a.modeT <= 0) {
+            if (trig && a.modeT <= 0 && !a.repelT) {
               a.mode = ag.kind === 'territory' ? 2 : 1;
               a.modeT = ag.kind === 'territory' ? 1.2 : ag.kind === 'light' ? NIGHT.lightWind : 5 + r() * 6;
               this.events.push({ type: 'warn', def, p: a.p.clone() });
@@ -2277,6 +2280,13 @@ export class Creatures {
     }
   }
 
+  /** Phase 11: a spear thrust drove off a charging aggro animal — it retreats at once and stays calm for `cooldown` s. */
+  repel(a: Agent, cooldown: number): void {
+    a.mode = 3;
+    a.modeT = 6;
+    a.repelT = cooldown;
+  }
+
   /** A missed thrust: the fish darts away. */
   startle(a: Agent, from: THREE.Vector3): void {
     _v.copy(a.p).sub(from).normalize().multiplyScalar(4);
@@ -2291,7 +2301,7 @@ export class Creatures {
       const ag = rt.def.aggro;
       if (!rt.active || !ag || ag.kind !== 'shark') continue;
       for (const a of rt.agents) {
-        if (rt.groups[a.g].absent || a.taken || a.p.distanceTo(p) > range || Math.random() > chance) continue;
+        if (rt.groups[a.g].absent || a.taken || a.repelT || a.p.distanceTo(p) > range || Math.random() > chance) continue;
         a.aggro = true;
         if (!a.mode) { a.mode = 1; a.modeT = 6 + Math.random() * 5; n++; this.events.push({ type: 'warn', def: rt.def, p: a.p.clone() }); }
       }
