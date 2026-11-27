@@ -43,6 +43,8 @@ export const SPOTS: SpotDef[] = [
   { id: 'cold', name: '流氷の天井', point: 'cold', x: -320, z: 170, y: -1, pay: 700, desc: '水面を覆う流氷の裏側に、割れ目から光が差しこむ' },
   { id: 'bluehole', name: 'ブルーホールの縁', point: 'bluehole', x: BLUEHOLE.x, z: BLUEHOLE.z, y: -24, r: 40, pay: 900, desc: '浅瀬に開いた底なしの青い穴を、縁からのぞきこむ' },
   { id: 'cenote', name: 'セノーテの光のカーテン', point: 'cave', x: CENOTE.x, z: CENOTE.z, y: -12, pay: 1000, desc: '天井の穴から、光がカーテンのように降りてくる' },
+  { id: 'mangrove', name: 'マングローブの根の迷路', point: 'estuary', x: 262, z: -192, y: -1, pay: 600, desc: '水に浸かった根が編み目のように重なり、そのすき間を小魚がすり抜けていく' },
+  { id: 'waterfall', name: '滝つぼの光の泡', point: 'river', x: 222, z: -615, y: -3, pay: 800, desc: '滝の泡が光を散らして、水の中に白いカーテンがゆれている' },
   { id: 'vent', name: '熱水噴出孔', point: 'deep', x: VENT.x, z: VENT.z, h: 4, pay: 2000, desc: '深海の煙突から、黒い熱水が噴き上がる' },
 ];
 

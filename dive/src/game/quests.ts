@@ -38,7 +38,7 @@ export const QUEST = {
 const pointOf = (zone: ZoneId) => DIVE_POINTS.find((d) => d.id === (zone === 'offshore' ? 'dropoff' : zone));
 
 /** A place inside a zone, near its dive point, at a diveable depth. */
-function placeIn(zone: ZoneId, rnd: () => number, minD = -26, maxD = -3): { x: number; z: number } | null {
+function placeIn(zone: ZoneId, rnd: () => number, minD = zone === 'estuary' ? -8 : zone === 'river' ? -6 : -26, maxD = zone === 'estuary' ? -1.5 : zone === 'river' ? -1.2 : -3): { x: number; z: number } | null {
   const dp = pointOf(zone);
   if (!dp) return null;
   for (let k = 0; k < 60; k++) {
@@ -55,7 +55,7 @@ export function makeQuest(known: Set<string>, rnd: () => number = Math.random, t
   const has = (z: string) => known.has(z);
   const kinds: QuestKind[] = ['photo', 'survey'];
   if (has('rocky') || has('kelp') || has('cold')) kinds.push('urchin', 'urchin');
-  if (has('lagoon') || has('reef')) kinds.push('trash');
+  if (has('lagoon') || has('reef') || has('estuary') || has('river')) kinds.push('trash');
   if (has('reef') || has('dropoff')) kinds.push('lost', 'tag');
   if (has('ruins')) kinds.push('treasure', 'treasure');
   const pool = kinds.filter((k) => taken.filter((t) => t === k).length < 1);
@@ -70,7 +70,7 @@ export function makeQuest(known: Set<string>, rnd: () => number = Math.random, t
       return { ...base(zone), giver: '漁協', title: 'ウニ漁', desc: '増えすぎたウニを獲ってほしい。食べられるウニだけをバールではがしてくる', reward: QUEST.reward.urchin * (zone === 'cold' ? 1.5 : 1) };
     }
     case 'trash': {
-      const zone = pick(zones(['lagoon', 'reef']));
+      const zone = pick(zones(['lagoon', 'reef', 'estuary', 'river']));
       return { ...base(zone), giver: '町内会', title: '海のごみ拾い', desc: '流れ着いたごみが海底にたまっている場所がある。拾い集めてきてほしい', reward: QUEST.reward.trash };
     }
     case 'lost': {
@@ -86,12 +86,12 @@ export function makeQuest(known: Set<string>, rnd: () => number = Math.random, t
       return { ...base(zone), giver: '海洋研究所', title: `${sp.name}の標識読み取り`, desc: `このあたりにいる${sp.name}に研究用の標識をつけてある。近づいて番号を読み取ってきてほしい`, reward: QUEST.reward.tag, species: sp.id };
     }
     case 'survey': {
-      const zone = pick(zones(['lagoon', 'reef', 'rocky', 'dropoff', 'kelp', 'cold', 'ruins']).concat('lagoon'));
+      const zone = pick(zones(['lagoon', 'reef', 'rocky', 'dropoff', 'kelp', 'cold', 'ruins', 'estuary', 'river']).concat('lagoon'));
       const dp = pointOf(zone)!;
       return { id, kind, zone, x: dp.x, z: dp.z, giver: '海洋研究所', title: `${ZONE_NAMES[zone]}の生き物調査`, desc: `${ZONE_NAMES[zone]}で、ちがう種類の生き物を${QUEST.surveyNeed}種類、B評価以上で撮ってきてほしい`, reward: QUEST.reward.survey };
     }
     default: {
-      const zone = pick(zones(['lagoon', 'reef', 'rocky', 'dropoff', 'kelp', 'cold']).concat('lagoon'));
+      const zone = pick(zones(['lagoon', 'reef', 'rocky', 'dropoff', 'kelp', 'cold', 'estuary', 'river']).concat('lagoon'));
       const cand: SpeciesDef[] = SPECIES.filter((s) => (s.zone === zone || (zone === 'dropoff' && s.zone === 'offshore')) && s.rarity <= 2 && s.kind !== 'none' && s.when !== 'night');
       const sp = pick(cand);
       const dp = pointOf(zone)!;

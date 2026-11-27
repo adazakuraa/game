@@ -43,6 +43,8 @@ const LORE: { ok: (p: Progress) => boolean; text: string }[] = [
   { ok: (p) => p.found >= 10, text: 'ちょっと泳いだら寒い海にもいけるんだよ。流氷が流れ着く入り江まであるんだから、おかしな島だろう？' },
   { ok: (p) => p.found >= 15, text: 'すばしっこい魚はね、気づかれにくい格好で潜ると、近くまで寄らせてくれるって。昔泊まってたダイバーさんが言ってたよ' },
   { ok: (p) => p.chapter >= 3, text: '沖の深い所には、昔の町が沈んでるって言い伝えがあってね。石の柱を見たって漁師もいるんだよ。……まあ、酒の席の話だけどね' },
+  { ok: (p) => p.found >= 20, text: '島の東の浜にはね、川が流れこんでるのさ。干潮のときは干潟が広がるんだよ' },
+  { ok: (p) => p.found >= 25, text: '川を上ると滝があってね。山の神様のヌシが滝つぼに住んでるって、年寄りは言うね' },
 ];
 
 const pick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
@@ -134,7 +136,7 @@ export class Kitchen {
 
   /** Species that can turn up in an order: edible and found in waters a scuba diver can reach. */
   private pool(level: number): SpeciesDef[] {
-    return SPECIES.filter((d) => isGoodCatch(d) && d.zone !== 'deep' && d.depth[0] < 40 && (level >= FISHING.nightFreeLevel || d.when !== 'night'));
+    return SPECIES.filter((d) => isGoodCatch(d) && d.zone !== 'deep' && d.zone !== 'river' && d.depth[0] < 40 && (level >= FISHING.nightFreeLevel || d.when !== 'night'));
   }
 
   get licensed(): boolean {

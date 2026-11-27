@@ -90,6 +90,9 @@ export class Game {
   /** Phase 9 S2: air-use multiplier while swimming against the river's flow (1 .. 1.4), the toast flag, and the last flow felt */
   private flowAir = 1;
   private flowWarned = false;
+  /** Phase 9 S6: the diver is in the river (spear button hidden), and the one-time toast was shown this dive */
+  private riverBan = false;
+  private riverToasted = false;
   private waterfall!: Waterfall;
   private ads = false;
   private captureReq: PhotoTarget | null | undefined = undefined;
@@ -1093,7 +1096,7 @@ export class Game {
       this.diveTime = 0;
       this.clearMapFound();
       this.sDoneCh.clear();
-      this.flowWarned = false; this.flowAir = 1;
+      this.flowWarned = false; this.flowAir = 1; this.riverBan = false; this.riverToasted = false;
       this.narcDeepT = 0;
       this.narcBlur = 0;
       this.narcBlurT = 0;
@@ -1465,7 +1468,7 @@ export class Game {
     (this.save.cooler ??= []).push(...caught);
     // boxes picked up are opened on the boat
     const opened = reason === 'surface' ? this.diveFinds.map((k) => {
-      const unknown = DIVE_POINTS.filter((d) => !this.discovered.has(d.id) && d.id !== 'lagoon').map((d) => ({ id: d.id, name: d.name }));
+      const unknown = this.chartCandidates();
       const loot = openFind(k, unknown);
       this.save.money = (this.save.money ?? 0) + loot.yen;
       if (loot.map) this.grantMap(loot.map);
@@ -1594,7 +1597,18 @@ export class Game {
     if (inp.consume('map')) this.toggleMap(!this.minimap?.open);
     if (inp.consume('menu')) this.setPaused(true);
     if (inp.consume('surface') && this.canSurface()) this.endDive('surface');
-    if (inp.consume('tool')) this.setTool(this.tool === 'camera' ? 'spear' : 'camera');
+    // Phase 9 S6: no spearfishing in the river (the estuary follows the sea's rules). The button hides while the diver is in the river.
+    const riverNow = this.camera.position.z < -60 && zoneAt(this.camera.position.x, this.camera.position.z) === 'river';
+    if (riverNow !== this.riverBan) {
+      this.riverBan = riverNow;
+      $('btn-tool').classList.toggle('hidden', riverNow || !this.has('spear') || this.ads);
+    }
+    if (riverNow && this.tool === 'spear') this.setTool('camera');
+    if (inp.consume('tool') && !riverNow) this.setTool(this.tool === 'camera' ? 'spear' : 'camera');
+    else if (riverNow && this.has('spear') && !this.ads && !this.riverToasted) {
+      this.riverToasted = true;
+      this.toast('川では銛は使えない（川の漁は漁協の決まりで禁止）', 'warn', 4);
+    }
     if (inp.consume('baitKind')) this.cycleBaitKind();
     if (inp.consume('bait')) this.scatterBait();
 
@@ -1621,7 +1635,8 @@ export class Game {
       const fx = this.flowTmp.x, fz = this.flowTmp.z, fm = Math.hypot(fx, fz);
       cam.position.x += fx * dt;
       cam.position.z += fz * dt;
-      if (fm > 0.3) { // river only (the estuary's 0.15 m/s is below this)
+      // S6 (S2 review Low-1): swimming against the flow costs air in the river zone only (the estuary's 0.15 m/s never does)
+      if (zoneAt(cam.position.x, cam.position.z) === 'river') {
         if (this.vel.x * fx + this.vel.z * fz < 0 && Math.hypot(this.vel.x, this.vel.z) > 0.3) this.flowAir = 1 + 0.4 * Math.min(1, fm / 0.8);
         if (fm > 0.5 && !this.flowWarned) {
           this.flowWarned = true;
@@ -2273,6 +2288,11 @@ export class Game {
     return true;
   }
 
+  /** Phase 9 S6: charts a found box can hold — maps not yet known, and only maps where creatures live. */
+  private chartCandidates(): { id: string; name: string }[] {
+    return DIVE_POINTS.filter((d) => !this.discovered.has(d.id) && d.id !== 'lagoon' && SPECIES.some((sp) => sp.zone === d.id || (d.id === 'dropoff' && sp.zone === 'offshore'))).map((d) => ({ id: d.id, name: d.name }));
+  }
+
   /** Phase 5: open a permanent treasure chest. Saved at once, like sights and the dex. */
   private openChest(id: string): void {
     const def = CHESTS.find((c) => c.id === id);
@@ -2575,6 +2595,7 @@ export class Game {
       /** Phase 9: seabed / land height at (x, z) and its zone */
       heightAt: (x: number, z: number) => heightAt(x, z),
       zoneAt: (x: number, z: number) => zoneAt(x, z),
+      riverDist: (x: number, z: number) => { const r = riverDist(x, z); return { d: r.d, w: r.w }; },
       /** Phase 9 S1: the estuary's water table (zone base + salt-wedge layers) */
       estuaryWater: () => ({ base: ZONE_WATER.estuary, wedge: ESTUARY_WEDGE }),
       /** Phase 9 S1: water flow (m/s) at (x, z) */
@@ -2590,6 +2611,14 @@ export class Game {
       startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag') => { this.missions.force = k; },
       currents: () => this.currents,
       /** Phase 5: treasure chests (id, position, opened) */
+      /** Phase 9 S6: chart candidates of a found box, the kitchen's order pool, a board request from a seeded generator */
+      chartCandidates: () => this.chartCandidates().map((d) => d.id),
+      orderPool: () => (this.kitchen as unknown as { pool: (l: number) => { zone: string; name: string }[] }).pool(99).map((d) => ({ zone: d.zone, name: d.name })),
+      makeQuest: (known: string[], seed: number) => {
+        let st = seed >>> 0; // mulberry32
+        const q = makeQuest(new Set(known), () => { st = (st + 0x6d2b79f5) >>> 0; let t = Math.imul(st ^ (st >>> 15), 1 | st); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; });
+        return q ? { kind: q.kind, zone: q.zone, x: q.x, z: q.z, title: q.title } : null;
+      },
       chests: () => this.chests.list(),
       openChest: (id: string) => { this.openChest(id); },
       goChest: (id: string) => {

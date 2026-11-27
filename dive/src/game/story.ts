@@ -6,7 +6,7 @@
  * meet it, then left to chance.
  */
 
-export type SceneId = 'whalesleep' | 'spawning' | 'baitball' | 'mantatrain' | 'whaleshark' | 'humpback' | 'dolphins' | 'hammers' | 'noctiluca' | 'orcas' | 'tornado' | 'mantanight' | 'lanternrise' | 'flashlight';
+export type SceneId = 'whalesleep' | 'spawning' | 'baitball' | 'mantatrain' | 'whaleshark' | 'humpback' | 'dolphins' | 'hammers' | 'noctiluca' | 'orcas' | 'tornado' | 'mantanight' | 'lanternrise' | 'flashlight' | 'akameeyes' | 'ayurun';
 
 /**
  * Rare, photogenic sights (achievements). Each has the dive points where it can happen, day or night,
@@ -29,6 +29,9 @@ export const SCENES: Record<SceneId, { name: string; desc: string; pay: number; 
   mantanight: { name: 'ライトに集まるマンタ', desc: '夜、ダイバーのライトにプランクトンが集まると、それを食べに大きなマンタが現れて、光の中で宙返りを繰り返す。', pay: 15000, chance: 0.18, points: ['reef', 'dropoff'], night: true, star: 'manta', n: 2, hint: 'サンゴ礁・ドロップオフ・夜（ライトが必要）', sense: 'ライトの光の中を、大きな影がよぎった…', note: '「夜の礁かドロップオフでライトを灯していたら、光に集まった虫を食べにマンタが来た」' },
   lanternrise: { name: 'ハダカイワシの日周鉛直移動', desc: '夜になると、深みにいる無数の小さな発光魚がエサを求めて浮上してくる。光の粒が柱のように立ちのぼる。', pay: 12000, chance: 0.2, points: ['dropoff'], night: true, star: 'hadakaiwashi', n: 60, hint: 'ドロップオフ・夜', sense: '足元の暗い深みから、小さな光の粒が昇ってくる…', note: '「夜のドロップオフ。深みから小さな光る魚が、数えきれないほど上がってきた」' },
   flashlight: { name: 'ヒカリキンメダイの群れの明滅', desc: '目の下の発光器をまばたきさせる魚たちが、夜の岩のそばで青白い光を点けたり消したりしている。', pay: 13000, chance: 0.18, points: ['reef', 'rocky'], night: true, star: 'hikarikinme', n: 30, hint: 'サンゴ礁・岩礁・夜', sense: '暗闇の中で、青白い光がいくつも点いたり消えたりしている…', note: '「夜、サンゴ礁や岩礁の岩陰で、青白い光がいくつも点いたり消えたりしていた」' },
+  // ---- Phase 9: the estuary's and the river's sights
+  akameeyes: { name: '闇に光る赤い目', desc: '夜、河口の流木の陰で、ライトを受けたアカメの目が赤く光る。', pay: 12000, chance: 0.2, points: ['estuary'], night: true, star: 'akame', n: 1, hint: '河口・夜（ライトが必要）', sense: 'ライトの先で、赤い光がふたつ、こちらを見ている…', note: '「夜の河口でライトを向けたら、流木の陰に赤く光る目があった」' },
+  ayurun: { name: '瀬を上るアユの群れ', desc: '川の瀬を、アユの大群が流れに逆らって上っていく。石についた藻を食べた跡が点々と残る。', pay: 9000, chance: 0.2, points: ['river'], star: 'ayu', n: 40, hint: '川・昼', sense: '瀬の石の上を、無数の銀色の影が流れに逆らって上っていく…', note: '「川の瀬で、アユの大群がいっせいに上流へ向かっていた」' },
 };
 
 export type StoryState = {
