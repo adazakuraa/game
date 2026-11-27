@@ -8,6 +8,8 @@ import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
 import { caveRoofAt, caveTopAt, heightFast, SHORE_BLOCK, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
+/** Phase 9 S3: regions that name an estuary / river `Homes` list */
+const SOUTH_REGIONS = new Set(['estChannel', 'estFlat', 'mangrove', 'reed', 'riverLow', 'riverRiffle', 'riverPool', 'riverUp', 'riverStones', 'riverSand']);
 import { clamp, mulberry32 } from '../utils/noise';
 import { KEEP, LOD, SHADOW, THIN } from '../game/render';
 import { Impostors, packColor, type ImpostorCell } from './impostors';
@@ -663,6 +665,7 @@ export class Creatures {
     else if (reg === 'caveSpots') p = fromList(homes.caveSpots);
     else if (reg === 'caveTopSpots') p = fromList(homes.caveTopSpots);
     else if (reg === 'kelpSpots') p = fromList(homes.kelpSpots);
+    else if (typeof reg === 'string' && SOUTH_REGIONS.has(reg)) p = fromList(homes[reg as keyof Homes] as THREE.Vector3[]);
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;

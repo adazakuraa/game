@@ -4,7 +4,9 @@ import type { Paint } from './paint';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
 export type Kind = 'fish' | 'ray' | 'jelly' | 'squid' | 'octopus' | 'dumbo' | 'turtle' | 'lobster' | 'isopod' | 'nudi' | 'gardenEel' | 'inv' | 'none';
-export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots' | 'coldSpots' | 'caveSpots' | 'caveTopSpots' | 'kelpSpots';
+export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots' | 'coldSpots' | 'caveSpots' | 'caveTopSpots' | 'kelpSpots'
+  // Phase 9 S3: estuary and river homes (flora.ts `Homes`)
+  | 'estChannel' | 'estFlat' | 'mangrove' | 'reed' | 'riverLow' | 'riverRiffle' | 'riverPool' | 'riverUp' | 'riverStones' | 'riverSand';
 /** Micro-habitat: where in the 3D reef structure a species lives and how it reacts. */
 export type Habitat = 'coralHover' | 'coralPick' | 'reefRoam' | 'midwater' | 'wall' | 'under' | 'perch' | 'burrow' | 'sandForage' | 'seagrass' | 'surface' | 'cleaner' | 'rockyRoam';
 

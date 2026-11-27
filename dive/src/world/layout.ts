@@ -325,6 +325,9 @@ export const DRIFTWOOD: { z: number; dx: number; r: number }[] = [
 
 const estC = (z: number) => ESTUARY.x + 15 * Math.sin(z * 0.02);
 const estW = (z: number) => lerp(ESTUARY.wMouth, ESTUARY.wHead, smoothstep(-60, -300, z));
+/** Phase 9 S3: the estuary's centre line x and half-width at z (for placing the scenery) */
+export const estuaryCentreX = estC;
+export const estuaryHalfWidth = estW;
 /** lateral position in the estuary: 0 on the centre line, 1 at the nominal bank */
 export function estuaryU(x: number, z: number): number {
   return Math.abs(x - estC(z)) / estW(z);

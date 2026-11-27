@@ -9,6 +9,7 @@ import { SWAY_VERTEX, underwaterMaterial } from '../render/underwater';
 import { baked, pbr } from '../render/baked';
 import { makeBlade, makeSeaFan } from '../render/textures';
 import { fbm2, mulberry32, simplex2 } from '../utils/noise';
+import { driftwoodGeometry, mangroveGeometry, planSouth, reedGeometry, SOUTH_HOME_NAMES, sunkenBoatGeometry } from './southScenery';
 
 export const GARDEN_EEL_PATCH = { x: 28, z: 78, r: 13 };
 
@@ -537,6 +538,18 @@ export type Homes = {
   caveTopSpots: THREE.Vector3[];
   /** mid-water points on giant kelp stipes (seahorses, kelpfish) */
   kelpSpots: THREE.Vector3[];
+  /** Phase 9 S3 (estuary and river). Estuary: channel (澪筋), tidal flat, among mangrove prop roots, reed edge (shared with the river's lower reach). */
+  estChannel: THREE.Vector3[];
+  estFlat: THREE.Vector3[];
+  mangrove: THREE.Vector3[];
+  reed: THREE.Vector3[];
+  /** river: lower pools, riffle stones, middle pools, upper pools / plunge pool, gaps under stones, open sand */
+  riverLow: THREE.Vector3[];
+  riverRiffle: THREE.Vector3[];
+  riverPool: THREE.Vector3[];
+  riverUp: THREE.Vector3[];
+  riverStones: THREE.Vector3[];
+  riverSand: THREE.Vector3[];
 };
 
 export class Flora {
@@ -545,8 +558,10 @@ export class Flora {
   private mats: THREE.Material[] = [];
   /** rock ledges a diver can swim under (for tests and hints) */
   ledges: { x: number; z: number; bottom: number }[] = [];
-  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], coralAll: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], caveTopSpots: [], kelpSpots: [] };
+  readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], coralAll: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], caveTopSpots: [], kelpSpots: [], estChannel: [], estFlat: [], mangrove: [], reed: [], riverLow: [], riverRiffle: [], riverPool: [], riverUp: [], riverStones: [], riverSand: [] };
   boat: THREE.Group;
+  /** Phase 9 S3: where the estuary / river scenery stands (for tests) */
+  south!: ReturnType<typeof planSouth>;
   carpetCount = 0;
   private landmarks: THREE.Object3D[] = [];
   /** the glow at the vent: shown only near it, which changes the number of lights every lit shader is built for */
@@ -1294,6 +1309,48 @@ export class Flora {
     for (let a = 0; a <= Math.PI + 1e-3; a += Math.PI / 14) addSphere(arch.position.x + Math.cos(a) * 9, arch.position.y + Math.sin(a) * 9, arch.position.z, 2.7);
     this.group.add(arch);
     this.landmarks.push(arch);
+
+    // ---- Phase 9 S3: the estuary's and the river's scenery (design §2.4・§3.1) and the animals' homes (§2.5・§3.5).
+    //      Placement is planned in southScenery.ts (own RNG: the existing scenery above is unchanged). No new textures:
+    //      mangroves / logs / the boat share the rock's PBR with vertex colours, reeds and water weeds use the grass blade.
+    {
+      const plan = planSouth();
+      this.south = plan;
+      const southMat = underwaterMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xffffff, roughness: 0.95 }), {
+        key: 'mangrove',
+        pbr: { ...pbr().rock, scale: 0.8, k: 1.4, albedo: 1.0 },
+      });
+      this.mats.push(southMat);
+      const yawQ = (a: number) => new THREE.Quaternion().setFromAxisAngle(_up, a);
+      const noShadow = () => { this.sets[this.sets.length - 1].shadows = false; };
+      // mangroves (trunk collider only: the prop roots and reeds can be swum through)
+      add(mangroveGeometry(0), southMat, plan.mangroves.map((t) => ({ m: new THREE.Matrix4().compose(new THREE.Vector3(t.x, t.y - 0.05, t.z), yawQ(t.rot), new THREE.Vector3(t.s, t.s, t.s)), c: new THREE.Color().setScalar(0.8 + (t.rot % 1) * 0.25) })), 75, 35, undefined, false, mangroveGeometry(1), 25);
+      for (const t of plan.mangroves) addCollider({ x: t.x, z: t.z, r: 0.27 * t.s, y0: t.y - 0.2, y1: t.y + 3 * t.s });
+      // reeds and water weeds: no shadows, no colliders
+      add(reedGeometry(), grassMat, plan.reeds.map((e) => ({ m: new THREE.Matrix4().compose(new THREE.Vector3(e.x, e.y, e.z), yawQ(e.rot), new THREE.Vector3(e.w, e.h, e.w)), c: color(0.15 + (e.rot % 0.08), 0.38, 0.5 + (e.w - 0.9) * 0.25) })), 55, 35);
+      noShadow();
+      const weedG = bladeTuft(61, 6, 1.0, 0.1, 4, 0.5);
+      const _ax = new THREE.Vector3();
+      add(weedG, grassMat, plan.weeds.map((w) => {
+        // lean downstream: rotate the up axis towards the flow direction (sin, cos of the flow angle)
+        const q = new THREE.Quaternion().setFromAxisAngle(_ax.set(Math.cos(w.flow), 0, -Math.sin(w.flow)), 0.55 + (w.s % 0.3));
+        q.multiply(yawQ(w.s * 40));
+        return { m: new THREE.Matrix4().compose(new THREE.Vector3(w.x, w.y, w.z), q, new THREE.Vector3(w.s, w.s, w.s)), c: color(0.26 + (w.s % 0.1), 0.45, 0.42 + (w.s - 0.6) * 0.15) };
+      }), 40, 35);
+      noShadow();
+      // driftwood and the sunken boat (sphere colliders along the hull / log)
+      add(driftwoodGeometry(), southMat, plan.logs.map((l) => ({ m: l.m, c: new THREE.Color().setScalar(l.tone) })), 60, 35);
+      for (const l of plan.logs) for (const sp of l.spheres) addSphere(sp.x, sp.y, sp.z, sp.r);
+      add(sunkenBoatGeometry(), southMat, [{ m: plan.boat.m }], 60, 35);
+      for (const sp of plan.boat.spheres) addSphere(sp.x, sp.y, sp.z, sp.r);
+      // river stones (the larger ones solid) and the upstream boulders: the rock shapes at smaller / bigger scales
+      const stoneItem = (b: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number; tone: number }): ScatterItem => ({ m: new THREE.Matrix4().compose(new THREE.Vector3(b.x, b.y, b.z), yawQ(b.rot), new THREE.Vector3(b.sx, b.sy, b.sz)), c: new THREE.Color(b.tone, b.tone * 0.97, b.tone * 0.92) });
+      const stoneG = rockGeometry(31, 2, 0.7), stoneFar = rockGeometry(31, 1, 0.7);
+      add(stoneG, rockMat, plan.stones.filter((b) => !b.solid).map(stoneItem), 45, 35, undefined, false, stoneFar, 20);
+      solid(stoneG, rockMat, plan.stones.filter((b) => b.solid).map(stoneItem), 45, 35, undefined, stoneFar, 20);
+      solid(rockGeometry(41, 3, 0.8), rockMat, plan.boulders.map(stoneItem), 80, 35, undefined, rockGeometry(41, 2, 0.8), 30);
+      for (const n of [...SOUTH_HOME_NAMES, 'riverSand' as const]) this.homes[n] = plan.homes[n].map(([x, y, z]) => new THREE.Vector3(x, y, z));
+    }
 
     this.boat = boatGroup();
     this.group.add(this.boat);
