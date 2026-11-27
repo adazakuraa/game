@@ -58,11 +58,15 @@ export class ScatterSet {
     this.at.set(x, y, z);
     for (const c of this.cells) {
       const s = c.mesh.boundingSphere!;
-      const d = Math.hypot(s.center.x - x, s.center.y - y, s.center.z - z) - s.radius;
+      const dc = Math.hypot(s.center.x - x, s.center.y - y, s.center.z - z);
+      const d = dc - s.radius;
       c.mesh.visible = d < this.viewDist;
       c.mesh.castShadow = this.shadows && c.box.distanceToPoint(this.at) < SHADOW.floraDist;
       if (this.hiGeo || this.farGeo) {
-        const want = this.hiGeo && d < this.hiDist ? this.hiGeo : this.farGeo && d > this.farDist ? this.farGeo : this.loGeo;
+        // LOD by centre distance, not sphere distance: with cells up to 35 m wide the radius
+        // term (~25 m) kept the detailed geometry in use far beyond the design distances
+        // (the carpet's 876-tri hi geometry was active ~28 m out). S8 budget fix.
+        const want = this.hiGeo && dc < this.hiDist ? this.hiGeo : this.farGeo && dc > this.farDist ? this.farGeo : this.loGeo;
         if (c.mesh.geometry !== want) c.mesh.geometry = want;
       }
     }

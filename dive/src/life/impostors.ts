@@ -65,8 +65,9 @@ const CARD_VERT_BODY = /* glsl */ `
         vImpU = normalize( normalMatrix * ( mat3( instanceMatrix ) * vec3( u2, 0.0 ) ) );
       #endif
     } else {
-      // flat animals lie in the body plane, tipped a little toward the camera so that edge-on they do not vanish
-      float tilt = clamp( atan( toCam.x, max( abs( toCam.y ), 1e-4 ) ) * sign( toCam.y + 1e-6 ), -0.26, 0.26 );
+      // flat animals lie in the body plane, tipped toward the camera so that edge-on they do not vanish
+      // (S8/BI: the tip was 0.26 rad, which left a ~6px sliver at L2 sizes; 0.5 rad keeps the span readable)
+      float tilt = clamp( atan( toCam.x, max( abs( toCam.y ), 1e-4 ) ) * sign( toCam.y + 1e-6 ), -0.5, 0.5 );
       float ct = cos( tilt ), st = sin( tilt );
       transformed = vec3( yc * ct, -yc * st, zc );
       nb = vec3( st, ct, 0.0 );
@@ -136,8 +137,8 @@ export class Impostors {
   constructor(private parent: THREE.Object3D) {
     const { atlasW, atlasH, cols, rows, supersample } = IMPOSTOR;
     this.atlas = new THREE.WebGLRenderTarget(atlasW, atlasH, {
-      colorSpace: THREE.SRGBColorSpace, depthBuffer: false, generateMipmaps: true,
-      minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
+      colorSpace: THREE.SRGBColorSpace, depthBuffer: false, generateMipmaps: false,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
     });
     this.scratch = new THREE.WebGLRenderTarget((atlasW / cols) * supersample, (atlasH / rows) * supersample, {
       colorSpace: THREE.SRGBColorSpace, depthBuffer: true, generateMipmaps: false,
