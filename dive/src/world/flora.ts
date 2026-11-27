@@ -1345,10 +1345,10 @@ export class Flora {
       for (const sp of plan.boat.spheres) addSphere(sp.x, sp.y, sp.z, sp.r);
       // river stones (the larger ones solid) and the upstream boulders: the rock shapes at smaller / bigger scales
       const stoneItem = (b: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number; tone: number }): ScatterItem => ({ m: new THREE.Matrix4().compose(new THREE.Vector3(b.x, b.y, b.z), yawQ(b.rot), new THREE.Vector3(b.sx, b.sy, b.sz)), c: new THREE.Color(b.tone, b.tone * 0.97, b.tone * 0.92) });
-      const stoneG = rockGeometry(31, 2, 0.7), stoneFar = rockGeometry(31, 1, 0.7);
+      const stoneG = rockGeometry(31, 3, 0.7), stoneFar = rockGeometry(31, 1, 0.7); // 320 / 80 triangles (detail n has 20 (n+1)^2 faces)
       add(stoneG, rockMat, plan.stones.filter((b) => !b.solid).map(stoneItem), 45, 35, undefined, false, stoneFar, 20);
       solid(stoneG, rockMat, plan.stones.filter((b) => b.solid).map(stoneItem), 45, 35, undefined, stoneFar, 20);
-      solid(rockGeometry(41, 3, 0.8), rockMat, plan.boulders.map(stoneItem), 80, 35, undefined, rockGeometry(41, 2, 0.8), 30);
+      solid(rockGeometry(41, 4, 0.8), rockMat, plan.boulders.map(stoneItem), 80, 35, undefined, rockGeometry(41, 2, 0.8), 30); // 500 / 180
       for (const n of [...SOUTH_HOME_NAMES, 'riverSand' as const]) this.homes[n] = plan.homes[n].map(([x, y, z]) => new THREE.Vector3(x, y, z));
     }
 
