@@ -1,4 +1,4 @@
-import { heightAt, surfaceTopAt, chartHeightAt } from '/home/user/game/dive/src/world/layout';
+import { heightAt, surfaceTopAt, chartHeightAt } from '../src/world/layout';
 import * as fs from 'node:fs';
 let s = 123456789;
 const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
