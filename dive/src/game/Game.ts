@@ -17,7 +17,7 @@ import { Terrain } from '../world/terrain';
 import { ESTUARY_WEDGE, Environment, RIVER_WATER, ZONE_WATER } from '../world/environment';
 import { Waterfall } from '../world/waterfall';
 import { Flora } from '../world/flora';
-import { Creatures, OCTO, type PhotoTarget } from '../life/creatures';
+import { Creatures, CURIOUS, OCTO, type PhotoTarget } from '../life/creatures';
 import { BAIT, dietOf, eatsBait, type BaitId } from './bait';
 import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
@@ -1859,9 +1859,12 @@ export class Game {
     if (cutK !== null) {
       // three diagonal slashes: raise, sweep down and across, back
       const n = MISSION.rescue.strokes, ph = (cutK * n) % 1, s = Math.sin(ph * Math.PI);
-      this.vmKnife.position.set(0.16 - s * 0.14, -0.1 - s * 0.08 + (1 - s) * 0.04, -0.3 - s * 0.12);
-      this.vmKnife.rotation.set(0.35 - s * 0.9, 0.1, -0.5 + s * 1.3);
-      if (ph < 0.5) this.shake = Math.max(this.shake, 0.08);
+      // Phase 10: the tap thrusts the knife out toward the turtle first (lunge), then each stroke sweeps across the view
+      const lunge = Math.max(0, 1 - cutK / 0.1);
+      this.vmKnife.position.set(0.16 - s * 0.22 - lunge * 0.1, -0.1 + s * 0.04 + (1 - s) * 0.04, -0.3 - s * 0.26 - lunge * 0.14);
+      this.vmKnife.rotation.set(0.35 - s * 0.9 - lunge * 0.3, 0.1 + s * 0.25, -0.5 + s * 1.3);
+      if (ph > 0.4 && ph < 0.6) this.shake = Math.max(this.shake, 0.22); // the rope parts mid-stroke
+      else if (ph < 0.5) this.shake = Math.max(this.shake, 0.08);
     } else {
       this.vmKnife.position.set(0.15, -0.14, -0.28);
       this.vmKnife.rotation.set(0.1, 0.1, -0.3 + Math.sin(this.time * 2) * 0.03);
@@ -2840,6 +2843,9 @@ export class Game {
         if (!rt) return null;
         return rt.groups.map((g) => ({ cur: g.cur ?? 0, curT: Math.round((g.curT ?? 0) * 10) / 10, absent: !!g.absent }));
       },
+      /** Phase 10: the cutting motion's state (progress, ropes snapped, net opacity) */
+      cutFx: () => this.missions.cutFx(),
+      curiousConsts: () => ({ ...CURIOUS }),
       callCurious: (id: string) => {
         const rt = this.creatures.list.find((r) => r.def.id === id);
         if (!rt) return false;
