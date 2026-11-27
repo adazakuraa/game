@@ -318,7 +318,9 @@ export function landTopAt(x: number, z: number): number {
 /** Phase 9: replaces the sea floor with land to the south (estuary / river carving comes in later steps) */
 function southTerrain(x: number, z: number, h: number): number {
   const w = smoothstep(-70, -95, z);
-  return w > 0 ? lerp(h, landTopAt(x, z), w) : h;
+  // w = 0 (-70 < z < -60) keeps the old clamp: without it the cold cove's raw
+  // floor (up to +2.4 m) would form a cliff at z = -60 (Sonnet review, PR #34).
+  return w > 0 ? lerp(h, landTopAt(x, z), w) : Math.min(h, -0.9);
 }
 
 /** Height of reef "bommies" above the surrounding reef flat (0 outside the reef). */
