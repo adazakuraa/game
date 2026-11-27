@@ -37,6 +37,12 @@ const DIET_WORDS: [Diet, string[]][] = [
  */
 const MEAT_EXACT = ['マダイ', 'クロダイ', 'ヘダイ', 'イシダイ', 'イシガキダイ'];
 
+/**
+ * Phase 9: estuary / river species are never judged by the word lists above (substring hits: 'コイ' is inside コイボウミウシ, 'アナゴ' inside チンアナゴ).
+ * This exact-name table overrides them; the rest fall through to the size / behaviour fallback.
+ */
+const DIET_EXACT = new Map<string, Diet>([['アカメ', 'meat']]);
+
 /** Names containing 'ハゼ' are not judged by the word lists (ハタタテハゼ is a tiny goby, not a ハタ): size / behaviour decides. */
 const NO_WORDS = ['ハゼ'];
 
@@ -44,6 +50,8 @@ const NO_WORDS = ['ハゼ'];
 const NOT_GROUPER = 'ハタタテ';
 
 export function dietOf(def: SpeciesDef): Diet | null {
+  const exact = DIET_EXACT.get(def.name);
+  if (exact) return exact;
   if (!NO_WORDS.some((w) => def.name.includes(w))) {
     let best: Diet | null = null;
     let len = 0;

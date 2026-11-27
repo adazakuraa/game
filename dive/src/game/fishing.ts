@@ -58,6 +58,8 @@ const AO = /アジ|サバ|イワシ|カツオ|マグロ|ブリ|カンパチ|ヒ�
 const SHIRO = /タイ|ハタ|フエ|メバル|カサゴ|ソイ|アイナメ|ホッケ|タラ|カレイ|ヒラメ|スズキ|イサキ|ムツ|キンメ|アマダイ|クエ|ブダイ|ベラ|コチ|ハゼ|メジナ|イシダイ|イシガキ|ヒメジ|オジサン|バス|ギンポ|ゲンゲ|カジカ|アブラコ/;
 const POISON = /ドクウツボ|フグ|ハリセンボン|キタマクラ|ソウシハギ|ハコフグ|オニダルマオコゼ/;
 const PROTECTED = /アオウミガメ|タイマイ|ナポレオン|メガネモチノウオ|タツノオトシゴ|ヒポカンパス|シーラカンス|ジャイアントシーバス|ガリバルディ|ジンベエ|マンボウ|ヨウジウオ/;
+/** Phase 9: protected by exact name (the substring regex above would hit other species). アカメ is the estuary's guardian. */
+const PROTECTED_EXACT = new Set(['アカメ']);
 const NOT_FISH = /ザメ|^サメ|サメ$|シャチ|クジラ|イルカ|アシカ|アザラシ|オットセイ|ラッコ|トド|ペンギン|ウミヘビ|エイ$|マンタ|ウミガメ|タイマイ/;
 
 /**
@@ -88,7 +90,7 @@ export function edibleInfo(def: SpeciesDef): Edible {
   if (/ウミヘビ/.test(n)) return { ok: false, reason: '猛毒のウミヘビ。近寄らない' };
   if (SHARKISH(def)) return PROTECTED_SHARK.test(n) ? { ok: true, cat: 'shiro', shark: true, protected: true } : { ok: true, cat: 'shiro', shark: true };
   const cat: Cat = AO.test(n) ? 'ao' : SHIRO.test(n) ? 'shiro' : (def.mat?.metal ?? 0) >= 0.3 && def.behavior !== 'static' ? 'ao' : def.size >= 0.3 || def.zone === 'cold' ? 'shiro' : 'iso';
-  if (PROTECTED.test(n) || def.behavior === 'anemone' || def.hab === 'cleaner') return { ok: true, cat, protected: true };
+  if (PROTECTED.test(n) || PROTECTED_EXACT.has(n) || def.behavior === 'anemone' || def.hab === 'cleaner') return { ok: true, cat, protected: true };
   if (POISON.test(n)) return { ok: true, cat, poison: true };
   return { ok: true, cat };
 }

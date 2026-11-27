@@ -453,7 +453,8 @@ import { SITE_SPECIES } from './species9';
 import { KELP_SPECIES } from './species10';
 import { MORE_600 } from './species11';
 import { FUGU_SPECIES } from './species12';
-SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES, ...WILD_SPECIES, ...SITE_SPECIES, ...KELP_SPECIES, ...MORE_600, ...FUGU_SPECIES);
+import { ESTUARY_RIVER_SPECIES } from './species13';
+SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES, ...WILD_SPECIES, ...SITE_SPECIES, ...KELP_SPECIES, ...MORE_600, ...FUGU_SPECIES, ...ESTUARY_RIVER_SPECIES);
 
 /**
  * Phase 4 balance pass (runs once, before any Creatures are built):
@@ -505,6 +506,9 @@ const MAP_MOVES: { id: string; zone: ZoneId; region: Region; depth: [number, num
   { id: 'hatampo', zone: 'cave', region: 'caveSpots', depth: [20, 28], hint: '水中洞窟の奥に、群れで浮かんでいる' },
   { id: 'sukashitenjiku', zone: 'cave', region: 'caveSpots', depth: [20, 28], hint: '水中洞窟の天井近くに群れる' },
   { id: 'kinmemodoki', zone: 'cave', region: 'caveSpots', depth: [20, 28], hint: '水中洞窟の入口の暗がりに、群れで渦を巻く' },
+  // Phase 9 S4: the lagoon's two brackish-water fish move to the estuary (ids unchanged, saves carry over)
+  { id: 'bora', zone: 'estuary', region: 'estChannel', depth: [0.3, 5], hint: '河口の澪筋を群れで上り下りする。水面から跳ねることも' },
+  { id: 'kurohoshimanjuu', zone: 'estuary', region: 'mangrove', depth: [0.5, 4], hint: 'マングローブの根のあいだに群れる' },
   { id: 'nezumigochi', zone: 'cave', region: 'caveTopSpots', depth: [1, 4], hint: '水中洞窟の上の、浅い白砂の台地' },
   { id: 'kotohiki', zone: 'cave', region: 'caveTopSpots', depth: [1, 4], hint: '水中洞窟の上の浅い砂地を、群れで走り回る' },
   { id: 'kusafugu', zone: 'cave', region: 'caveTopSpots', depth: [1, 4], hint: '水中洞窟の上の浅い砂地。砂にもぐって目だけ出すことも' },
@@ -525,4 +529,4 @@ applyMapMoves();
 balanceZones();
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
-export const ZONE_ORDER: ZoneId[] = ['lagoon', 'reef', 'rocky', 'dropoff', 'offshore', 'kelp', 'cold', 'ruins', 'bluehole', 'cave', 'deep'];
+export const ZONE_ORDER: ZoneId[] = ['lagoon', 'estuary', 'reef', 'rocky', 'dropoff', 'offshore', 'kelp', 'cold', 'ruins', 'bluehole', 'cave', 'deep'];

@@ -913,7 +913,7 @@ export function buildTurtle(detail: 0 | 1 = 0): THREE.BufferGeometry {
 
 // --------------------------------------------------------------------------- crustaceans / slugs / eels
 
-export function buildCrustacean(opts: { lobster?: boolean; shrimp?: boolean }, detail: 0 | 1 = 0): THREE.BufferGeometry {
+export function buildCrustacean(opts: { lobster?: boolean; shrimp?: boolean; fiddler?: boolean }, detail: 0 | 1 = 0): THREE.BufferGeometry {
   if (opts.shrimp) return buildShrimp();
   const parts: Part[] = [];
   const segs = opts.lobster ? 7 : 8;
@@ -946,6 +946,19 @@ export function buildCrustacean(opts: { lobster?: boolean; shrimp?: boolean }, d
       leg.translate(side * (opts.lobster ? 0.18 : 0.22), 0.02, z);
       setAttr(leg, 'aBend', () => 0.15);
       parts.push(leg);
+    }
+  }
+  if (opts.fiddler) {
+    // fiddler crab (Phase 9 S4): one claw as big as the body, the other a small one
+    for (const [side, k] of [[1, 1], [-1, 0.28]] as const) {
+      const arm = new THREE.CylinderGeometry(0.014 * (1 + k), 0.02 * (1 + k), 0.2, 5);
+      arm.rotateX(Math.PI / 2 - 0.3);
+      arm.translate(side * 0.18, 0.1, 0.5);
+      parts.push(arm);
+      const claw = new THREE.SphereGeometry(1, detail ? 7 : 10, detail ? 4 : 6);
+      claw.scale(0.05 + 0.1 * k, 0.04 + 0.05 * k, 0.07 + 0.2 * k);
+      claw.translate(side * 0.2, 0.12, 0.66 + 0.08 * k);
+      parts.push(claw);
     }
   }
   return finalize(parts, (x, _y, z) => [x * 1.6 + 0.5, z * 0.9 + 0.5]);

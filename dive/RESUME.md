@@ -1,8 +1,18 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-27（Phase 8 完了、Phase 9 S1 を PR #35・S2 を PR #36・S3 を PR #37 でマージ、S4 は実装中）
+最終更新: 2026-11-27（Phase 8 完了、Phase 9 S1 を PR #35・S2 を PR #36・S3 を PR #37 でマージ、S4 は実装済み・`claude/phase9-s4` に push、次は S5）
 
-## Phase 9 の進捗（S0 を PR #34、S1 を PR #35、S2 を PR #36、S3 を PR #37 でマージ済み、S4 は `claude/phase9-s4`）
+## Phase 9 の進捗（S0 を PR #34、S1 を PR #35、S2 を PR #36、S3 を PR #37 でマージ済み、S4 は `claude/phase9-s4` に実装・push 済み、PR・マージは監督役）
+- **S4（河口の生物）実装済み**（ブランチ `claude/phase9-s4`、`main` 20097cf から。設計 §4.1・§4.2・§5.4・§5.5・§7 S4）。**地形は変えていない**：`scripts/terrain-dump.ts` の変更前後を `cmp` で比べ、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` の差分 0（完全一致）。景色・Homes（S3）は触っていない。川の種は入れていない（S5）。
+  - 河口の 18 種（魚 14）：新種 16 を `src/life/species13.ts`（`ESTUARY_RIVER_SPECIES`。S5 が川の種をここに足す）、ボラ（→`estChannel`）とクロホシマンジュウダイ（→`mangrove`）は `species.ts` の `MAP_MOVES` でラグーンから移した（id は変えていない。ヒントは設計の文言）。魚 14：アカメ・マハゼ・トビハゼ・テッポウウオ・ゴマフエダイ・ミナミクロダイ・シマイサキ・ヒイラギ・サッパ・コノシロ・アナゴ（`when: 'night'`）・ヒメツバメウオ・ボラ・クロホシマンジュウダイ。魚以外 4：ノコギリガザミ・シオマネキ・ヤマトシジミ・マガキ。住みかは全種が `Homes` の名前（`estChannel`／`estFlat`／`mangrove`）を `region` で直接指定（`regionFor` の estuary 分岐は作らず、`fx`・`nf` に `region` を渡す方式。河口の矩形はほとんど陸のため）。`species11.ts` の `fx`・`nf`・`b` を export しただけで、既存の種は変えていない。
+  - **ヌシのアカメ**：rarity 3、体長 1.0m、`snapper` 型を細長く、銀灰色、目は赤く光る（`mat.emissive` を新しい uniform `uEyeGlow` で **目（`aFin == 2`）だけ**に足す。`creatures.ts`、他の種は 0 で変化なし）。保護対象：`fishing.ts` に完全一致の集合 `PROTECTED_EXACT = new Set(['アカメ'])` を足して `edibleInfo` で見る（持ち帰ると没収・罰金・評判減）。餌：`bait.ts` に完全一致の表 `DIET_EXACT`（アカメ＝魚の切り身）。どちらも部分一致の正規表現・語の表には足していない（S5・S6 が同じ表に足す）。
+  - シオマネキは左右非対称のはさみ（`buildCrustacean` に `fiddler` 引数、大はさみ 1 つ＋小はさみ 1 つ）。種の見た目は設計どおり（`carp` 等の型は川の種の S5）。
+  - **生き物が岸に乗り上げない処理**（S4 で必要になった、設計に明記のなかった点）：`creatures.ts` で (1) 河口・川の住みか（`SOUTH_REGIONS`）の群れの目標が岸（`heightFast > -0.9`）に当たったら群れの住みか点に戻す、(2) z < -50 で個体が床 > -0.8（岸・干潟の陸）に流されたら群れの中心へ引き戻す、(3) 泳ぐ個体の初期位置を水中（y ≤ -0.5、床の上）に収める。z ≥ -50 の挙動は変わらない。
+  - 図鑑：`ZONE_ORDER` に `'estuary'` を `'lagoon'` の次へ足した（設計 §5.1・BZ は S6 の担当だが、S4 の「全種が図鑑に出る」のために先に入れた。川は S6 で足す）。
+  - テストフック：`Game.ts` に `edible(id)`（`edibleInfo` の結果）。
+  - 検証：`scripts/probe-phase9.cjs` 62/62（S0〜S3 の 52 項目＋S4 の 10 項目：河口 18 種・魚 14、固有の魚（Phase 5 §6.1 と同じ数え方、群れの住みか点の `zoneAt` で 80%）が河口 14・ラグーン 21（23→21）、ボラ・クロホシの移動、アカメの仕様と保護・餌の完全一致、アナゴが夜だけ、全個体が水中・床の上・河口内（70% 以上）、18 種すべてが `findTarget` で撮影対象になる、図鑑に「河口」の 18 枚）。地形は `cmp` 一致。
+  - **未検証・注意**：実機の fps・見た目（スマホ）は未確認（S7 で計る）。生き物を入れた後の予算（§6.1）は S7 で計る。種の見た目（体型・模様・目の光）は同期キャプチャで確認していない（S8 の目視）。保護・餌の完全一致は河口の種だけ（川の種は S5・S6）。クライアントの `ZONE_ORDER` に川はまだ無い（S6）。
+  - 次の一手：S5（川の種 24、`carp`・`salmon`・`catfish` の型、`buildSalamander`、魚が上流を向く処理、アユの縄張り）。`species13.ts` の `ESTUARY_RIVER_SPECIES` に足し、完全一致の表（`DIET_EXACT`・`PROTECTED_EXACT`）に川の種（コイ・ゲンゴロウブナ・アユ・ナマズ・ウナギ・オオサンショウウオ）を足す。
 - **S3（景色と Homes）マージ済み**（PR #37、ブランチ `claude/phase9-s3`、`main` bb98fb8 から。設計 §2.4・§2.5・§3.1・§3.5・§7 S3）。**地形は変えていない**：`scripts/terrain-dump.ts` の変更前後を `cmp` で比べ、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` の差分 0。`layout.ts` への変更は `estuaryCentreX`・`estuaryHalfWidth` の 2 つの export だけ。
   - `src/world/southScenery.ts`（新規）：配置の計画 `planSouth()`（専用の乱数 `mulberry32(9009)`。既存の植生の配置は 1 つも動かない）と形 4 種。マングローブ `mangroveGeometry`（L0 560 三角形＝幹 8 角×4 段＋支柱根 10 本、L1 88＝根 4 本。頂点色：幹の茶・根元の藻の緑・根の 30% にマガキの白帯）、流木 `driftwoodGeometry`（120）、沈んだ舟 `sunkenBoatGeometry`（72）、ヨシ `reedGeometry`（8）。
   - 置いたもの：マングローブ 210 本（西岸の干潟、間隔 3.4〜4.8m。設計の目安 260 の −19%）／ヨシ 7,475 本（河口の東岸 40 束＋川の下流 25 束）／流木 75 本（河口の `DRIFTWOOD` の 12 か所＋川の下流 8 か所）／舟 1 隻（`(279,-372)`、淵の底 −3.4m。ダイブポイントの線から外した）／丸石 400 個（0.3〜1.2m、中流、浅い瀬ほど多い）／大岩 60 個（1.5〜4m、上流）／水草 500 株（中流、流れの向きに傾けた）。新しい画像は作っていない：マングローブ・流木・舟は岩の PBR＋頂点色の新材質 `mangrove`（シェーダは 1 本増える）、ヨシと水草は海草の葉（`grass`）の材質、丸石・大岩は岩礁の岩の形を縮尺違いで再利用。

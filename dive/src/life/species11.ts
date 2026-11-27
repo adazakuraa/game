@@ -32,8 +32,8 @@ function regionFor(zone: ZoneId, hab: Habitat): Region | undefined {
 }
 
 type Body = Parameters<typeof sh>[0];
-const b = (k: Body, o: Partial<FishShape> = {}) => sh(k, o);
-const fx = (id: string, name: string, sci: string, zone: ZoneId, d: [number, number], size: number, r: 1 | 2 | 3 | 4, body: FishSpec['body'], hab: Habitat, n: number, look: Look, desc: string, x: Partial<FishSpec> & { region?: Region; glow?: number } = {}): SpeciesDef => {
+export const b = (k: Body, o: Partial<FishShape> = {}) => sh(k, o);
+export const fx = (id: string, name: string, sci: string, zone: ZoneId, d: [number, number], size: number, r: 1 | 2 | 3 | 4, body: FishSpec['body'], hab: Habitat, n: number, look: Look, desc: string, x: Partial<FishSpec> & { region?: Region; glow?: number } = {}): SpeciesDef => {
   const region = x.region ?? regionFor(zone, hab);
   return F({ id, name, sci, zone, d, size, r, body, hab, n, look, desc, ...(region ? { region } : {}), ...x });
 };
@@ -55,7 +55,7 @@ const HAB_TEXT: Record<string, string> = {
 const ZONE_TEXT: Record<ZoneId, string> = { lagoon: '浅瀬ラグーン', reef: 'サンゴ礁', rocky: '岩礁', dropoff: 'ドロップオフ', offshore: '沖の大海原', deep: '深海', cold: '流氷の入り江', ruins: '海底遺跡', bluehole: 'ブルーホール', cave: '水中洞窟', kelp: '海藻の森', estuary: '河口', river: '川' };
 
 /** non-fish animal from a compact row */
-function nf(tag: string, id: string, name: string, sci: string, zone: ZoneId, d: [number, number], size: number, r: 1 | 2 | 3 | 4, prm: Record<string, unknown>, pt: [string, string | null, number, string | null], count: number, groups: number, desc: string, xg: Partial<SpeciesDef> & { glow?: number } = {}): SpeciesDef {
+export function nf(tag: string, id: string, name: string, sci: string, zone: ZoneId, d: [number, number], size: number, r: 1 | 2 | 3 | 4, prm: Record<string, unknown>, pt: [string, string | null, number, string | null], count: number, groups: number, desc: string, xg: Partial<SpeciesDef> & { glow?: number } = {}): SpeciesDef {
   const { glow, ...x } = xg;
   const base = { id, name, sci, zone, depth: d, size, rarity: r, desc, hint: `${ZONE_TEXT[zone]}。${HAB_TEXT[tag]}。`, habLabel: HAB_TEXT[tag] };
   const sessile = zone === 'rocky' ? 'rockSpots' : zone === 'cold' ? 'coldSpots' : zone === 'kelp' ? 'kelpSpots' : zone === 'reef' ? 'bommieSpots' : zone === 'lagoon' ? 'sandSpots' : ZR[zone];
