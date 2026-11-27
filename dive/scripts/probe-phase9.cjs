@@ -327,6 +327,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
   // discovery, boat screen, dive point
   const rd = await ev(() => {
     const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.save.discovered = g.save.discovered.filter((v) => v !== 'river'); g.save.visited = g.save.visited.filter((v) => v !== 'river'); // the live loop may have visited it between evaluations (same as the estuary check)
     const before = g.discovered.has('river');
     h.teleport(300, -4, -340); g.exploreCheck(g.camera.position);
     return { before, after: g.discovered.has('river'), q: g.mapFoundQ.map((m) => m.name), visited: g.save.visited.includes('river') };
