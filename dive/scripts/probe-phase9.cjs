@@ -1,11 +1,14 @@
 /**
- * Phase 9 probe (PHASE9-DESIGN §8.1). S2 (river: depths, flow, air, waterfall, water by position, dive point, Low fixes) is the last block. S0 (world extension + shore) and S1 (estuary terrain, water, dive point):
+ * Phase 9 probe (PHASE9-DESIGN §8.1). S3 (scenery + homes) is the last block before the page-error check. S2 (river: depths, flow, air, waterfall, water by position, dive point, Low fixes) is the last block. S0 (world extension + shore) and S1 (estuary terrain, water, dive point):
  *   - the shore stops the diver (heightAt stays <= -0.8) and says so; it slides instead of sticking
  *   - the creatures never leave the water in the south; no species lives in the new zones yet
  *   - the chart shows the island as land (green), the margin south of the world is land too
  *   - S1: estuary floor depths 0.9–9 m, dive point 6.5 m, zoneAt along the channel, channel swimmable (BFS + a steered swim),
  *     tea-green water 16 m with the 1.8 m salt wedge (fog colour / density above vs below), discovery banner + boat-screen entry,
  *     upstream-facing start with the boat downstream, 0.15 m/s channel flow and no change to currentF
+ *   - S3 (scenery and homes): the ten Homes lists within +-30% of the design tables and every point under water (floor < -0.9, y between floor and surface,
+ *     zoneAt = its zone); mangrove / reed / driftwood / boat / stones / boulders / weeds placed; trunk, log, boulder colliders push the diver out; the
+ *     swim lane along the river's centre line is free of solid rocks; mid-build render budget at E1 and R2 (calls / triangles / shadow pass)
  *   - boots with 0 page errors
  * (The terrain-invariance check for z >= -60 is scripts/terrain-dump.ts: dump before/after and compare.)
  * Usage: node scripts/probe-phase9.cjs [dist/artifact.html]   (PROBE_CHROME=<chromium binary>)
@@ -365,6 +368,88 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
   });
   console.log('  swim upriver', JSON.stringify(sw));
   check('swim: the diver can swim up the river against the flow to the plunge pool', sw.z <= -605, JSON.stringify(sw));
+
+  // ---------------------------------------------------------------- S3: scenery and homes
+  const TARGET = { estChannel: 120, estFlat: 160, mangrove: 140, reed: 160, riverLow: 120, riverRiffle: 120, riverPool: 100, riverUp: 80, riverStones: 160, riverSand: 100 };
+  const ZONEOF = { estChannel: 'estuary', estFlat: 'estuary', mangrove: 'estuary', reed: null, riverLow: 'river', riverRiffle: 'river', riverPool: 'river', riverUp: 'river', riverStones: 'river', riverSand: 'river' };
+  const hm = await ev((arg) => {
+    const h = window.__THREE_GAME_TEST_HOOKS__;
+    const out = {};
+    for (const k of Object.keys(arg.T)) {
+      const pts = h.homesList(k);
+      let bad = 0, badZone = 0;
+      for (const [x, y, z] of pts) {
+        const fl = h.heightAt(x, z);
+        if (!(fl < -0.9 && y >= fl - 1e-6 && y <= -0.3)) bad++;
+        const zn = h.zoneAt(x, z);
+        if (arg.Z[k] ? zn !== arg.Z[k] : (zn !== 'estuary' && zn !== 'river')) badZone++;
+      }
+      out[k] = { n: pts.length, count: h.homesCount(k), bad, badZone };
+    }
+    return out;
+  }, { T: TARGET, Z: ZONEOF });
+  console.log('  homes', JSON.stringify(Object.fromEntries(Object.entries(hm).map(([k, v]) => [k, v.n + '/' + TARGET[k]]))));
+  check('homes: all ten lists are within +-30% of the design tables (§2.5・§3.5)', Object.keys(TARGET).every((k) => hm[k].n >= TARGET[k] * 0.7 && hm[k].n <= TARGET[k] * 1.3 && hm[k].count === hm[k].n), JSON.stringify(Object.fromEntries(Object.entries(hm).map(([k, v]) => [k, v.n]))));
+  check('homes: every point is under water (floor < -0.9 m, y between the floor and -0.3 m)', Object.values(hm).every((v) => v.bad === 0), JSON.stringify(Object.fromEntries(Object.entries(hm).map(([k, v]) => [k, v.bad]))));
+  check('homes: every point lies in its zone (estuary lists in estuary, river lists in river, reed in either)', Object.values(hm).every((v) => v.badZone === 0), JSON.stringify(Object.fromEntries(Object.entries(hm).map(([k, v]) => [k, v.badZone]))));
+  const sc = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game, S = g.flora.south;
+    const rd = (x, z) => { const hh = window.__THREE_GAME_TEST_HOOKS__.flowAt; return hh; };
+    // swim lane: solid stones / boulders keep clear of the river's centre line (distance to the line >= 0.3 w + radius)
+    const P = [[320, -300], [300, -340], [272, -380], [256, -420], [270, -460], [300, -500], [292, -540], [252, -575], [226, -608], [216, -631]];
+    const distLine = (x, z) => { let best = 1e9, w = 0; for (let i = 0; i < P.length - 1; i++) { const [ax, az] = P[i], [bx, bz] = P[i + 1]; const dx = bx - ax, dz = bz - az; const u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz))); const d = Math.hypot(x - (ax + dx * u), z - (az + dz * u)); if (d < best) best = d; } return best; };
+    const W = [11, 10, 9, 8, 9, 7, 8, 7, 9];
+    const blocked = [...S.stones.filter((b) => b.solid), ...S.boulders].filter((b) => distLine(b.x, b.z) < 2.0 + b.r * 0.9).length;
+    const inWater = (a) => a.filter((b) => h.heightAt(b.x, b.z) < -0.9).length;
+    return {
+      mang: S.mangroves.length, mangWater: inWater(S.mangroves), reeds: S.reeds.length, logs: S.logs.length, stones: S.stones.length, boulders: S.boulders.length, weeds: S.weeds.length,
+      boatFloor: h.heightAt(S.boat.m.elements[12], S.boat.m.elements[14]), blocked,
+      mangWest: S.mangroves.every((t) => h.zoneAt(t.x, t.z) === 'estuary' && t.x < 300 + 15 * Math.sin(t.z * 0.02)),
+      inst: g.flora.instanceCount,
+    };
+  });
+  console.log('  scenery', JSON.stringify(sc));
+  check('scenery: mangroves 182–338 on the west flat (design ~260), reeds >= 6000, 12 + 8 driftwood piles of logs, 400 stones, 60 boulders, 500 weeds', sc.mang >= 182 && sc.mang <= 338 && sc.mangWest && sc.mangWater === sc.mang && sc.reeds >= 6000 && sc.logs >= 50 && sc.stones === 400 && sc.boulders === 60 && sc.weeds === 500, JSON.stringify(sc));
+  check('scenery: the sunken boat rests on a pool bed 3–6 m deep; no solid rock blocks the 4 m swim lane on the centre line', sc.boatFloor < -3 && sc.boatFloor > -6 && sc.blocked === 0, `floor=${sc.boatFloor.toFixed(2)} blocked=${sc.blocked}`);
+  const col = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game, S = g.flora.south;
+    g.input.poll = () => {};
+    // 3-D displacement over 3 steps from a start point (flow alone moves a diver in the river by ~0.1 m in this time: the control)
+    const push = (x, y, z) => { h.teleport(x, y, z); g.vel.set(0, 0, 0); g.input.moveX = 0; g.input.moveY = 0; for (let i = 0; i < 3; i++) g.updateDiver(0.05); const p = g.camera.position; return +Math.hypot(p.x - x, p.y - y, p.z - z).toFixed(3); };
+    const t = S.mangroves[0], b = S.boulders[0], lg = S.logs[0].spheres[1];
+    const bt = S.boulders[1];
+    return {
+      tree: push(t.x + 0.05, t.y + 1.2, t.z), free: push(300, -3.5, -95),
+      boulder: push(b.x, b.y + b.sy * 0.6, b.z),
+      log: push(lg.x, lg.y, lg.z),
+      trunkR: +(0.27 * t.s).toFixed(2),
+    };
+  });
+  check('colliders: a diver placed inside a mangrove trunk / a boulder / a driftwood log is pushed out (>= 0.2 m; a diver in the open channel moves < 0.2 m)', col.tree >= 0.2 && col.boulder >= 0.2 && col.log >= 0.2 && col.free < 0.2, JSON.stringify(col));
+  // mid-build budget (§6.1 places E1 and R2): worst of four headings, scenery + terrain only (no species live here yet)
+  const bud = await ev(async () => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game, V = g.camera.position.constructor;
+    g.input.poll = () => {};
+    const out = {};
+    for (const [name, x, y, z] of [['E1', 240, -1.2, -170], ['E2', 300, -3.2, -110], ['R1', 300, -3.2, -340], ['R2', 256, -1.0, -420], ['R3', 224, -4, -612]]) {
+      let worst = { calls: 0, tris: 0, sCalls: 0, sTris: 0 };
+      for (const yaw of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+        h.teleport(x, y, z); g.terrain.prime(x, z, 90); h.look(yaw, 0.05); g.updateDiver(0.05);
+        const cp = g.camera.position;
+        for (let i = 0; i < 6; i++) { g.flora.update(cp, g.time); g.terrain.update(cp.x, cp.z, g.terrain.radius, 1); }
+        g.env.update(0.05, g.camera, g.renderer, g.time);
+        const info = g.renderer.info, auto = info.autoReset; info.autoReset = false;
+        const m = (sh) => { info.reset(); g.renderer.shadowMap.needsUpdate = sh; g.renderer.render(g.scene, g.camera); return { c: info.render.calls, t: info.render.triangles }; };
+        const a = m(false), b = m(true);
+        info.autoReset = auto;
+        worst = { calls: Math.max(worst.calls, a.c), tris: Math.max(worst.tris, a.t), sCalls: Math.max(worst.sCalls, b.c - a.c), sTris: Math.max(worst.sTris, b.t - a.t) };
+      }
+      out[name] = worst;
+    }
+    return out;
+  });
+  console.log('  budget (scenery+terrain only)', JSON.stringify(bud));
+  check('budget: at E1 / E2 / R1 / R2 / R3 the scenery stays in §6.1 (calls <= 140, triangles <= 350k, shadow pass <= 35 calls / 100k tris)', Object.values(bud).every((b) => b.calls <= 140 && b.tris <= 350000 && b.sCalls <= 35 && b.sTris <= 100000), JSON.stringify(bud));
 
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close(); server.close();

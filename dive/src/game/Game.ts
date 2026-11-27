@@ -2574,6 +2574,9 @@ export class Game {
       flowAt: (x: number, z: number, y?: number) => { const o = { x: 0, z: 0 }; flowAt(x, z, o, y); return o; },
       /** Phase 9 S2: the river's water table, the camera's river position / foam, the waterfall, the last air multiplier from flow */
       riverWater: () => ({ table: RIVER_WATER, zone: ZONE_WATER.river, t: this.env.riverT, foam: this.env.foamK, fall: WATERFALL, flowAir: this.flowAir, shore: (x: number, z: number) => this.shoreText(x, z) }),
+      /** Phase 9 S3: number of points in a Homes list (estChannel, estFlat, mangrove, reed, riverLow, riverRiffle, riverPool, riverUp, riverStones, riverSand), the points themselves, and the scenery's instance counts */
+      homesCount: (name: string) => ((this.flora.homes as unknown as Record<string, unknown[] | undefined>)[name] ?? []).length,
+      homesList: (name: string) => ((this.flora.homes as unknown as Record<string, THREE.Vector3[] | undefined>)[name] ?? []).map((v) => [v.x, v.y, v.z]),
       offerMission: () => { this.missions.forceOffer = true; },
       /** Phase 3: photo spots with their focus points */
       spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r }; }),
