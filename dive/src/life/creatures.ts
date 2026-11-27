@@ -6,7 +6,7 @@ import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
-import { caveRoofAt, caveTopAt, heightFast, SHORE_BLOCK, VENT } from '../world/layout';
+import { caveRoofAt, caveTopAt, flowAt, heightFast, riverDist, SHORE_BLOCK, VENT, zoneAt } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 /** Phase 9 S3: regions that name an estuary / river `Homes` list */
 const SOUTH_REGIONS = new Set(['estChannel', 'estFlat', 'mangrove', 'reed', 'riverLow', 'riverRiffle', 'riverPool', 'riverUp', 'riverStones', 'riverSand']);
@@ -102,6 +102,7 @@ const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 const _eStage = new THREE.Euler();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
+const _fl = { x: 0, z: 0 };
 const _qt = new THREE.Quaternion();
 const _sc = new THREE.Vector3();
 
@@ -645,6 +646,18 @@ export class Creatures {
     return best;
   }
 
+  /**
+   * Phase 9 S5: the home points a river / estuary species may use. `reed` is shared by the estuary and the river's lower reach (own zone only);
+   * an estuary species keeps 15 m off the river's mouth, a river species off the first 12 m of the river and the bank-side 25% of the channel (its group would leave the zone).
+   */
+  private southHomes(def: SpeciesDef, all: THREE.Vector3[]): THREE.Vector3[] {
+    const reg = def.region as string;
+    let own = reg === 'reed' ? all.filter((q) => zoneAt(q.x, q.z) === def.zone) : all;
+    if (def.zone === 'estuary') own = own.filter((q) => q.z > -285); // the last 15 m of the estuary meet the river's mouth: a group roaming 20 m would swim into the river zone
+    if (def.zone === 'river') own = own.filter((q) => { if (q.z > -312) return false; const r = riverDist(q.x, q.z); return r.d < 0.75 * r.w; });
+    return own.length ? own : all;
+  }
+
   private pickHome(def: SpeciesDef, homes: Homes, i: number): THREE.Vector3 {
     const r = this.rnd;
     const reg = def.region;
@@ -668,7 +681,9 @@ export class Creatures {
     else if (reg === 'caveSpots') p = fromList(homes.caveSpots);
     else if (reg === 'caveTopSpots') p = fromList(homes.caveTopSpots);
     else if (reg === 'kelpSpots') p = fromList(homes.kelpSpots);
-    else if (typeof reg === 'string' && SOUTH_REGIONS.has(reg)) p = fromList(homes[reg as keyof Homes] as THREE.Vector3[]);
+    else if (typeof reg === 'string' && SOUTH_REGIONS.has(reg)) {
+      p = fromList(this.southHomes(def, homes[reg as keyof Homes] as THREE.Vector3[]));
+    }
     else if (reg === 'vent') {
       const a = r() * Math.PI * 2, d = 5 + r() * 18;
       const x = VENT.x + Math.cos(a) * d, z = VENT.z + Math.sin(a) * d;
@@ -772,6 +787,22 @@ export class Creatures {
     return base + (def.kind === 'fish' ? s * 0.1 : def.kind === 'octopus' ? s * 0.08 : 0.005);
   }
 
+  /**
+   * Phase 9 S5: where a river / estuary animal rests when its first spot is a boulder top or bank above the water: the nearest spot (1–3 m
+   * round its home point) whose surface is under water, else the floor itself. Writes x, z and y into `out`.
+   */
+  private restSouth(def: SpeciesDef, home: THREE.Vector3, s: number, out: THREE.Vector3): void {
+    for (let rad = 1; rad <= 3; rad += 1) {
+      for (let k = 0; k < 8; k++) {
+        const x = home.x + Math.cos((k / 8) * Math.PI * 2) * rad, z = home.z + Math.sin((k / 8) * Math.PI * 2) * rad;
+        if (heightFast(x, z) > -0.9) continue;
+        const y = this.restY(def, x, z, s);
+        if (y < -0.4) { out.set(x, y, z); return; }
+      }
+    }
+    out.set(home.x, heightFast(home.x, home.z) + 0.02, home.z);
+  }
+
   /** Same, cached per agent while it crawls (re-sampled every 20 cm). */
   private crawlY(def: SpeciesDef, a: Agent): number {
     if (a.gx === undefined || Math.abs(a.p.x - a.gx) + Math.abs(a.p.z - a.gz!) > 0.2) {
@@ -802,7 +833,7 @@ export class Creatures {
         const g0 = heightFast(home.x, home.z);
         home.y = Math.max(home.y, g0 + this.altitude(def));
       }
-      const roam = def.behavior === 'pelagic' ? 60 : def.behavior === 'drift' ? 14 : def.region === 'reefSpots' ? 5 : 20;
+      const roam = def.behavior === 'pelagic' ? 60 : def.behavior === 'drift' ? 14 : def.region === 'reefSpots' ? 5 : def.zone === 'river' ? 9 : 20; // the river is 14–22 m wide: a group stays near its pool
       const gNew = { c: home.clone(), t: home.clone(), home, v: new THREE.Vector3(), roam, timer: 0 };
       rt.groups.push(gNew);
       this.mixSet(def, gNew, home);
@@ -838,6 +869,12 @@ export class Creatures {
           a.p.y = def.anchorHome ? g.home.y + (r() - 0.5) * 0.2 : this.groundY(def, a.p.x, a.p.z) + 0.12 + a.s * 0.3;
           if (def.anchorHome) a.fixed = true;
         }
+      } else if (def.behavior === 'crevice' && SOUTH_REGIONS.has(def.region as string)) {
+        // Phase 9 S5: river eels / catfish / the giant salamander hide among the stones of their own Homes list, not the reef's crevices
+        a.p.set(g.home.x + (r() - 0.5) * 0.8, 0, g.home.z + (r() - 0.5) * 0.8);
+        a.p.y = heightFast(a.p.x, a.p.z) + 0.06 + a.s * 0.08;
+        a.yaw = r() * Math.PI * 2;
+        a.fixed = true;
       } else if (def.behavior === 'crevice') {
         const idx = (i * 7 + 3) % homes.crevices.length;
         const c = homes.crevices[idx];
@@ -849,10 +886,12 @@ export class Creatures {
         a.p.y = heightFast(a.p.x, a.p.z) + (def.kind === 'lobster' ? 0.05 : 0.35 + r() * 0.4);
         a.fixed = true;
       } else if (def.behavior === 'static') {
-        const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots';
+        const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots' || def.region === 'riverStones';
         const spread = onTop ? 1.2 : 3;
         a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * spread, 0, (r() - 0.5) * spread));
         a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
+        // Phase 9 S5: a river animal never sits on a boulder that breaks the surface: back to its home point under the water
+        if (SOUTH_REGIONS.has(def.region as string) && a.p.y > -0.4) this.restSouth(def, g.home, a.s, a.p);
         if (def.kind === 'none') a.p.set(VENT.x, heightFast(VENT.x, VENT.z) + 1.5, VENT.z);
       }
       if (def.instColors) a.col = new THREE.Color(def.instColors[Math.floor(r() * def.instColors.length)]);
@@ -1193,12 +1232,25 @@ export class Creatures {
   private orient(rt: SpeciesRuntime, a: Agent, k: number) {
     const def = rt.def;
     const sp = a.v.length();
+    // Phase 9 S5 (PHASE9-DESIGN §3.3): a river fish holding station (slow) faces upstream; the faster it swims, the more its own heading wins
+    let wUp = 0;
+    if (def.zone === 'river' && def.kind === 'fish' && !a.fixed && (def.behavior === 'school' || def.behavior === 'solo') && sp < 0.35) {
+      flowAt(a.p.x, a.p.z, _fl, a.p.y);
+      if (Math.hypot(_fl.x, _fl.z) > 0.05) {
+        const up = Math.atan2(-_fl.x, -_fl.z);
+        let du = up - a.yaw;
+        while (du > Math.PI) du -= Math.PI * 2;
+        while (du < -Math.PI) du += Math.PI * 2;
+        wUp = 0.6 + 0.4 * (1 - sp / 0.35);
+        a.yaw += du * k * wUp;
+      }
+    }
     if (sp > 0.02 && !a.fixed) {
       const yaw = Math.atan2(a.v.x, a.v.z);
       let dy = yaw - a.yaw;
       while (dy > Math.PI) dy -= Math.PI * 2;
       while (dy < -Math.PI) dy += Math.PI * 2;
-      a.yaw += dy * k;
+      a.yaw += dy * k * (1 - wUp);
     }
     if (a.watch && a.watch > 0) {
       // broadside to the diver: steer toward the nearer of the two tangent headings
@@ -1342,7 +1394,8 @@ export class Creatures {
       return d > minD && d < 75;
     };
     if (typeof reg === 'string') {
-      const list = this.homeList(reg);
+      let list = this.homeList(reg);
+      if (SOUTH_REGIONS.has(reg) && list?.length) list = this.southHomes(def, list);
       if (!list?.length) return false;
       const q = this.pickSpread(list, (h) => ok(h.x, h.z), 8, def.id);
       if (q) p = q.clone();
@@ -1374,9 +1427,11 @@ export class Creatures {
       if (def.behavior === 'static') {
         a.p.copy(p);
         // benthic animals scatter over several metres rather than piling up on one rock
-        const spread = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots' ? 3.5 : 6;
+        const south = SOUTH_REGIONS.has(def.region as string);
+        const spread = south ? 1.2 : def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots' ? 3.5 : 6;
         a.p.x += (r() - 0.5) * spread; a.p.z += (r() - 0.5) * spread;
         a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
+        if (south && a.p.y > -0.4) this.restSouth(def, p, a.s, a.p); // never onto a bank or a boulder that breaks the surface
         a.gx = undefined;
         a.alarm = 0;
       } else if (def.behavior === 'buried') {
@@ -1385,7 +1440,9 @@ export class Creatures {
         a.retract = 0;
       } else {
         a.p.copy(g.c).add(a.off);
+        if (SOUTH_REGIONS.has(def.region as string) && heightFast(a.p.x, a.p.z) > -0.9) { a.p.x = g.c.x; a.p.z = g.c.z; } // the formation's offset must not put it on a bank
         const gy = heightFast(a.p.x, a.p.z) + 0.1;
+        if (a.p.y > -0.4) a.p.y = -0.4; // a school's vertical spread never starts above the surface (the per-frame clamp does the same once it is updated)
         if (a.p.y < gy) a.p.y = gy;
       }
     }
@@ -1867,6 +1924,7 @@ export class Creatures {
             a.alarm -= dt;
             a.p.addScaledVector(a.v, dt);
             a.v.multiplyScalar(1 - dt * 0.6);
+            if (SOUTH_REGIONS.has(def.region as string) && this.crawlY(def, a) > -0.4) { a.p.addScaledVector(a.v, -dt); a.v.set(0, 0, 0); a.gx = undefined; } // fleeing onto a boulder / bank that breaks the surface: stop
             const gy = this.crawlY(def, a);
             a.p.y += (gy + (a.alarm > 0.5 && def.kind === 'fish' ? 0.4 : 0) - a.p.y) * Math.min(1, dt * 3);
             this.orient(rt, a, 1 - Math.exp(-dt * 4));
@@ -2004,7 +2062,7 @@ export class Creatures {
         let gy = this.groundY(def, a.p.x, a.p.z);
         if (a.p.z < -50 && gy > -0.8) {
           // Phase 9 S4: the south's banks and flats are land: a fish that drifts onto one is eased back toward its group (the water is never left)
-          const k = Math.min(1, dt * 3);
+          const k = gy > -0.5 ? 1 : Math.min(1, dt * 3); // on dry land: straight back into the water
           a.p.x += (g.c.x - a.p.x) * k; a.p.z += (g.c.z - a.p.z) * k;
           a.v.multiplyScalar(0.5);
           gy = this.groundY(def, a.p.x, a.p.z);
@@ -2021,6 +2079,11 @@ export class Creatures {
             // crawlers stay on the surface they are crossing (sand, rock or coral)
             a.p.y = this.crawlY(def, a);
             a.v.y = 0;
+            if (a.p.y > -0.35 && SOUTH_REGIONS.has(def.region as string)) {
+              // Phase 9 S5: a crab that crawled onto a boulder breaking the surface goes back to its home stones
+              a.p.x = g.home.x; a.p.z = g.home.z; a.gx = undefined; a.p.y = this.crawlY(def, a);
+              if (a.p.y > -0.35) a.p.y = heightFast(a.p.x, a.p.z) + 0.02; // the home point itself sits under a boulder: stay on the floor
+            }
           } else {
             // rays and dumbo octopus glide just above the floor
             const cap = gy + this.altitude(def) + 0.45;
@@ -2029,6 +2092,7 @@ export class Creatures {
         }
         // near the diver, keep swimmers outside coral heads and rocks
         if (dPlayer < 25 && def.hab !== 'under') resolveSphere(a.p, a.s * 0.25, a.v);
+        if (a.p.y > -0.3 && SOUTH_REGIONS.has(def.region as string)) a.p.y = -0.3; // a boulder's push-out must not lift a river fish out of the water
         this.orient(rt, a, 1 - Math.exp(-dt * (def.size > 3 ? 1.2 : 5)));
         this.writeInstance(rt, a, i);
       }

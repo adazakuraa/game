@@ -1,4 +1,4 @@
-import { buildCrustacean } from './models';
+import { buildCrustacean, buildSalamander } from './models';
 import type { SpeciesDef } from './species';
 import { b, fx, nf } from './species11';
 
@@ -22,6 +22,12 @@ const maanago = fx('maanago', 'アナゴ', 'Conger myriaster', 'estuary', [2, 8]
   '昼は泥の中にもぐり、夜になると出てきて小魚やエビを食べる。白い点の列が側線に並ぶ。江戸前の天ぷらや寿司の定番。',
   { region: 'estFlat', g: 4, swim: [0.8, 0.015, 8] });
 maanago.when = 'night';
+
+/** Phase 9 S5: a river species' hint and habitat label say where in the river and how it lives (the generic habitat text is for the sea). */
+const river = (d: SpeciesDef, part: string, how: string): SpeciesDef => { d.hint = `川の${part}。${how}。`; d.habLabel = how; return d; };
+
+/** a night-only species (when: 'night', same as the estuary's アナゴ) */
+const nightly = (d: SpeciesDef): SpeciesDef => { d.when = 'night'; return d; };
 
 export const ESTUARY_RIVER_SPECIES: SpeciesDef[] = [
   akame,
@@ -78,4 +84,104 @@ export const ESTUARY_RIVER_SPECIES: SpeciesDef[] = [
   nf('clam', 'magaki', 'マガキ', 'Magallana gigas', 'estuary', [0.5, 3], 0.1, 1, { mantle: false }, ['#9a9688', '#d0ccbc', 40, null], 30, 6,
     'マングローブの根や流木にびっしりと付く、灰白色のごつごつした二枚貝。海水をこして育つ。',
     { region: 'mangrove' }),
+
+  // ================= S5: the river (PHASE9-DESIGN §4.3). Every river species names a `Homes` list (the river is too thin for a rectangle).
+  // lower reach
+  river(fx('koi', 'コイ', 'Cyprinus carpio', 'river', [2, 6], 0.6, 1, b('carp', { barbels: 2 }), 'sandForage', 10,
+    { c: ['#3a3226', '#6a5a40', '#c8b890'], mid: 0.5, fin: '#4a4030', scales: 0.3 },
+    '口に2対のひげがある大きな魚。川底の泥や砂をすくって、貝や虫、水草を食べる。下流のゆるやかな淵でゆっくり泳ぐ。',
+    { region: 'riverLow', g: 3, behavior: 'school', speed: 0.25, spread: 2, metal: 0.15 }), '下流', '淵の底をゆっくり泳ぎ、砂泥をつついて餌を探す'),
+  river(fx('gengorobuna', 'ゲンゴロウブナ', 'Carassius cuvieri', 'river', [1, 5], 0.3, 1, b('carp', { H: 0.4 }), 'midwater', 16,
+    { c: ['#5a5a48', '#aeb0a0', '#e0e0d4'], mid: 0.45, fin: '#7a7a68', scales: 0.2 },
+    'フナの仲間で最も大きくなる、体高の高い銀灰色の魚。プランクトンをこして食べ、下流の淵や岸の近くに群れる。',
+    { region: 'riverLow', g: 3, speed: 0.35, spread: 2, metal: 0.35 }), '下流', '淵の中層に群れてプランクトンをこして食べる'),
+  river(fx('nigoi', 'ニゴイ', 'Hemibarbus barbus', 'river', [1, 5], 0.45, 1, b('carp', { H: 0.22, barbels: 1 }), 'sandForage', 10,
+    { c: ['#6a6a50', '#b4b090', '#ece8d8'], mid: 0.5, fin: '#8a866c', spots: [[10, 0.006, 0.01, 'rgba(50,50,36,0.5)', [0.1, 0.9, 0.1, 0.35]]] },
+    '細長い体と大きな口。砂底の小さな生き物を、口で吸い込んで探す。コイに似るが、ひげは1対だけ。',
+    { region: 'riverSand', g: 4, behavior: 'bottom', speed: 0.3, spread: 2 }), '下流から中流', '砂の底すれすれを泳ぎ、底の虫や貝を吸い込む'),
+  river(fx('namazu', 'ナマズ', 'Silurus asotus', 'river', [1.5, 6], 0.6, 2, b('catfish', { barbels: 2 }), 'under', 4,
+    { c: ['#2e2a24', '#4a4034', '#a89c84'], mid: 0.55, fin: '#38322a', blotch: [14, ['rgba(110,96,72,0.6)']] },
+    '平たい頭と長いひげをもつ夜行性のナマズ。昼は流木やヨシの陰でじっとして、夜になると小魚やエビを丸のみにする。',
+    { region: 'riverLow', g: 4, behavior: 'solo', speed: 0.15, spread: 0.6 }), '下流', '流木やヨシの陰に潜み、小魚を待ちぶせる'),
+  river(fx('unagi', 'ウナギ', 'Anguilla japonica', 'river', [1, 6], 0.7, 2,
+    b('rattail', { H: 0.1, W: 0.09, tail: 'none', dorsal: [{ a: 0, b: 0.85, h: 0.035, sweep: 0 }], anal: [{ a: 0, b: 0.55, h: 0.03 }], pect: undefined, eyes: 0.18, eyeT: 0.9, segs: 30, rings: 8, peak: 0.6, nose: 0.55 }),
+    'under', 6, { c: ['#2c3a30', '#5a6a52', '#e6e4d2'], mid: 0.62, fin: '#3a463a' },
+    '背は暗い緑、腹は白い。昼は石のすき間に頭だけ出して潜み、夜に小魚やカニを狩る。生まれは遠い海で、川を上って大きくなる。',
+    { region: 'riverStones', g: 6, behavior: 'crevice', speed: 0, swim: [0.8, 0.015, 8] }), '下流から中流', '石のすき間に体を隠し、頭だけをのぞかせている'),
+  nightly(river(fx('gigi', 'ギギ', 'Tachysurus nudiceps', 'river', [1, 5], 0.25, 2, b('catfish', { H: 0.16, barbels: 2 }), 'under', 8,
+    { c: ['#6a5a34', '#a8904e', '#d8c898'], mid: 0.5, fin: '#7a6a3c', bars: [[0.12, 0.08, 'rgba(50,38,16,0.6)'], [-0.12, 0.08, 'rgba(50,38,16,0.6)']] },
+    '黄褐色に暗い帯がある小型のナマズ。夜になると石の下から出てくる。ひれのトゲで「ギギ」と音を立てる。',
+    { region: 'riverStones', g: 4, behavior: 'crevice', speed: 0, swim: [1.2, 0.04, 3] }), '中流', '昼は石の下に隠れ、夜に出て歩く')),
+  river(fx('dojou', 'ドジョウ', 'Misgurnus anguillicaudatus', 'river', [0.9, 2], 0.12, 1, b('carp', { H: 0.12, W: 0.1, barbels: 1, scaleN: 0, swimMode: 'anguilliform', segs: 24 }), 'burrow', 16,
+    { c: ['#8a7a4a', '#b8a468', '#e0d4a8'], fin: '#9a8a58', spots: [[60, 0.004, 0.008, 'rgba(60,46,24,0.55)']] },
+    '黄褐色の細長い体に、口のまわりのひげ。泥の中にもぐって、小さな虫や藻を食べる。ヨシの根元の泥底にすむ。',
+    { region: 'reed', g: 4, speed: 0, spread: 0.6 }), '下流のヨシ原', '泥底に体をもぐらせ、ひげで餌を探す'),
+  river(fx('nipponbaratanago', 'ニッポンバラタナゴ', 'Rhodeus ocellatus kurumeus', 'river', [0.9, 2.5], 0.05, 2, b('damsel', { H: 0.52 }), 'seagrass', 18,
+    { c: ['#6a7a7a', '#c8d0d4', '#f0f0ea'], mid: 0.5, fin: '#e86a3a', bars: [[0.25, 0.06, '#7a4aa8']], hl: [[0.0, 0.06, '#3a8a9a', -0.4, 0.3]] },
+    '日本にだけすむ小さなタナゴ。繁殖期の雄は紫と朱の婚姻色になり、雌はドブガイの中に卵を産む。数が減っている。',
+    { region: 'reed', g: 3, speed: 0.18, spread: 1.2, metal: 0.3 }), '下流のヨシ原', 'ドブガイのまわりを小さな群れで漂う'),
+  river(fx('medaka', 'メダカ', 'Oryzias latipes', 'river', [0.2, 1], 0.03, 1, b('needle', { H: 0.1, W: 0.09, eyes: 0.7, tail: 'round', tailL: 0.16, tailH: 0.2, nose: 0.3, segs: 16 }), 'surface', 30,
+    { c: ['#b8a468', '#d8cc9c', '#f0ecd8'], fin: '#e8e2c8', iris: '#222' },
+    '小さくて半透明の魚。水面近くを群れて、水に落ちた虫や小さなプランクトンを食べる。ヨシの水際のおだやかな場所にいる。',
+    { region: 'reed', g: 3, speed: 0.3, spread: 1.4 }), '下流のヨシの水際', '水面すれすれを小さな群れで泳ぐ'),
+  // middle reach
+  river(fx('ayu', 'アユ', 'Plecoglossus altivelis', 'river', [0.9, 3], 0.2, 1, b('salmon', { H: 0.18 }), 'rockyRoam', 40,
+    { c: ['#6a7a48', '#a8b078', '#eceedc'], mid: 0.5, fin: '#8a9a60', hl: [[0.05, 0.05, '#f0c830', 0.18, 0.4]], scales: 0.15 },
+    '石についた藻をくしのような歯でこそげ取って食べる。縄張りをもつアユは、近づくものに体当たりのしぐさをする。胸の黄色い斑が目印。',
+    { region: 'riverRiffle', g: 5, behavior: 'school', speed: 0.45, spread: 2.2, metal: 0.3,
+      aggro: { kind: 'territory', chance: 0.2, range: 2.2, bite: 0, speed: 1.6 } }), '中流の瀬', '瀬の石の上で藻を食べ、近づく者を追い払う'),
+  river(fx('oikawa', 'オイカワ', 'Opsariichthys platypus', 'river', [0.9, 2.5], 0.12, 1, b('carp', { H: 0.2, mouth: 'term' }), 'midwater', 30,
+    { c: ['#5a7a74', '#b8c8c4', '#ecf0ee'], mid: 0.5, fin: '#d86a4a', bars: [[0.2, 0.05, '#3a9aaa'], [0.02, 0.05, '#d8603a'], [-0.16, 0.05, '#3a9aaa']], scales: 0.2 },
+    '体側に青緑と朱の縦帯が出る、川の人気者。繁殖期の雄はとくに派手になる。瀬の縁のゆるやかな流れで群れる。',
+    { region: 'riverRiffle', g: 4, speed: 0.55, spread: 2.4, metal: 0.35 }), '中流の瀬の縁', '流れのゆるやかな縁を群れで泳ぐ'),
+  river(fx('ugui', 'ウグイ', 'Pseudaspius hakonensis', 'river', [1, 5], 0.3, 1, b('carp', { H: 0.22, mouth: 'term' }), 'midwater', 30,
+    { c: ['#5a5e4a', '#a8aa94', '#e8e8dc'], mid: 0.5, fin: '#8a8a74', hl: [[0.02, 0.025, '#d8503a', -0.4, 0.4], [-0.1, 0.025, '#d8503a', -0.4, 0.4], [-0.2, 0.025, '#d8503a', -0.4, 0.4]], scales: 0.2 },
+    '繁殖期に体側の3本の朱色の線が出る、川の代表的な魚。淵の中層に群れて、虫や藻など何でも食べる。',
+    { region: 'riverPool', g: 4, speed: 0.5, spread: 2.4, metal: 0.3 }), '中流の淵', '淵の中層に群れ、流れてくる餌を待つ'),
+  river(fx('kawamutsu', 'カワムツ', 'Candidia temminckii', 'river', [0.9, 3], 0.13, 1, b('carp', { H: 0.22, mouth: 'term' }), 'midwater', 24,
+    { c: ['#5a5a3a', '#b0a878', '#ece8d4'], mid: 0.5, fin: '#c0703a', hl: [[0.0, 0.06, '#3a3a2a', -0.4, 0.3]], scales: 0.2 },
+    '体側に暗い縦帯が通る小魚。淵の縁の流れのゆるやかなところで、水面の虫や藻を食べる。',
+    { region: 'riverPool', g: 4, speed: 0.45, spread: 2, metal: 0.3 }), '中流の淵の縁', '淵の縁の浅いところに群れる'),
+  river(fx('kamatsuka', 'カマツカ', 'Pseudogobio esocinus', 'river', [0.9, 3], 0.18, 1, b('lizard', { H: 0.13 }), 'burrow', 12,
+    { c: ['#8a7a5a', '#b8aa86', '#e8e0cc'], fin: '#9a8a68', spots: [[40, 0.006, 0.012, 'rgba(70,56,36,0.5)']] },
+    '砂色のまだら模様で、砂にもぐって目だけを出す。驚くと砂ごと水中に飛び出す。口先で砂底の小さな生き物をあさる。',
+    { region: 'riverSand', g: 5, speed: 0, spread: 0.6 }), '下流から中流の砂底', '砂に体をもぐらせて目だけを出している'),
+  river(fx('kawayoshinobori', 'カワヨシノボリ', 'Rhinogobius flumineus', 'river', [0.9, 3], 0.06, 1, b('goby', {}), 'perch', 24,
+    { c: ['#6a5a42', '#9a8662', '#d4c8a8'], fin: '#7a6a4c', spots: [[20, 0.004, 0.008, 'rgba(40,32,20,0.55)']] },
+    '腹の吸盤のようなひれで、流れの中でも石にしっかり張りつく小さなハゼ。川の石の上でじっとしている。',
+    { region: 'riverStones', g: 8 }), '中流の石の上', '胸びれで石に張りつき、流れの中でじっとしている'),
+  // upper reach
+  river(fx('yamame', 'ヤマメ', 'Oncorhynchus masou masou', 'river', [1, 5], 0.25, 2, b('salmon', {}), 'midwater', 10,
+    { c: ['#5a6a58', '#b0b8a0', '#eceee4'], mid: 0.5, fin: '#7a8a70', bars: [[0.3, 0.05, 'rgba(70,80,96,0.6)'], [0.2, 0.05, 'rgba(70,80,96,0.6)'], [0.1, 0.05, 'rgba(70,80,96,0.6)'], [0.0, 0.05, 'rgba(70,80,96,0.6)'], [-0.1, 0.05, 'rgba(70,80,96,0.6)'], [-0.2, 0.05, 'rgba(70,80,96,0.6)']], spots: [[10, 0.004, 0.006, '#e8503a', [0.05, 0.9, 0.35, 0.5]]] },
+    '体側の楕円のパーマークと朱の点が美しい。淵の頭の流れに向かって定位し、流れてくる虫をねらう。海へ下ったものがサクラマスになる。',
+    { region: 'riverUp', g: 5, behavior: 'solo', speed: 0.2, spread: 0.8, metal: 0.25 }), '上流の淵の頭', '流れに向かって頭を向け、流れてくる虫をねらう'),
+  river(fx('iwana', 'イワナ', 'Salvelinus leucomaenis', 'river', [1, 7], 0.35, 2, b('salmon', { H: 0.24 }), 'under', 8,
+    { c: ['#3a4636', '#6a7458', '#c8c4a4'], mid: 0.55, fin: '#6a7058', spots: [[60, 0.004, 0.007, 'rgba(240,236,208,0.85)', [0.05, 0.95, 0.05, 0.6]]] },
+    '暗い緑褐色に白い点が散る、水のきれいな上流の魚。滝つぼの岩陰に潜み、落ちてきた虫や小魚を待ちぶせる。',
+    { region: 'riverUp', g: 5, behavior: 'solo', speed: 0.12, spread: 0.6 }), '上流の滝つぼ', '滝つぼの岩陰にじっと潜む'),
+  river(fx('aburahaya', 'アブラハヤ', 'Rhynchocypris lagowskii steindachneri', 'river', [0.9, 3], 0.1, 1, b('carp', { H: 0.18, mouth: 'term' }), 'midwater', 24,
+    { c: ['#6a6240', '#aa9c68', '#e6e0c4'], mid: 0.5, fin: '#8a7e52', hl: [[0.0, 0.05, '#3a3220', -0.4, 0.3]], scales: 0.1 },
+    '黄褐色の体に暗い縦帯のある小さな魚。体がぬるぬるしている。冷たい上流の淵の縁で群れる。',
+    { region: 'riverUp', g: 4, speed: 0.4, spread: 1.8 }), '上流の淵の縁', '淵の縁の岩のそばを小さな群れで泳ぐ'),
+  river(fx('kajika', 'カジカ', 'Cottus pollux', 'river', [0.9, 3], 0.13, 2, b('scorp', { H: 0.26 }), 'perch', 10,
+    { c: ['#4a3a2a', '#6a5640', '#a89878'], fin: '#5a4834', blotch: [24, ['rgba(120,100,70,0.5)', 'rgba(30,22,14,0.5)']] },
+    '頭が大きく、暗い褐色のまだら模様。上流の石の上にじっとして、近くを通る虫や小魚をぱくりと食べる。',
+    { region: 'riverStones', g: 6 }), '上流の石の上', '大きな胸びれで石の上にじっとしている'),
+  // invertebrates
+  river(nf('lobster', 'minamitenagaebi', 'ミナミテナガエビ', 'Macrobrachium formosense', 'river', [0.9, 4], 0.1, 1, {}, ['#5a4a38', '#8a6a48', 18, '#3a2e22'], 16, 6,
+    '雄は体より長い、細くて長いはさみ脚をもつ。昼は石や流木の陰に隠れ、夜に出て歩きまわる。',
+    { region: 'riverStones', behavior: 'static' }), '中流の石や流木', '石や流木の陰で長いはさみを広げている'),
+  river(nf('crab', 'mokuzugani', 'モクズガニ', 'Eriocheir japonica', 'river', [1, 4], 0.08, 1, {}, ['#5a4e34', '#8a7a52', 26, null], 8, 5,
+    'はさみに茶色の毛が房のように生えている。川で育ち、秋に海へ下って産卵する。石の間を歩きまわる。',
+    { region: 'riverStones' }), '中流の石のあいだ', '川底の石のあいだを歩きまわる'),
+  river(nf('crab', 'sawagani', 'サワガニ', 'Geothelphusa dehaani', 'river', [0.9, 1.5], 0.03, 1, {}, ['#8a4a34', '#c06a48', 16, null], 12, 6,
+    '赤褐色の小さな淡水のカニ。一生を川で過ごし、海には行かない。上流の浅い石の上や岸の湿ったところにいる。',
+    { region: 'riverUp' }), '上流の浅い石の上', '浅い石の上をはいまわる'),
+  river(nf('clam', 'dobugai', 'ドブガイ', 'Sinanodonta woodiana', 'river', [1, 3], 0.15, 1, { mantle: false }, ['#4a5a34', '#7a8a52', 20, null], 10, 4,
+    '緑褐色の大きな淡水の二枚貝。泥底に半分うまっている。タナゴの仲間は、この貝の中に卵を産みつける。',
+    { region: 'reed' }), '下流のヨシ原の泥底', '泥底に半分うまってじっとしている'),
+  // the river's guardian
+  river(nf('clam', 'oosanshouuo', 'オオサンショウウオ', 'Andrias japonicus', 'river', [3, 7], 1.0, 3, { mantle: false }, ['#3a2e22', '#7a6a50', 70, null], 1, 1,
+    'この川のヌシ。滝つぼの大きな岩の下で、ほとんど動かずに暮らす。夜になると岩の下から出てきて、水底の魚やカニをさがす。特別天然記念物で、数がとても少ない。',
+    { region: 'riverUp', kind: 'inv', behavior: 'crevice', speed: 0, tex: [256, 128], photoRange: 12, build: () => buildSalamander() }), '上流の滝つぼ', '滝つぼの大きな岩の下で、じっと動かない'),
 ];

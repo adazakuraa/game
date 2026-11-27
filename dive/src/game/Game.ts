@@ -1389,6 +1389,10 @@ export class Game {
         this.toast(`シャークシールドが作動！ ${name}が向きを変えた`, 'warn', 2.5);
         this.shake = Math.max(this.shake, 0.3);
         continue;
+      } else if (e.type === 'charge' && e.def.aggro?.bite === 0) {
+        // harmless display (the river's ayu guarding its rock): no alarm, no damage
+        if (this.time - this.lastEncounter >= 4) { this.lastEncounter = this.time; this.toast(`${name}が縄張りの石から体当たりのしぐさをしている`, 'warn', 2.5); }
+        continue;
       } else if (e.type === 'charge') {
         this.audio.warn();
         this.toast(light ? `${name}がライトめがけて突っ込んでくる！ ライトを消して！` : shark ? `${name}が突っ込んでくる！` : `${name}が突進してくる！ 離れて！`, 'danger', 2.5);
@@ -1401,6 +1405,9 @@ export class Game {
         this.audio.warn();
         try { navigator.vibrate?.(160); } catch { /* not supported */ }
         this.toast(`${name}に吸盤で絡まれた！ エア −${dmg}bar　シャッター連打で振りほどこう`, 'danger', 3.5);
+      } else if (e.def.aggro?.bite === 0) {
+        this.vel.addScaledVector(this.camera.position.clone().sub(e.p).setY(0.1).normalize(), 0.8);
+        continue;
       } else {
         const bite = e.def.aggro?.bite ?? 5;
         this.air = Math.max(1, this.air - bite);

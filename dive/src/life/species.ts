@@ -529,4 +529,4 @@ applyMapMoves();
 balanceZones();
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
-export const ZONE_ORDER: ZoneId[] = ['lagoon', 'estuary', 'reef', 'rocky', 'dropoff', 'offshore', 'kelp', 'cold', 'ruins', 'bluehole', 'cave', 'deep'];
+export const ZONE_ORDER: ZoneId[] = ['lagoon', 'estuary', 'river', 'reef', 'rocky', 'dropoff', 'offshore', 'kelp', 'cold', 'ruins', 'bluehole', 'cave', 'deep'];
