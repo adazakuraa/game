@@ -1,6 +1,12 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-27（Phase 9 完了。S0〜S7 は PR #34〜#41、S8（仕上げ）は `claude/phase9-s8` で PR・マージ。次は Phase 10 の残り・Phase 11・Phase 12）
+最終更新: 2026-11-27（Phase 10 完了＝(3)(4) を `claude/phase10-34` で実装。Phase 9 完了。S0〜S7 は PR #34〜#41、S8（仕上げ）は `claude/phase9-s8` で PR・マージ。次は Phase 10 の残り・Phase 11・Phase 12）
+
+## Phase 10 の (3)(4)（`claude/phase10-34`、`main` 0055e12 から）
+- **(3) ウミガメの綱切り**：タップ起点のナイフ動作は Phase 3 からあった（`startCut` → `cutTime` 1.8 秒・3 ストローク）。追加：①`missions.ts` に綱 3 本（海底の杭から甲羅へ。2 分割の細い円柱）。ストロークの中ほど（k = 0.5/3, 1.5/3, 2.5/3）で 1 本ずつ切れ、海底側は沈み・甲羅側ははね返って 0.8 秒で消える（`cutFx()`）。②`Game.ts` のナイフは、タップ直後に前へ突き出す（lunge）→ 画面を横切る大きな振り、綱が切れる瞬間にシェイク 0.22。`MISSION.rescue` の数値・条件（reach 2.4 m、報酬 3500、頻度 5%）は不変。
+- **(4) イルカ**：コード変更なし。`CURIOUS = { startR 25, follow 30, leaveR 45, cooldown 120, side 5, away 60 }`（`creatures.ts`）。実測（`probe-phase10.cjs`、ダイバー静止 240 秒）：1 秒目にフォロー開始 → 31 秒目に離脱（30 秒）、周回角は最大 120°（延々回らない）、離脱後は 68 m まで離れ、クールダウン 120 秒の間は戻らない。240 秒で 1 エピソード・合計 30 秒。
+- **検証**：`terrain-dump.ts` 変更前後で `cmp` 一致（z ≥ -60 の 100,003 点、heightAt・surfaceTopAt・chartHeightAt 差分 0）。`probe-phase9` 84/84、`probe-s8` 完走（エラーなし）、新規 `probe-phase10` 12/12。テストフックに `cutFx`・`curiousConsts` を追加。
+- 次の一手：Phase 11（攻撃・撃退の実装＋総合確認）。Phase 12 の手前で止めてユーザーの確認を待つ。
 
 ## Phase 9 の進捗（S0〜S7 は `main` にマージ済み、S8 は `claude/phase9-s8` で PR・マージ。Phase 9 完了）
 - **S8（仕上げ）実装済み**（ブランチ `claude/phase9-s8`、`main` 2cd57ba から）。**ソースは変えていない**（ドキュメントと `play.html` のみ）：`scripts/terrain-dump.ts` を Phase 8 完了 `c95dde2` と今の先端で比べ、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` の差分 0（`cmp` 一致）。

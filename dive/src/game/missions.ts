@@ -129,6 +129,9 @@ export class Missions {
   private camMesh: THREE.Mesh;
   private chestMesh: THREE.Mesh;
   private netMesh: THREE.LineSegments;
+  /** Phase 10: the ropes that bind the turtle (one per knife stroke): each snaps at its stroke and the halves fly apart */
+  private ropes = new THREE.Group();
+  private ropeData: { a: THREE.Vector3; b: THREE.Vector3; m: THREE.Vector3; snapT: number; up: number; ra: THREE.Mesh; rb: THREE.Mesh }[] = [];
   private _m = new THREE.Matrix4();
   private _q = new THREE.Quaternion();
   private el = {
@@ -173,6 +176,14 @@ export class Missions {
     ng.setAttribute('position', new THREE.Float32BufferAttribute(np, 3));
     this.netMesh = new THREE.LineSegments(ng, new THREE.LineBasicMaterial({ color: 0x5a8a6a, transparent: true }));
     for (const m of [this.netMesh, ...this.urchinMeshes, this.trashMesh, this.camMesh, this.chestMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
+    // ropes: thin tan cylinders (unit length along Y), two halves per strand so the cut can open the middle
+    const rg = new THREE.CylinderGeometry(0.026, 0.026, 1, 6, 1, true);
+    for (let i = 0; i < MISSION.rescue.strokes; i++) {
+      const mk = () => { const m = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ color: 0xc9b27a, transparent: true })); m.frustumCulled = false; this.ropes.add(m); return m; };
+      this.ropeData.push({ a: new THREE.Vector3(), b: new THREE.Vector3(), m: new THREE.Vector3(), snapT: -1, up: 0, ra: mk(), rb: mk() });
+    }
+    this.ropes.visible = false;
+    this.group.add(this.ropes);
     this.chestMesh.frustumCulled = true; // one mesh with its own bounds: it can be culled like any other
   }
 
@@ -233,7 +244,58 @@ export class Missions {
     return { x, z, r };
   }
 
+  /** Phase 10: tie the strands from the seabed around the spot to the turtle's shell. */
+  private placeRopes(spot: THREE.Vector3): void {
+    const n = this.ropeData.length;
+    this.ropeData.forEach((r, i) => {
+      const ang = (i / n) * Math.PI * 2 + 0.6;
+      r.a.set(spot.x + Math.cos(ang) * 1.5, spot.y - 0.45, spot.z + Math.sin(ang) * 1.5);
+      r.b.set(spot.x + Math.cos(ang) * 0.25, spot.y + 0.3, spot.z + Math.sin(ang) * 0.25);
+      r.m.lerpVectors(r.a, r.b, 0.55);
+      r.snapT = -1;
+      r.up = 0;
+    });
+    this.ropes.visible = true;
+    this.drawRopes(0);
+  }
+
+  private static seg(mesh: THREE.Mesh, p: THREE.Vector3, q: THREE.Vector3, op: number): void {
+    const d = new THREE.Vector3().subVectors(q, p), L = d.length();
+    mesh.visible = op > 0.02 && L > 0.01;
+    if (!mesh.visible) return;
+    mesh.position.copy(p).addScaledVector(d, 0.5);
+    mesh.scale.set(1, L, 1);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.divideScalar(L));
+    (mesh.material as THREE.MeshBasicMaterial).opacity = op;
+  }
+
+  /** Snapped halves: the turtle side springs back and up, the seabed side drops; both fade within ~0.8 s. */
+  private drawRopes(dt: number): void {
+    for (const r of this.ropeData) {
+      if (r.snapT >= 0) r.snapT += dt;
+      const t = r.snapT;
+      if (t < 0) {
+        Missions.seg(r.ra, r.a, r.m, 1);
+        Missions.seg(r.rb, r.m, r.b, 1);
+      } else {
+        const k = Math.min(1, t / 0.8), ease = 1 - (1 - k) * (1 - k);
+        const op = Math.max(0, 1 - k * k);
+        const ma = new THREE.Vector3(r.m.x, r.m.y - ease * 0.9, r.m.z);          // seabed half sinks
+        const mb = new THREE.Vector3().copy(r.m).lerp(r.b, 0.55 * ease);         // shell half recoils toward the turtle
+        mb.y += ease * 0.35;
+        Missions.seg(r.ra, r.a, ma, op);
+        Missions.seg(r.rb, mb, r.b, op);
+      }
+    }
+  }
+
+  /** Ropes snapped so far (probe / test hook) and the net's current opacity. */
+  cutFx(): { k: number | null; snapped: number; ropesVisible: boolean; net: number } {
+    return { k: this.cutProgress(), snapped: this.ropeData.filter((r) => r.snapT >= 0).length, ropesVisible: this.ropes.visible, net: (this.netMesh.material as THREE.LineBasicMaterial).opacity };
+  }
+
   update(c: MissionCtx): void {
+    if (this.ropes.visible) { this.drawRopes(c.dt); if (!this.active && this.ropeData.every((r) => r.snapT > 1)) this.ropes.visible = false; }
     if (!this.active && this.force) { const k = this.force; this.force = null; this.offer = null; this.start(c, k); return; }
     if (!this.active && this.offer) {
       const o = this.offer;
@@ -308,6 +370,7 @@ export class Missions {
         const k = Math.min(1, a.cut / R.cutTime);
         const stroke = Math.min(R.strokes, Math.floor(k * R.strokes + 0.35));
         if (stroke > (a.hold ?? 0)) { a.hold = stroke; c.chime(stroke >= R.strokes); }
+        this.ropeData.forEach((r, i) => { if (r.snapT < 0 && k >= (i + 0.5) / R.strokes - 0.02) { r.snapT = 0; c.chime(false); } });
         const torn = (a.hold ?? 0) / R.strokes;
         const sc = 1 + torn * 0.9 + Math.max(0, k - 0.8) * 2;
         this.netMesh.scale.set(sc, 1 + torn * 0.4, sc);
@@ -524,6 +587,7 @@ export class Missions {
       this.netMesh.rotation.set(0, 0, 0);
       (this.netMesh.material as THREE.LineBasicMaterial).opacity = 1;
       this.netMesh.visible = true;
+      this.placeRopes(spot);
       this.rescuedThisDive = true;
       c.stage('turtle', { p: spot.clone(), yaw: Math.random() * 6, pitch: 0.15 });
       this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '網に絡まったウミガメ', spot, hold: 0, area: this.areaAround(spot) };
@@ -598,7 +662,7 @@ export class Missions {
     this.items = [];
     this.taken = [];
     for (const m of this.urchinMeshes) m.visible = false;
-    if (this.netMesh.visible) { this.netMesh.visible = false; this.onRelease?.(); }
+    if (this.netMesh.visible) { this.netMesh.visible = false; this.ropes.visible = false; this.onRelease?.(); }
     this.trashMesh.visible = false;
     this.camMesh.visible = false;
     this.chestMesh.visible = false;
