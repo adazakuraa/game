@@ -238,8 +238,10 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   if (def.rainbow) mat.defines = { ...(mat.defines ?? {}), RAINBOW: '' };
   if (mode) mat.defines = { ...(mat.defines ?? {}), SWIM_V2: '' };
   if (lod1) mat.defines = { ...(mat.defines ?? {}), CR_LOD1: '' };
-  // §5.2: v2 fish carry their sheen strength in the texture alpha (§3.4 sheenMask)
-  const sheenMap = !!lay?.v2 && !translucent;
+  // §5.2: v2 fish carry their sheen strength in the texture alpha (§3.4 sheenMask).
+  // Keyed on the same v2 the cache key uses (lay when built, fishV2(def) otherwise) so the
+  // §6.3-⑧ warm-up builds the same program the first real fish would (S8 review fix).
+  const sheenMap = !photo && v2 && !translucent;
   if (sheenMap) mat.defines = { ...(mat.defines ?? {}), SHEEN_MAP: '' };
   const su = mode ? swimUniforms(mode, def, photo) : { a: [0, 0, 0, 0] as [number, number, number, number], k: 0, tail: 0, flap: 0 };
   const scaly = !photo && (def.kind === 'fish' || def.kind === 'gardenEel');
@@ -467,7 +469,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
         #else
           float shn = uSheen;
         #endif
-        float sSpec = pow( max( dot( reflect( -normalize( vViewPosition ), normalize( normal ) ), vec3( 0.0, 1.0, 0.0 ) ), 0.0 ), 8.0 );
+        float sSpec = pow( max( dot( reflect( -normalize( vViewPosition ), normalize( normal ) ), normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz ) ), 0.0 ), 8.0 );
         totalEmissiveRadiance += uSunCol * sSpec * shn * exp( min( vUwPos.y, 0.0 ) / 25.0 );
       }
       #endif`,
