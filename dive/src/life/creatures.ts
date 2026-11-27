@@ -6,7 +6,7 @@ import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
-import { caveRoofAt, caveTopAt, heightFast, VENT } from '../world/layout';
+import { caveRoofAt, caveTopAt, heightFast, SHORE_BLOCK, VENT } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
 import { clamp, mulberry32 } from '../utils/noise';
 import { KEEP, LOD, SHADOW, THIN } from '../game/render';
@@ -1772,6 +1772,13 @@ export class Creatures {
           g.v.addScaledVector(_v, dt * def.speed * 2.5);
         }
         g.c.addScaledVector(g.v, dt);
+        // Phase 9: never swim onto the island's shore: step back and turn toward home (same speed)
+        if (g.c.z < -60 && heightFast(g.c.x, g.c.z) > SHORE_BLOCK.creature) {
+          g.c.addScaledVector(g.v, -dt);
+          const sp = Math.hypot(g.v.x, g.v.z);
+          _v.set(g.home.x - g.c.x, 0, g.home.z - g.c.z).normalize();
+          g.v.x = _v.x * sp; g.v.z = _v.z * sp;
+        }
         const gg = heightFast(g.c.x, g.c.z);
         const minAlt = def.hab ? (def.hab === 'sandForage' || def.hab === 'under' ? 0.1 : 0.2) : this.altitude(def) * 0.8;
         g.c.y = clamp(g.c.y, gg + minAlt, -0.3);

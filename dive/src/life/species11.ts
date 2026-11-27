@@ -12,6 +12,8 @@ const ZR: Record<ZoneId, Region> = {
   lagoon: [-180, 180, -50, 115], reef: [-190, 190, 135, 335], rocky: [60, 200, 60, 330], dropoff: [-170, 170, 335, 470],
   offshore: [-150, 150, 380, 700], deep: [-150, 150, 730, 1060], cold: [-415, -232, -20, 320], ruins: [-400, -262, 430, 598],
   bluehole: [BLUEHOLE.x - 42, BLUEHOLE.x + 42, BLUEHOLE.z - 40, BLUEHOLE.z + 40], cave: [-372, -292, 860, 975], kelp: [236, 422, 50, 390],
+  // Phase 9 (no species yet): estuary and river rectangles from PHASE9-DESIGN §1.2
+  estuary: [190, 410, -300, -60], river: [200, 345, -640, -300],
 };
 const RECT_HABS: Habitat[] = ['reefRoam', 'rockyRoam', 'midwater', 'surface'];
 
@@ -50,7 +52,7 @@ const HAB_TEXT: Record<string, string> = {
   crab: '海底を歩き回る', lobster: '岩の割れ目に隠れる', jelly: '水中をふわふわ漂う', squid: '中層を泳ぐ', octo: '岩や砂の上にじっとしている',
   turtle: 'ゆったり泳ぎ回る', ray: '海底近くを滑るように泳ぐ', cet: '群れで泳ぎ回り、息継ぎに浮上する',
 };
-const ZONE_TEXT: Record<ZoneId, string> = { lagoon: '浅瀬ラグーン', reef: 'サンゴ礁', rocky: '岩礁', dropoff: 'ドロップオフ', offshore: '沖の大海原', deep: '深海', cold: '流氷の入り江', ruins: '海底遺跡', bluehole: 'ブルーホール', cave: '水中洞窟', kelp: '海藻の森' };
+const ZONE_TEXT: Record<ZoneId, string> = { lagoon: '浅瀬ラグーン', reef: 'サンゴ礁', rocky: '岩礁', dropoff: 'ドロップオフ', offshore: '沖の大海原', deep: '深海', cold: '流氷の入り江', ruins: '海底遺跡', bluehole: 'ブルーホール', cave: '水中洞窟', kelp: '海藻の森', estuary: '河口', river: '川' };
 
 /** non-fish animal from a compact row */
 function nf(tag: string, id: string, name: string, sci: string, zone: ZoneId, d: [number, number], size: number, r: 1 | 2 | 3 | 4, prm: Record<string, unknown>, pt: [string, string | null, number, string | null], count: number, groups: number, desc: string, xg: Partial<SpeciesDef> & { glow?: number } = {}): SpeciesDef {

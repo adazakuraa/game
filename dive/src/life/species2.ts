@@ -117,7 +117,7 @@ export function F(s: FishSpec): SpeciesDef {
     hab: s.hab, habLabel: h.label, pitch: s.pitch, aggro: s.aggro,
   };
 }
-const zoneLabel: Record<ZoneId, string> = { lagoon: '浅瀬ラグーン', reef: 'サンゴ礁', rocky: '岩礁', dropoff: 'ドロップオフ', offshore: '沖の大海原', deep: '深海', cold: '流氷の入り江', ruins: '海底遺跡', bluehole: 'ブルーホール', cave: '水中洞窟', kelp: '海藻の森' };
+const zoneLabel: Record<ZoneId, string> = { lagoon: '浅瀬ラグーン', reef: 'サンゴ礁', rocky: '岩礁', dropoff: 'ドロップオフ', offshore: '沖の大海原', deep: '深海', cold: '流氷の入り江', ruins: '海底遺跡', bluehole: 'ブルーホール', cave: '水中洞窟', kelp: '海藻の森', estuary: '河口', river: '川' };
 
 // ----------------------------------------------------------------------------- catalog
 const Y = '#f6d21e', BK = '#141414', WH = '#f6f4ee';
