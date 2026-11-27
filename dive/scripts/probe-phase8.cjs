@@ -291,7 +291,7 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
     const kinds = new Set(); for (let i = 0; i < rm.count; i++) kinds.add([rm.getX(i).toFixed(2), rm.getY(i).toFixed(2), em.getX(i).toFixed(4)].join('/'));
     return { meshes: meshes.length, items: items.length, closed, half, opened, vis, hidden, rebuilt: +y.toFixed(3), kinds: [...kinds] };
   });
-  check('④ 宝箱は 1 個 1 メッシュ', chest.meshes === chest.items && chest.items === 10, `${chest.meshes} meshes / ${chest.items}`);
+  check('④ 宝箱は 1 個 1 メッシュ（S6 で 12 個）', chest.meshes === chest.items && chest.items === 12, `${chest.meshes} meshes / ${chest.items}`);
   check('④ 宝箱：蓋が開く（途中・全開・作り直し後も開いたまま）', chest.half[0] !== chest.closed[0] && chest.opened[0] !== chest.half[0] && Math.abs(chest.rebuilt - chest.opened[0]) < 0.01, JSON.stringify(chest));
   check('④ 宝箱：木と金の質感と発光を保持', chest.kinds.length === 2 && chest.kinds.some((k) => k.startsWith('0.30/0.80')) && chest.kinds.some((k) => k.startsWith('0.80/0.00')), chest.kinds.join(' '));
   check('④ 宝箱は 60m より遠いと描かない', chest.vis && chest.hidden);

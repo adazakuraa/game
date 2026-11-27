@@ -41,7 +41,10 @@ export const FLORA_LOD = { maxCell: 35, farDist: 25 };
 export const PROP_VIEW = 60;
 
 /** 【生成済みの種】§6.3-⑥: meshes kept at once, and how long a species must have been away to be dropped */
-export const KEEP = { species: 120, idleSec: 90 };
+export const KEEP = { species: 120, idleSec: 90, texMB: 11, idleTexSec: 10 };
+// Phase 9 S7: texMB caps the species' painted maps (RGBA, no mipmaps) so that with the 8 MB impostor atlas the
+// creatures stay within the 20 MB of §6.1 (120 species of 320x160 river fish alone were 20.2 MB). Only species
+// away for idleTexSec or longer are dropped for it; the nearby ones are never evicted.
 
 /** 【遠い個体の間引き】§6.3-⑦: beyond `mid` every 2nd frame, beyond `far` every 4th (time is accumulated) */
 export const THIN = { mid: 25, far: 45, maxDt: 0.2 };
