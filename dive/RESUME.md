@@ -1,11 +1,12 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-27（Phase 8 完了、S8 はブランチ `muse/phase8-s8` で PR 待ち）
+最終更新: 2026-11-27（Phase 8 完了、Phase 9 S0 を PR #34 でマージ）
 
-## Phase 9 の進捗（ブランチ `claude/phase9-s0`）
-- **S0（世界の延長と岸）実装済み**（設計 `docs/PHASE9-DESIGN.md` §1・§7 S0・§7.1）。`ZoneId` に `estuary`・`river`（`Record<ZoneId>` の表は埋めた。種は 0）、`WORLD.minZ = -660`、`SHORE_Z`・`SHORE_BLOCK`・`landTopAt`・`southTerrain`（陸だけ。河口・川の掘り込みは S1・S2）、`heightCore` のクランプは `z ≥ -60` だけ、ダイバーと生き物の岸判定、浜のトースト、海図の陸の色。
-- 検証：`scripts/terrain-dump.ts`（`rolldown scripts/terrain-dump.ts --format esm --platform node -o x.mjs` で束ねて `node x.mjs out.json`）を変更前後で流し、`z ≥ -60` の 10 万点で `heightAt`・`surfaceTopAt`・`chartHeightAt` が完全一致。`scripts/probe-phase9.cjs`（S0 の項目）7/7。
-- テストフックに `heightAt(x, z)`・`zoneAt(x, z)` を追加。次は S1（河口の地形と水）か S2（川）。
+## Phase 9 の進捗（S0 を PR #34 でマージ済み）
+- **S0（世界の延長と岸）完了**（設計 `docs/PHASE9-DESIGN.md` §1・§7 S0・§7.1）。`ZoneId` に `estuary`・`river`（`Record<ZoneId>` の表は埋めた。種は 0）、`WORLD.minZ = -660`、`SHORE_Z`・`SHORE_BLOCK`・`landTopAt`・`southTerrain`（陸だけ。河口・川の掘り込みは S1・S2）、`heightCore` のクランプは `z ≥ -60` だけ、ダイバーと生き物の岸判定、浜のトースト、海図の陸の色。
+- 検証（Muse が独立実行）：`scripts/terrain-dump.ts`（`rolldown scripts/terrain-dump.ts --format esm --platform node -o x.mjs` で束ねて `node x.mjs out.json`）を変更前後で流し、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` が完全一致（差分 0）。`scripts/probe-phase9.cjs`（S0 の項目）7/7。`probe-s8.cjs` 回帰：岩礁で全可視 102 コール / 301,511 tris、シャドウパス 26 コール / 54,385 tris、§6.1 の予算はすべて満たす。単一 HTML 3,403 KB。
+- Sonnet レビュー（PR #34）は safe with caveats。Medium 1 件（流氷の入り江の `z = -60` 段差、最大 2.3m）は `southTerrain` の重み 0 の間に旧クランプを維持する 1 行修正で解消し、再検証済み（x=-326.5 で z=-60/-60.01 ともに -0.90、probe-phase9 7/7、地形照合 0 差分）。レビュー時の `terrain-dump.ts` の絶対パス import も相対パスに修正済み。Low 4 件は要確認事項 CE・CF に記録。
+- テストフックに `heightAt(x, z)`・`zoneAt(x, z)` を追加。次は S1（河口の地形と水）。
 
 ## 現状
 - **Phase 8 は S8（仕上げ）で完了**。S6（写真魚の拡大）はユーザーの判断で中止（PD/CC0 限定では候補 11 種・魚種 8 種のみ。「一部が写真対応になるだけで効果が小さい」ため。既存の写真魚 31 種は維持）、S7（主役 3D モデル）は素材調達が前提の話として保留（要確認事項 BL）。
@@ -86,7 +87,7 @@
   - 検証：`npm run artifact` 通過、Playwright で各項目を確認（詳細は git 履歴と PHASE3-DESIGN）。
 
 ## 次の一手
-- Phase 8 は S0〜S4 まで実装済み。次は正式ビルド（`npm run artifact`、型チェック込み）と実機の確認（`ユーザ確認リスト.md`）、そのあと S5（LOD とアトラス。`rt.geo1` を使う）以降。
+- Phase 9 は S0 までマージ済み。次は S1（河口の地形と水）、続いて S2（川の地形と流れ）以降。Phase 9 が終わったら Phase 10 の (3)(4)、Phase 11（攻撃・撃退の実装＋総合確認）。Phase 12（生物追加）の手前で止めてユーザーの確認を待つ。
 - Phase 8 の設計は `dive/docs/PHASE8-DESIGN.md`（2026-11-26。計測ベースライン §0.2、手順 S0〜S8、暫定決定 AW〜BH）。元の記述：Phase 8（魚・生物モデルの見た目刷新＋軽量化）の設計・実装。見た目の統合設計は Opus、素材作りは Muse、ゲームへの組み込み設計は Opus が担う分担（2026-11-25 夜の合意）。軽量化は 2026-11-25 のユーザー報告（実機で重い）を受けた項目で、ドローコール／インスタンシング／解像度スケーリング／読み込みサイズが対象。Phase が終わったら次の Phase も続けて進める（ユーザー指示）。
 - アーティファクト更新は節目のみで、動作確認は GitHub Pages のビルド済み単体ファイル（https://adazakuraa.github.io/game/dive/play.html 。セーブはアーティファクト版と別。旧 /game/dive/ はソース表示のみでゲームは動かない）で行う。フェーズごとに `npm run artifact` → `node scripts/make-artifact.mjs dist dist/play.html --page` → `dist/play.html` を `dive/play.html` にコピーして main へ push する（`--page` なしの `artifact.html` には viewport 指定がなく、スマホが 980px 幅で描いて画素が約 9.5 倍になる。アーティファクトに公開するのは `artifact.html` のほう）。
 
