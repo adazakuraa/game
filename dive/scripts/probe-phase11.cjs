@@ -91,31 +91,6 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
   check('タコの grab の床 1 は維持', H.floor.grab === 1, String(H.floor.grab));
   check('銛の haul コストの床 1 は維持（獲れて、エア 1.2 → 1）', H.floor.haulTaken === true && H.floor.haul === 1, `taken=${H.floor.haulTaken} air=${H.floor.haul}`);
 
-  // lethal hit -> endDive('blackout') through the normal loop
-  const B = await ev(() => {
-    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
-    g.air = 100;
-    const rt = g.creatures.list.find((r) => r.def.id === 'megalodon');
-    g.creatures.events.push({ type: 'hit', def: rt.def, p: g.camera.position.clone().add({ x: 3, y: 0, z: 0 }) });
-    g.handleEncounters();
-    const airAfter = g.air;
-    let reason = null;
-    const orig = g.endDive.bind(g);
-    g.endDive = (r) => { reason = r; return orig(r); };
-    g.paused = false;
-    g.updateDiver(0.05);
-    g.endDive = orig;
-    return { airAfter, reason, state: g.state };
-  });
-  check('lethal ヒット → endDive(\'blackout\') に合流', B.airAfter === 0 && B.reason === 'blackout', JSON.stringify(B));
-  await page.waitForTimeout(800);
-  // back into a dive for the spear tests
-  await ev(() => { window.__THREE_GAME_TEST_HOOKS__.game.state = 'title'; });
-  await ev(() => window.__THREE_GAME_TEST_HOOKS__.setState('reef'));
-  await page.waitForFunction(() => window.__THREE_GAME_TEST_HOOKS__.game.state === 'diving', null, { timeout: 240000, polling: 1000 });
-  await ev(() => { const g = window.__THREE_GAME_TEST_HOOKS__.game; g.tut.step = -1; g.paused = true; g.air = g.airMax; });
-  await page.waitForTimeout(500);
-
   // ---------- 3. repel: tier matrix, window, just ----------
   /** thrust at `id` with a tool, the animal being in mode 2 at body-surface distance `surf` (m) */
   const thrust = (arg) => ev((o) => {
@@ -261,6 +236,24 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
   check('シャークシールド併用：作動距離（体表 1.8m 未満）は撃退窓（手銛 2.2m）の内側、従来どおり作動', S.shieldWorked, JSON.stringify(S.evs));
   check('シールドの作動距離は手銛の窓の内側（体表 1.8m < 2.2m）', 1.8 < 2.2, '');
 
+  // (last: it ends the dive)
+  // lethal hit -> endDive('blackout') through the normal loop
+  const B = await ev(() => {
+    const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game;
+    g.air = 100;
+    const rt = g.creatures.list.find((r) => r.def.id === 'megalodon');
+    g.creatures.events.push({ type: 'hit', def: rt.def, p: g.camera.position.clone().add({ x: 3, y: 0, z: 0 }) });
+    g.handleEncounters();
+    const airAfter = g.air;
+    let reason = null;
+    const orig = g.endDive.bind(g);
+    g.endDive = (r) => { reason = r; return orig(r); };
+    g.paused = false;
+    g.updateDiver(0.05);
+    g.endDive = orig;
+    return { airAfter, reason, state: g.state };
+  });
+  check('lethal ヒット → endDive(\'blackout\') に合流', B.airAfter === 0 && B.reason === 'blackout', JSON.stringify(B));
   check('ページエラー 0', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();
   server.close();
