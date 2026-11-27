@@ -14,14 +14,15 @@ import { BIG_KG, DISH, FISHING, PENALTY, STORY, edibleInfo, isFugu, isGoodCatch,
 import { AIR_TANK, evaluateShot, sAdvice, LEGACY_NEED, LEGACY_NEED_PCT, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
 import { Terrain } from '../world/terrain';
-import { ESTUARY_WEDGE, Environment, ZONE_WATER } from '../world/environment';
+import { ESTUARY_WEDGE, Environment, RIVER_WATER, ZONE_WATER } from '../world/environment';
+import { Waterfall } from '../world/waterfall';
 import { Flora } from '../world/flora';
 import { Creatures, OCTO, type PhotoTarget } from '../life/creatures';
 import { BAIT, dietOf, eatsBait, type BaitId } from './bait';
 import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
-import { BLUEHOLE, caveRoofAt, DIVE_POINTS, flowAt, heightAt, RUINS, SHORE_BLOCK, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
+import { BLUEHOLE, caveRoofAt, DIVE_POINTS, flowAt, FLOW_MIN_DEPTH, heightAt, RUINS, riverDist, SHORE_BLOCK, VENT, WATERFALL, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
@@ -86,6 +87,10 @@ export class Game {
   private sDoneCh = new Set<number>();
   private point: DivePoint = DIVE_POINTS[1];
   private flowTmp = { x: 0, z: 0 };
+  /** Phase 9 S2: air-use multiplier while swimming against the river's flow (1 .. 1.4), the toast flag, and the last flow felt */
+  private flowAir = 1;
+  private flowWarned = false;
+  private waterfall!: Waterfall;
   private ads = false;
   private captureReq: PhotoTarget | null | undefined = undefined;
   private target: PhotoTarget | null = null;
@@ -217,6 +222,8 @@ export class Game {
     this.flora = new Flora();
     mark('flora');
     this.scene.add(this.flora.group);
+    this.waterfall = new Waterfall(this.env.pointScale);
+    this.scene.add(this.waterfall.group);
     this.creatures = new Creatures(this.flora.homes);
     this.creatures.renderer = this.renderer; // draws the L2 atlas cells (PHASE8-DESIGN §1.3)
     mark('creatures');
@@ -772,7 +779,7 @@ export class Game {
     const n = this.foundCount;
     this.advanceStory();
     this.renderStory();
-    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70', kelp: '#8ab060', estuary: '#8a9a60' };
+    const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70', kelp: '#8ab060', estuary: '#8a9a60', river: '#5aa8b8' };
     const pts = $('points');
     pts.innerHTML = '';
     const known = this.discovered;
@@ -783,7 +790,7 @@ export class Game {
       b.className = 'pt';
       b.type = 'button';
       b.disabled = locked;
-      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : dp.id === 'kelp' ? '森' : dp.id === 'estuary' ? '汽水' : '12m'}</span>
+      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : dp.id === 'kelp' ? '森' : dp.id === 'estuary' ? '汽水' : dp.id === 'river' ? '清流' : '12m'}</span>
         <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `写真の稼ぎで「大気圧潜水服」を買うと行ける` : dp.sub}</div></span>
         <span class="pr"><span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
       b.addEventListener('click', () => this.startDive(dp));
@@ -1086,6 +1093,7 @@ export class Game {
       this.diveTime = 0;
       this.clearMapFound();
       this.sDoneCh.clear();
+      this.flowWarned = false; this.flowAir = 1;
       this.narcDeepT = 0;
       this.narcBlur = 0;
       this.narcBlurT = 0;
@@ -1598,11 +1606,21 @@ export class Game {
     this.vel.lerp(want, 1 - Math.exp(-dt * (boosting ? 2.4 : 1.6)));
     const prevX = cam.position.x, prevZ = cam.position.z;
     cam.position.addScaledVector(this.vel, dt);
-    // Phase 9 S1: the estuary channel's weak seaward flow carries the diver (the river's strong flow comes with S2)
-    if (!this.ads && cam.position.z < -60) {
-      flowAt(cam.position.x, cam.position.z, this.flowTmp);
-      cam.position.x += this.flowTmp.x * dt;
-      cam.position.z += this.flowTmp.z * dt;
+    // Phase 9 S1/S2: the estuary channel's (0.15 m/s) and the river's (0.2–0.8 m/s) flow carries the diver — but only below
+    // FLOW_MIN_DEPTH: at the surface nothing pushes (same rule for both). Swimming against the river costs air (flowAir).
+    this.flowAir = 1;
+    if (!this.ads && cam.position.z < -60 && -cam.position.y >= FLOW_MIN_DEPTH) {
+      flowAt(cam.position.x, cam.position.z, this.flowTmp, cam.position.y);
+      const fx = this.flowTmp.x, fz = this.flowTmp.z, fm = Math.hypot(fx, fz);
+      cam.position.x += fx * dt;
+      cam.position.z += fz * dt;
+      if (fm > 0.3) { // river only (the estuary's 0.15 m/s is below this)
+        if (this.vel.x * fx + this.vel.z * fz < 0 && Math.hypot(this.vel.x, this.vel.z) > 0.3) this.flowAir = 1 + 0.4 * Math.min(1, fm / 0.8);
+        if (fm > 0.5 && !this.flowWarned) {
+          this.flowWarned = true;
+          this.toast('流れが速い（瀬）。流れに逆らうとエアが減りやすい', 'warn', 3.5);
+        }
+      }
     }
     // Phase 9: the island's shore (south): where the floor is shallower than SHORE_BLOCK.diver the diver cannot go.
     // Undo the horizontal step and cancel the velocity toward the land (the uphill direction), so he slides along the shore.
@@ -1617,7 +1635,7 @@ export class Game {
       } else { this.vel.x = 0; this.vel.z = 0; }
       if (this.time - this.lastShoreWarn > 8) {
         this.lastShoreWarn = this.time;
-        this.toast('ここから先は浜。これ以上は進めない', 'warn', 3);
+        this.toast(this.shoreText(cam.position.x, cam.position.z), 'warn', 3);
       }
     }
     // down-current: the water itself sinks and spills seaward; escape by swimming sideways out of the cell
@@ -1690,7 +1708,7 @@ export class Game {
       else { p.y = -1.8; this.vel.y = Math.max(0, this.vel.y); }
     }
     this.env.shade = roof !== null && p.y < roof ? 1 : 0;
-    this.env.plankton = Math.min(1, this.vel.length() / 1.5);
+    this.env.plankton = zoneAt(this.camera.position.x, this.camera.position.z) === 'river' ? 0 : Math.min(1, this.vel.length() / 1.5); // no night-sparkle in fresh water
     // camera orientation with subtle sway
     const sway = this.reducedMotion ? 0 : 1;
     const roll = Math.sin(this.time * 0.7) * 0.012 * sway + clamp(-inp.moveX * 0.06, -0.06, 0.06) + Math.sin(this.time * 1.9) * this.narc * 0.08;
@@ -1727,7 +1745,7 @@ export class Game {
       this.audio.warn();
       this.toast(this.buff === 'nitsuke' ? '水温2℃！ まかないの煮付けのおかげで少しはましだが、エアの減りが1.5倍に' : '水温2℃！ 寒さで震えてエアの減りが3倍に（ドライスーツがあれば平気）', 'danger', 3.5);
     }
-    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : this.buff === 'fugu' ? 0.9 : 1)
+    const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * this.flowAir * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : this.buff === 'fugu' ? 0.9 : 1)
       * (1 + Math.min(PENALTY.carryAirMax, this.carryKg * PENALTY.carryAirPerKg)) * (this.tut.step >= 0 ? 0.5 : 1) * (!this.ads && this.has('oldreg') ? 0.9 : 1);
     this.air = Math.max(0, this.air - rate * dt);
     if (this.frame % 10 === 0) this.exploreCheck(p);
@@ -2320,6 +2338,12 @@ export class Game {
   private static readonly _fwd = new THREE.Vector3();
   /** Phase 6: the depth of the centre of the (horizontal, ~1.7 m) body, not the head:
       the centre sits 0.85 m behind the eyes along the look axis. */
+  /** Phase 9: what the shore says: the waterfall's cliff, the river's bank, or the beach */
+  private shoreText(x: number, z: number): string {
+    if (Math.hypot(x - WATERFALL.x, z - WATERFALL.z) < 15) return '滝の上へは登れない';
+    if (z < -285 && z > -660) { const r = riverDist(x, z); if (r.d < r.w + 8) return 'ここから先は川岸。陸には上がれない'; }
+    return 'ここから先は浜。これ以上は進めない';
+  }
   private bodyDepth(): number {
     const p = this.camera.position;
     this.camera.getWorldDirection(Game._fwd);
@@ -2470,6 +2494,7 @@ export class Game {
     if (this.state === 'diving' && !this.paused) this.updateBaitVisual(dt);
     this.flora.update(cp, this.time);
     this.env.update(dt, this.camera, this.renderer, this.time);
+    this.waterfall.update(dt, this.camera, this.time);
     // image-based fill only adds sheen near the surface; it must not flatten the sun/shade contrast
     this.scene.environmentIntensity = (0.22 * Math.exp(Math.min(0, this.camera.position.y) / 25) + 0.01) * (1 - this.env.darkness * 0.95);
     if (this.state === 'diving' && !this.paused) this.updateHud(dt);
@@ -2546,7 +2571,9 @@ export class Game {
       /** Phase 9 S1: the estuary's water table (zone base + salt-wedge layers) */
       estuaryWater: () => ({ base: ZONE_WATER.estuary, wedge: ESTUARY_WEDGE }),
       /** Phase 9 S1: water flow (m/s) at (x, z) */
-      flowAt: (x: number, z: number) => { const o = { x: 0, z: 0 }; flowAt(x, z, o); return o; },
+      flowAt: (x: number, z: number, y?: number) => { const o = { x: 0, z: 0 }; flowAt(x, z, o, y); return o; },
+      /** Phase 9 S2: the river's water table, the camera's river position / foam, the waterfall, the last air multiplier from flow */
+      riverWater: () => ({ table: RIVER_WATER, zone: ZONE_WATER.river, t: this.env.riverT, foam: this.env.foamK, fall: WATERFALL, flowAir: this.flowAir, shore: (x: number, z: number) => this.shoreText(x, z) }),
       offerMission: () => { this.missions.forceOffer = true; },
       /** Phase 3: photo spots with their focus points */
       spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r }; }),
@@ -2588,7 +2615,7 @@ export class Game {
         if (!pl) throw new Error('unknown state ' + name);
         if (this.state !== 'diving' || (name === 'deep') !== this.ads) {
           this.state = 'title';
-          this.startDive(name === 'deep' ? DIVE_POINTS[4] : DIVE_POINTS[1]);
+          this.startDive(DIVE_POINTS.find((d) => d.id === (name === 'deep' ? 'deep' : 'reef')) ?? DIVE_POINTS[1]);
           return new Promise((res) => window.setTimeout(() => res(this.applyPlace(pl, name)), 900));
         }
         return this.applyPlace(pl, name);
