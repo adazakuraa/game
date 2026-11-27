@@ -25,8 +25,9 @@ export const RENDER = {
 export const SHADOW = {
   /** half width (m) of the square the sun's shadow camera covers */
   half: 15,
-  /** flora cells closer than this cast */
-  floraDist: 30,
+  /** flora cells closer than this cast (S8: 30 -> 16, just past the shadow camera's 15 m half width;
+   *  at 30 the §6.1 shadow-pass caps were unreachable) */
+  floraDist: 16,
   /** creatures at least this long (m) ... */
   creatureSize: 0.6,
   /** ... with an individual closer than this cast */

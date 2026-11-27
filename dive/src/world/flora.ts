@@ -653,7 +653,7 @@ export class Flora {
     const _cp = new THREE.Vector3(), _cq = new THREE.Quaternion(), _cs = new THREE.Vector3();
     /** solid: register a cylinder collider per instance (from the geometry's bounds).
      *  far: coarse geometry for cells beyond FLORA_LOD.farDist. Cells are never larger than FLORA_LOD.maxCell. */
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40, hi?: THREE.BufferGeometry, solid = false, far?: THREE.BufferGeometry) => {
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40, hi?: THREE.BufferGeometry, solid = false, far?: THREE.BufferGeometry, farDist = FLORA_LOD.farDist) => {
       if (!items.length) return;
       if (solid) {
         geo.computeBoundingBox();
@@ -665,11 +665,11 @@ export class Flora {
           addSurfaceItem(geo, it.m, _cp.x, _cp.z, (gr / 0.8) * Math.max(_cs.x, _cs.z), _cp.y + bb.max.y * _cs.y);
         }
       }
-      const set = new ScatterSet(geo, mat, items, view, Math.min(cell, FLORA_LOD.maxCell), hi, undefined, far, FLORA_LOD.farDist);
+      const set = new ScatterSet(geo, mat, items, view, Math.min(cell, FLORA_LOD.maxCell), hi, undefined, far, farDist);
       this.sets.push(set);
       this.group.add(set.group);
     };
-    const solid = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40, hi?: THREE.BufferGeometry, far?: THREE.BufferGeometry) => add(geo, mat, items, view, cell, hi, true, far);
+    const solid = (geo: THREE.BufferGeometry, mat: THREE.Material, items: ScatterItem[], view = 58, cell = 40, hi?: THREE.BufferGeometry, far?: THREE.BufferGeometry, farDist?: number) => add(geo, mat, items, view, cell, hi, true, far, farDist);
     const slopeAt = (x: number, z: number) => 1 - normalAt(x, z, _n).y;
 
     // ---- seagrass meadows (lagoon)
@@ -787,11 +787,13 @@ export class Flora {
       }
       const smallBrain = domeColony(31, 9, 0.12, 1.4, 0.7);
       const smallStag = corymboseCoral(41);
-      solid(bushG, bushMat, carpetBush, 42, 32, cauliflowerColony(21), domeColony(21, 7, 0.35, 3.2, 0.7, 2));
-      solid(smallBrain, brainMat, carpetBrain, 42, 32, domeColony(31, 16, 0.1, 1.4, 0.7), domeColony(31, 6, 0.12, 1.4, 0.7, 2));
+      // S8 budget: the carpet is two thirds of the reef's flora triangles, so its coarse
+      // geometry takes over earlier (16 m instead of the shared 25 m).
+      solid(bushG, bushMat, carpetBush, 42, 32, cauliflowerColony(21), domeColony(21, 7, 0.35, 3.2, 0.7, 2), 16);
+      solid(smallBrain, brainMat, carpetBrain, 42, 32, domeColony(31, 16, 0.1, 1.4, 0.7), domeColony(31, 6, 0.12, 1.4, 0.7, 2), 16);
       // split the branching carpet: half digitate cushions, half foliose plates
-      solid(smallStag, coralMat, carpetStag.filter((_, i) => i % 2 === 0), 38, 48, undefined, corymboseCoral(41, true));
-      solid(plateColony(51), coralMat, carpetStag.filter((_, i) => i % 2 === 1), 38, 48, undefined, plateColony(51, true));
+      solid(smallStag, coralMat, carpetStag.filter((_, i) => i % 2 === 0), 38, 48, undefined, corymboseCoral(41, true), 16);
+      solid(plateColony(51), coralMat, carpetStag.filter((_, i) => i % 2 === 1), 38, 48, undefined, plateColony(51, true), 16);
       this.carpetCount = carpetBush.length + carpetBrain.length + carpetStag.length;
       // small colonies don't need to render into the sun shadow map
       for (const set of this.sets.slice(-4)) {

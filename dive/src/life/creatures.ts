@@ -152,7 +152,7 @@ function fishGeometries(def: SpeciesDef): { geo: THREE.BufferGeometry; geo1: THR
 }
 
 function buildGeometry(def: SpeciesDef): { geo: THREE.BufferGeometry; geo1?: THREE.BufferGeometry; paint: Paint } {
-  const [tw, th] = def.tex ?? (def.kind === 'fish' && def.size >= 0.4 ? [512, 256] : [256, 128]);
+  const [tw, th] = def.tex ?? (def.kind === 'fish' && def.size >= 0.4 ? [320, 160] : [160, 80]);
   switch (def.kind) {
     case 'fish': {
       const { geo, geo1, layout } = fishGeometries(def);
@@ -238,6 +238,11 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   if (def.rainbow) mat.defines = { ...(mat.defines ?? {}), RAINBOW: '' };
   if (mode) mat.defines = { ...(mat.defines ?? {}), SWIM_V2: '' };
   if (lod1) mat.defines = { ...(mat.defines ?? {}), CR_LOD1: '' };
+  // §5.2: v2 fish carry their sheen strength in the texture alpha (§3.4 sheenMask).
+  // Keyed on the same v2 the cache key uses (lay when built, fishV2(def) otherwise) so the
+  // §6.3-⑧ warm-up builds the same program the first real fish would (S8 review fix).
+  const sheenMap = !photo && v2 && !translucent;
+  if (sheenMap) mat.defines = { ...(mat.defines ?? {}), SHEEN_MAP: '' };
   const su = mode ? swimUniforms(mode, def, photo) : { a: [0, 0, 0, 0] as [number, number, number, number], k: 0, tail: 0, flap: 0 };
   const scaly = !photo && (def.kind === 'fish' || def.kind === 'gardenEel');
   if (photo) {
@@ -253,7 +258,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
     mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
   }
   return underwaterMaterial(mat, {
-    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : '') + (mode ? '-sw' : '') + (v2 ? '-v2' : '') + (lod1 ? '-l1' : ''),
+    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : '') + (mode ? '-sw' : '') + (v2 ? '-v2' : '') + (sheenMap ? '-sh' : '') + (lod1 ? '-l1' : ''),
     caustic: 0.9,
     noCaustic: lod1,
     uniforms: {
@@ -262,6 +267,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       uPulse: { value: new THREE.Vector2(...pulse) },
       uGlowCol: { value: glow },
       uGlowAmt: { value: 1 },
+      uSheen: { value: m.metal ?? 0.05 },
       uUvAspect: { value: uvAspect },
       uFishSize: { value: def.size },
       // swim v2: A(q) coefficients (A(1) = 1) and s0; wave number 2π/λ, tail amplitude, pectoral flap, C-bend κ
@@ -274,8 +280,8 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       uBodyLen: { value: lay ? lay.zMax - lay.zMin : 1 },
       uGillU: { value: lay ? ((lay.gillT ?? 0.76) - 0.5 - lay.zMin) / (lay.zMax - lay.zMin) : 0.7 },
     },
-    vertexHead: `attribute float aBend; attribute float aFlap; attribute float aPulse; attribute float aGlow; attribute float aFin;
-      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin; varying float vPh;
+    vertexHead: `attribute float aBend; attribute float aFlap; attribute float aPulse; attribute float aGlow; attribute float aFin; attribute float aAO;
+      uniform vec3 uSwim; uniform vec3 uFlap; uniform vec2 uPulse; varying float vGlow; varying float vFin; varying float vPh; varying float vAO;
       #ifdef SWIM_V2
         attribute vec4 aSwim; uniform vec4 uSwimA; uniform vec4 uSwimB;
       #endif
@@ -369,10 +375,11 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       transformed.y += max( pu, 0.0 ) * uPulse.y * aPulse * 0.25;
       vGlow = aGlow;
       vFin = aFin;
+      vAO = aAO == 0.0 ? 1.0 : aAO;
       #ifdef GLOW_SPIN
         vGlow *= 0.15 + pow( 0.5 + 0.5 * sin( atan( position.z, position.x ) * 2.0 - uTime * 4.0 ), 3.0 ) * 1.6;
       #endif`,
-    fragHead: `uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; uniform float uUvAspect; uniform float uFishSize;
+    fragHead: `uniform vec3 uGlowCol; uniform float uGlowAmt; varying float vGlow; varying float vFin; varying float vPh; varying float vAO; uniform float uSheen; uniform float uUvAspect; uniform float uFishSize;
       #ifdef FISH_V2
         varying float vScaleV; uniform float uScaleN; uniform float uHalfH; uniform float uBodyLen; uniform float uGillU;
       #endif`,
@@ -393,6 +400,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
       }
       #endif`,
     fragDiffuse: `
+      diffuseColor.rgb *= vAO;
       #ifdef FISH_SCALES
         // fins are thin membranes: lighter and a little desaturated where light passes through
         if ( vFin > 0.5 && vFin < 1.5 ) {
@@ -451,6 +459,19 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
         totalEmissiveRadiance += uGlowCol * vGlow * uGlowAmt * blk * 2.6;
       #else
         totalEmissiveRadiance += uGlowCol * vGlow * uGlowAmt * ( 2.2 + 0.6 * sin( uTime * 2.7 ) );
+      #endif
+      #ifndef CR_LOD1
+      {
+        // §5.2 sheen: the flank mirrors the bright surface when the body rolls; strength from the
+        // texture alpha on v2 fish (§3.4), otherwise from the species' metal value (photo fish too)
+        #ifdef SHEEN_MAP
+          float shn = clamp( ( 1.0 - diffuseColor.a ) * 2.0, 0.0, 1.0 );
+        #else
+          float shn = uSheen;
+        #endif
+        float sSpec = pow( max( dot( reflect( -normalize( vViewPosition ), normalize( normal ) ), normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz ) ), 0.0 ), 8.0 );
+        totalEmissiveRadiance += uSunCol * sSpec * shn * exp( min( vUwPos.y, 0.0 ) / 25.0 );
+      }
       #endif`,
   });
 }
@@ -862,6 +883,10 @@ export class Creatures {
       const tex = new THREE.CanvasTexture(b.paint.c);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 4;
+      // S8 texture budget (§6.1): painted maps get no mipmaps. L0 is near-only by the LOD
+      // rules, so minification is mild; the saving is a quarter of every painted map.
+      tex.generateMipmaps = false;
+      tex.minFilter = THREE.LinearFilter;
       const uvA = lay ? (2 * lay.yMax) / (lay.zMax - lay.zMin) : 0.3;
       mat = makeMaterial(def, tex, uvA, false, lay);
       if (rt.geo1) mat1 = makeMaterial(def, tex, uvA, false, lay, true);
