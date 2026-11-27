@@ -1060,19 +1060,33 @@ export class Creatures {
 
   /** Keep at most KEEP.species built: drop those that have been away the longest, if away long enough. */
   private evict(): void {
-    if (this.held.size <= KEEP.species) return;
+    const overTex = this.heldTexBytes() > KEEP.texMB * 1048576;
+    if (this.held.size <= KEEP.species && !overTex) return;
     const away: SpeciesRuntime[] = [];
     for (const rt of this.held) {
       const id = rt.def.id;
       if (this.stage.has(id) || this.pin?.id === id || this.companion?.id === id) continue;
-      if (this.time - (rt.lastNear ?? 0) >= KEEP.idleSec) away.push(rt);
+      const idle = this.time - (rt.lastNear ?? 0);
+      if (idle >= KEEP.idleSec || (overTex && idle >= KEEP.idleTexSec)) away.push(rt);
     }
     away.sort((a, b) => (a.lastNear ?? 0) - (b.lastNear ?? 0));
     for (const rt of away) {
-      if (this.held.size <= KEEP.species) break;
+      if (this.held.size <= KEEP.species && !this.texOver()) break;
       this.disposeMesh(rt);
     }
   }
+
+  /** bytes of the painted / photo maps of the species built right now (the shared atlas is not counted) */
+  private heldTexBytes(): number {
+    let b = 0;
+    for (const rt of this.held) {
+      const map = (rt.mesh?.material as THREE.MeshStandardMaterial | undefined)?.map;
+      const im = map?.image as { width?: number; height?: number } | undefined;
+      b += (im?.width ?? 0) * (im?.height ?? 0) * 4 * (map?.generateMipmaps ? 4 / 3 : 1); // photo maps keep their mipmaps
+    }
+    return b;
+  }
+  private texOver(): boolean { return this.heldTexBytes() > KEEP.texMB * 1048576; }
 
   /**
    * Is any individual of an unbuilt species within drawing range? 2: and not behind the camera (it would be
@@ -2100,7 +2114,7 @@ export class Creatures {
       this.finishSpecies(rt);
     }
     for (const rt of later) {
-      if (this.held.size >= KEEP.species || (built > 0 && buildMs > this.buildBudgetMs)) break;
+      if (this.held.size >= KEEP.species || this.texOver() || (built > 0 && buildMs > this.buildBudgetMs)) break;
       const t0 = performance.now();
       this.buildMesh(rt);
       buildMs += performance.now() - t0;

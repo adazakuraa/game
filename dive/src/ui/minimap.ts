@@ -66,10 +66,19 @@ export class Minimap {
     const WW = Math.ceil((WORLD.maxX - WORLD.minX) / RES);
     const WH = Math.ceil((WORLD.maxZ - WORLD.minZ) / RES);
     const hts = new Float32Array(WW * WH);
+    // Phase 9 S7 (CF): the island far from the river and the estuary (z < -100, x outside 140..460) is smooth
+    // land, so it is sampled on a 5 m grid (10 m beyond x < 100 / > 500) and copied (the south made the grid 51% larger)
     for (let j = 0; j < WH; j++) {
       const z = WORLD.maxZ - j * RES;
-      for (let i = 0; i < WW; i++) hts[j * WW + i] = chartHeightAt(WORLD.maxX - i * RES, z);
+      const farLand = z < -100;
+      for (let i = 0; i < WW; i++) {
+        const x = WORLD.maxX - i * RES;
+        if (z < -120 && (x < 100 || x > 500) && ((i | j) & 3)) { hts[j * WW + i] = hts[(j & ~3) * WW + (i & ~3)]; continue; } // 10 m
+        if (farLand && (x < 140 || x > 460) && ((i | j) & 1)) { hts[j * WW + i] = hts[(j & ~1) * WW + (i & ~1)]; continue; }
+        hts[j * WW + i] = chartHeightAt(x, z);
+      }
     }
+    const tGrid = performance.now() - t0;
     // water colour by depth (aerial photo: the deeper, the more the water hides the bottom)
     const STOPS: [number, [number, number, number]][] = [
       [0, [0xa8, 0xea, 0xdf]], [6, [0x4f, 0xc6, 0xcf]], [15, [0x1f, 0x97, 0xc2]],
@@ -87,8 +96,15 @@ export class Minimap {
     };
     // Phase 9: the island to the south. Above the waterline the chart shows land: beach -> green with height
     const LAND = -0.3;
+    // Phase 9 S7 (CF, chart build time): the island's mottling noise is sampled once per 2 x 2 px block (5 m; its
+    // wavelength is 20 m+), because the south made land a third of the chart and simplex2 per pixel dominated
+    const LBW = Math.ceil(W / 2), LBH = Math.ceil(H / 2);
+    const landNoise = new Float32Array(LBW * LBH).fill(NaN);
     const land = (h: number, x: number, z: number): [number, number, number] => {
-      const t = Math.min(1, Math.max(0, (h - LAND) / 1.6)) + 0.05 * simplex2(x * 0.05, z * 0.05);
+      const bi = Math.min(LBW - 1, (WORLD.maxX + M - x) / RES / 2 | 0), bj = Math.min(LBH - 1, (WORLD.maxZ + M - z) / RES / 2 | 0);
+      let nz = landNoise[bj * LBW + bi];
+      if (nz !== nz) landNoise[bj * LBW + bi] = nz = simplex2(x * 0.05, z * 0.05);
+      const t = Math.min(1, Math.max(0, (h - LAND) / 1.6)) + 0.05 * nz;
       return [0xe8 + (0x5f - 0xe8) * t, 0xdc + (0x8a - 0xdc) * t, 0xc0 + (0x4a - 0xc0) * t];
     };
     const bm = [0, 0, 0, 0, 0, 0];
@@ -176,13 +192,14 @@ export class Minimap {
         img.data[o + 3] = 255;
       }
     }
+    const tLoop = performance.now() - t0;
     g.putImageData(img, 0, 0);
     try {
       g.filter = 'blur(0.6px)';
       g.drawImage(this.chart, 0, 0);
       g.filter = 'none';
     } catch { /* filter unsupported: keep the sharp chart */ }
-    console.info(`[minimap] chart built in ${Math.round(performance.now() - t0)} ms`);
+    console.info(`[minimap] chart built in ${Math.round(performance.now() - t0)} ms (grid ${Math.round(tGrid)}, loop ${Math.round(tLoop)})`);
   }
 
   private arrow(g: CanvasRenderingContext2D, x: number, y: number, ang: number, s: number) {
@@ -314,8 +331,20 @@ export class Minimap {
     const g = c.getContext('2d')!;
     g.scale(dpr, dpr);
     const WW = (WORLD.maxX - WORLD.minX) / RES, WH = (WORLD.maxZ - WORLD.minZ) / RES;
-    const sc = Math.min(cw / WW, ch / WH);
-    const ox = (cw - WW * sc) / 2, oy = (ch - WH * sc) / 2;
+    // Phase 9 S7 (要確認事項 CF): the world is 860 x 1740 m, so fitting all of it makes the map small on a landscape
+    // screen. Zoom to the part the player knows (known dive points, the boat, the diver) plus a margin, never smaller
+    // than the whole-world fit; once everything is known this is the whole world again.
+    const m0 = M / RES; // the world's corner in chart pixels
+    const pts: [number, number][] = [this.px(x, z)];
+    if (boat) pts.push(this.px(boat.x, boat.z));
+    for (const dp of DIVE_POINTS) if (this.known.has(dp.id)) pts.push(this.px(dp.x, dp.z));
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [mx, my] of pts) { x0 = Math.min(x0, mx); x1 = Math.max(x1, mx); y0 = Math.min(y0, my); y1 = Math.max(y1, my); }
+    const PAD = 200 / RES;
+    const sc = Math.max(Math.min(cw / WW, ch / WH), Math.min(cw / (x1 - x0 + 2 * PAD), ch / (y1 - y0 + 2 * PAD)));
+    const centre = (c: number, lo: number, hi: number, half: number): number => (hi - lo <= 2 * half ? (lo + hi) / 2 : Math.min(hi - half, Math.max(lo + half, c)));
+    const cx = centre((x0 + x1) / 2, m0, m0 + WW, cw / 2 / sc), cy = centre((y0 + y1) / 2, m0, m0 + WH, ch / 2 / sc);
+    const ox = cw / 2 - cx * sc, oy = ch / 2 - cy * sc; // where the chart's pixel (0, 0) goes on screen
     // backdrop in the margin colours (deep navy above, island green below)
     const grad = g.createLinearGradient(0, 0, 0, ch);
     grad.addColorStop(0, '#082c6a');
@@ -328,7 +357,7 @@ export class Minimap {
       return [ox + mx * sc, oy + my * sc];
     };
     g.imageSmoothingEnabled = true;
-    g.drawImage(this.chart, ox - (M / RES) * sc, oy - (M / RES) * sc, this.W * sc, this.H * sc);
+    g.drawImage(this.chart, ox, oy, this.W * sc, this.H * sc);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.font = `700 ${Math.max(11, sc * 6)}px "Zen Kaku Gothic New", sans-serif`;
@@ -368,7 +397,7 @@ export class Minimap {
     // orientation hints
     g.font = `700 12px "Zen Kaku Gothic New", sans-serif`;
     g.fillStyle = 'rgba(220,240,248,0.75)';
-    g.fillText('▲ 沖', cw / 2, oy + 12);
-    g.fillText('岸 ▼', cw / 2, oy + WH * sc - 12);
+    g.fillText('▲ 沖', cw / 2, Math.max(12, oy + m0 * sc + 12));
+    g.fillText('岸 ▼', cw / 2, Math.min(ch - 12, oy + (m0 + WH) * sc - 12));
   }
 }
