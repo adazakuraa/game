@@ -1,9 +1,9 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-27（Phase 8 完了、Phase 9 S1 を PR #35・S2 を PR #36 でマージ、S3 を実装・検証済み＝ブランチ `claude/phase9-s3`、未マージ）
+最終更新: 2026-11-27（Phase 8 完了、Phase 9 S1 を PR #35・S2 を PR #36・S3 を PR #37 でマージ、S4 は実装中）
 
-## Phase 9 の進捗（S0 を PR #34、S1 を PR #35、S2 を PR #36 でマージ済み、S3 は `claude/phase9-s3`）
-- **S3（景色と Homes）実装済み・未マージ**（ブランチ `claude/phase9-s3`、`main` bb98fb8 から。設計 §2.4・§2.5・§3.1・§3.5・§7 S3）。**地形は変えていない**：`scripts/terrain-dump.ts` の変更前後を `cmp` で比べ、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` の差分 0。`layout.ts` への変更は `estuaryCentreX`・`estuaryHalfWidth` の 2 つの export だけ。
+## Phase 9 の進捗（S0 を PR #34、S1 を PR #35、S2 を PR #36、S3 を PR #37 でマージ済み、S4 は `claude/phase9-s4`）
+- **S3（景色と Homes）マージ済み**（PR #37、ブランチ `claude/phase9-s3`、`main` bb98fb8 から。設計 §2.4・§2.5・§3.1・§3.5・§7 S3）。**地形は変えていない**：`scripts/terrain-dump.ts` の変更前後を `cmp` で比べ、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` の差分 0。`layout.ts` への変更は `estuaryCentreX`・`estuaryHalfWidth` の 2 つの export だけ。
   - `src/world/southScenery.ts`（新規）：配置の計画 `planSouth()`（専用の乱数 `mulberry32(9009)`。既存の植生の配置は 1 つも動かない）と形 4 種。マングローブ `mangroveGeometry`（L0 560 三角形＝幹 8 角×4 段＋支柱根 10 本、L1 88＝根 4 本。頂点色：幹の茶・根元の藻の緑・根の 30% にマガキの白帯）、流木 `driftwoodGeometry`（120）、沈んだ舟 `sunkenBoatGeometry`（72）、ヨシ `reedGeometry`（8）。
   - 置いたもの：マングローブ 210 本（西岸の干潟、間隔 3.4〜4.8m。設計の目安 260 の −19%）／ヨシ 7,475 本（河口の東岸 40 束＋川の下流 25 束）／流木 75 本（河口の `DRIFTWOOD` の 12 か所＋川の下流 8 か所）／舟 1 隻（`(279,-372)`、淵の底 −3.4m。ダイブポイントの線から外した）／丸石 400 個（0.3〜1.2m、中流、浅い瀬ほど多い）／大岩 60 個（1.5〜4m、上流）／水草 500 株（中流、流れの向きに傾けた）。新しい画像は作っていない：マングローブ・流木・舟は岩の PBR＋頂点色の新材質 `mangrove`（シェーダは 1 本増える）、ヨシと水草は海草の葉（`grass`）の材質、丸石・大岩は岩礁の岩の形を縮尺違いで再利用。
   - 当たり判定：マングローブは幹だけ（円柱、支柱根とヨシは通り抜けられる）、流木と舟は球の列、大岩と 0.6m 超の丸石は円柱（`solid`）。**川の中心線から `0.3·半幅` ＋岩の半径の範囲には固い岩を置かない**（遊泳の通り道。プローブで確認）。ヨシ・水草は影を落とさない。
@@ -103,7 +103,7 @@
   - 検証：`npm run artifact` 通過、Playwright で各項目を確認（詳細は git 履歴と PHASE3-DESIGN）。
 
 ## 次の一手
-- Phase 9 は S2 までマージ済み、S3 は `claude/phase9-s3` に実装済み（PR 待ち）。次は S4（河口の生物）以降。Phase 9 が終わったら Phase 10 の (3)(4)、Phase 11（攻撃・撃退の実装＋総合確認）。Phase 12（生物追加）の手前で止めてユーザーの確認を待つ。
+- Phase 9 は S3 までマージ済み。次は S4（河口の生物）以降。Phase 9 が終わったら Phase 10 の (3)(4)、Phase 11（攻撃・撃退の実装＋総合確認）。Phase 12（生物追加）の手前で止めてユーザーの確認を待つ。
 - Phase 8 の設計は `dive/docs/PHASE8-DESIGN.md`（2026-11-26。計測ベースライン §0.2、手順 S0〜S8、暫定決定 AW〜BH）。元の記述：Phase 8（魚・生物モデルの見た目刷新＋軽量化）の設計・実装。見た目の統合設計は Opus、素材作りは Muse、ゲームへの組み込み設計は Opus が担う分担（2026-11-25 夜の合意）。軽量化は 2026-11-25 のユーザー報告（実機で重い）を受けた項目で、ドローコール／インスタンシング／解像度スケーリング／読み込みサイズが対象。Phase が終わったら次の Phase も続けて進める（ユーザー指示）。
 - アーティファクト更新は節目のみで、動作確認は GitHub Pages のビルド済み単体ファイル（https://adazakuraa.github.io/game/dive/play.html 。セーブはアーティファクト版と別。旧 /game/dive/ はソース表示のみでゲームは動かない）で行う。フェーズごとに `npm run artifact` → `node scripts/make-artifact.mjs dist dist/play.html --page` → `dist/play.html` を `dive/play.html` にコピーして main へ push する（`--page` なしの `artifact.html` には viewport 指定がなく、スマホが 980px 幅で描いて画素が約 9.5 倍になる。アーティファクトに公開するのは `artifact.html` のほう）。
 
