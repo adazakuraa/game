@@ -1,8 +1,12 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-27（Phase 8 完了、Phase 9 S1〜S6 は PR #35〜#40 でマージ済み、S7（性能計測）は実装済み・`claude/phase9-s7` に push・PR・マージ、次は S8）
+最終更新: 2026-11-27（Phase 9 完了。S0〜S7 は PR #34〜#41、S8（仕上げ）は `claude/phase9-s8` で PR・マージ。次は Phase 10 の残り・Phase 11・Phase 12）
 
-## Phase 9 の進捗（S0〜S6 は `main` にマージ済み、S7 は `claude/phase9-s7` で PR・マージ）
+## Phase 9 の進捗（S0〜S7 は `main` にマージ済み、S8 は `claude/phase9-s8` で PR・マージ。Phase 9 完了）
+- **S8（仕上げ）実装済み**（ブランチ `claude/phase9-s8`、`main` 2cd57ba から）。**ソースは変えていない**（ドキュメントと `play.html` のみ）：`scripts/terrain-dump.ts` を Phase 8 完了 `c95dde2` と今の先端で比べ、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` の差分 0（`cmp` 一致）。
+  - トラッカーの Phase 9 の 9 項目を確認してチェックし、実機未確認の点（fps・見た目・出会い数）と後続への送りを注記。`要確認事項.md` に CH（mangrove の写真スポットの座標変更）、`ユーザ確認リスト.md` に Phase 9 の節（実機で見てほしい 6 点）、`README.md` にマップの説明、`DESIGN.md` に 2 項目を追記。`dive/play.html` は `npm run artifact` → `node scripts/make-artifact.mjs dist dist/play.html --page` で再ビルドして置き換え（`--page` を付けないとスマホで 980px 幅になる）。
+  - プローブ：`probe-phase9` と `probe-s8` の結果は PR 本文に記載（回帰なし）。
+  - 実機で見てほしい点：砂州の形・滝つぼの足元・河口の魚の配置・E1/R3 の fps・河口と川の見た目（`ユーザ確認リスト.md`）。
 - **S7（性能計測）実装済み**（ブランチ `claude/phase9-s7`、`main` 0f056ca から。設計 §6・§7 S7）。**地形は変えていない**：`scripts/terrain-dump.ts` の変更前後を `cmp` で比べ、`z ≥ -60` の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` の差分 0（完全一致）。`layout.ts` は触っていない。
   - **計測**（新規 `scripts/probe-s7.cjs`：地点ごとに新しいページで潜り、4 方向の最悪値。生き物を入れた状態。`SITES=E1,R3` で絞れる、`SEQ=1` で地点を順に移動する「渡り歩き」）。スマホ縦（390×844）、SwiftShader。**5 地点とも §6.1 の予算内**：
 
@@ -156,7 +160,7 @@
   - 検証：`npm run artifact` 通過、Playwright で各項目を確認（詳細は git 履歴と PHASE3-DESIGN）。
 
 ## 次の一手
-- Phase 9 は S3 までマージ済み。次は S4（河口の生物）以降。Phase 9 が終わったら Phase 10 の (3)(4)、Phase 11（攻撃・撃退の実装＋総合確認）。Phase 12（生物追加）の手前で止めてユーザーの確認を待つ。
+- Phase 9 は完了（S8 まで）。次は Phase 10 の (3)(4)、Phase 11（攻撃・撃退の実装＋総合確認）。Phase 12（生物追加）の手前で止めてユーザーの確認を待つ。
 - Phase 8 の設計は `dive/docs/PHASE8-DESIGN.md`（2026-11-26。計測ベースライン §0.2、手順 S0〜S8、暫定決定 AW〜BH）。元の記述：Phase 8（魚・生物モデルの見た目刷新＋軽量化）の設計・実装。見た目の統合設計は Opus、素材作りは Muse、ゲームへの組み込み設計は Opus が担う分担（2026-11-25 夜の合意）。軽量化は 2026-11-25 のユーザー報告（実機で重い）を受けた項目で、ドローコール／インスタンシング／解像度スケーリング／読み込みサイズが対象。Phase が終わったら次の Phase も続けて進める（ユーザー指示）。
 - アーティファクト更新は節目のみで、動作確認は GitHub Pages のビルド済み単体ファイル（https://adazakuraa.github.io/game/dive/play.html 。セーブはアーティファクト版と別。旧 /game/dive/ はソース表示のみでゲームは動かない）で行う。フェーズごとに `npm run artifact` → `node scripts/make-artifact.mjs dist dist/play.html --page` → `dist/play.html` を `dive/play.html` にコピーして main へ push する（`--page` なしの `artifact.html` には viewport 指定がなく、スマホが 980px 幅で描いて画素が約 9.5 倍になる。アーティファクトに公開するのは `artifact.html` のほう）。
 
@@ -168,6 +172,7 @@
 - Phase 5（PHASE5-DESIGN §8）：X 地図にブルーホールの円とセノーテの点は出す／Y 地図の南の外は島の浜と陸／Z 遺跡の沈没船3隻は動かさない／AA 限定装備の効果は仮／AB 手記は出現率を上げない／AC マリンスノーは深海120m〜だけ／AD ラグーンの sandSpots 種は直さない／AE ヒカリキンメダイ二重登録は Phase 12／AF 図鑑に5マップを追加／AG 固有種10種の数え方・ブルーホールの移動先・ピラミッド寸法は仮。
 - Phase 6（PHASE6-DESIGN §7）：AH 水深表示は体の中心／AI 海は再スケールしない／AJ 窒素酔いは50m〜で方位がぶれ、55m〜累計10秒でブラックアウト／AK 時間帯ボタンは食堂に実装済み／AL ウニ漁は150秒・必要8ptのまま／AM ウニ漁後の時間変更は食堂の時間ボタンでメニューに戻る。
 - Phase 7（PHASE7-DESIGN §7）：AN サンゴ・ヤギ類の図鑑追加は Phase 12／AO 「買える！」分岐は装備名のまま／AP コーチは HUD 直下（上部）／AQ デバッグはボタン内2タップ式。
+- Phase 9（PHASE9-DESIGN §9）：BN〜CH（河口・川の作り方・位置・解放・流れ・種・保護・写真スポットなど。CH は mangrove の座標変更）。
 - まとめはリポジトリルートの `要確認事項.md`、実機で見てほしい点は `ユーザ確認リスト.md`。
 
 ## アーティファクト
