@@ -19,6 +19,9 @@ const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
   bluehole: [0.006, 0.1, 0.38, 60],
   cave: [0.01, 0.16, 0.2, 34],
   kelp: [0.03, 0.2, 0.19, 30],
+  // Phase 9: placeholders until S1/S2 tune them (brackish: browner, river: clearer but greener)
+  estuary: [0.05, 0.2, 0.17, 18],
+  river: [0.03, 0.2, 0.2, 24],
 };
 
 /** Water volume visuals: fog, lighting by depth, surface with Snell's window, god rays, marine snow, bubbles. */

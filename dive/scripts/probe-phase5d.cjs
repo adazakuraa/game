@@ -36,16 +36,16 @@ const EXE = process.env.PROBE_CHROME || '/tmp/probe-env/cft/chrome-headless-shel
     const h = window.__THREE_GAME_TEST_HOOKS__;
     g.tut.step = -1;
     g.input.poll = () => {};
-    h.teleport(0, -2, -68);
-    g.vel.set(0, 0, 0);
-    g.lastEdgeWarn = -99;
-    h.look(0, 0); // face -z, toward the beach at minZ = -70
+    h.teleport(0, -2, -84.3);
+    g.vel.set(0, 0, -2.4);
+    g.lastEdgeWarn = -99; g.lastShoreWarn = -99;
+    h.look(0, 0); // face -z, toward the beach at the shore (Phase 9: z≈-84)
     g.input.moveY = 1;
     for (let i = 0; i < 10; i++) g.updateDiver(0.05);
     g.input.moveY = 0;
     return { z: g.camera.position.z, toast: document.getElementById('toast').textContent };
   });
-  const ok = r.z >= -70 && /浜/.test(r.toast);
+  const ok = r.z >= -90 && /浜/.test(r.toast);
   console.log(`${ok ? 'PASS' : 'FAIL'}  edge: shore side says it is the beach  — z=${r.z.toFixed(1)} toast="${r.toast}"`);
   console.log(errors.length === 0 ? 'PASS  no page errors' : `FAIL  page errors: ${errors[0]}`);
   await browser.close();

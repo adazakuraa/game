@@ -2,6 +2,11 @@
 
 最終更新: 2026-11-27（Phase 8 完了、S8 はブランチ `muse/phase8-s8` で PR 待ち）
 
+## Phase 9 の進捗（ブランチ `claude/phase9-s0`）
+- **S0（世界の延長と岸）実装済み**（設計 `docs/PHASE9-DESIGN.md` §1・§7 S0・§7.1）。`ZoneId` に `estuary`・`river`（`Record<ZoneId>` の表は埋めた。種は 0）、`WORLD.minZ = -660`、`SHORE_Z`・`SHORE_BLOCK`・`landTopAt`・`southTerrain`（陸だけ。河口・川の掘り込みは S1・S2）、`heightCore` のクランプは `z ≥ -60` だけ、ダイバーと生き物の岸判定、浜のトースト、海図の陸の色。
+- 検証：`scripts/terrain-dump.ts`（`rolldown scripts/terrain-dump.ts --format esm --platform node -o x.mjs` で束ねて `node x.mjs out.json`）を変更前後で流し、`z ≥ -60` の 10 万点で `heightAt`・`surfaceTopAt`・`chartHeightAt` が完全一致。`scripts/probe-phase9.cjs`（S0 の項目）7/7。
+- テストフックに `heightAt(x, z)`・`zoneAt(x, z)` を追加。次は S1（河口の地形と水）か S2（川）。
+
 ## 現状
 - **Phase 8 は S8（仕上げ）で完了**。S6（写真魚の拡大）はユーザーの判断で中止（PD/CC0 限定では候補 11 種・魚種 8 種のみ。「一部が写真対応になるだけで効果が小さい」ため。既存の写真魚 31 種は維持）、S7（主役 3D モデル）は素材調達が前提の話として保留（要確認事項 BL）。
   - S8 の内容：設計 §5.2 の頂点 AO とシーン（銀色の反射）をシェーダに実装、BI（フラットカードの傾き ±0.26 → ±0.5 rad）、BK（予算 OVER）の解消。予算は設計 §6.1 の全項目を達成（岩礁：三角形 191k／350k、影パス 28 コール・62k 三角形、テクスチャ推定 37.2MB・生き物 18.1MB、§6.4 は 1,225KB、単一 HTML 3,402KB）。手段の詳細は要確認事項 BM（植生 LOD の距離判定の是正が主因、影の植生範囲 30m → 16m、描画テクスチャのミップマップ無効化と縮小、アトラスのミップマップ無効化、WebP 3 枚の再圧縮）。測定は `scripts/probe-s8.cjs`（サンゴ礁の内訳測定）。

@@ -83,6 +83,12 @@ export class Minimap {
       }
       return STOPS[STOPS.length - 1][1];
     };
+    // Phase 9: the island to the south. Above the waterline the chart shows land: beach -> green with height
+    const LAND = -0.3;
+    const land = (h: number, x: number, z: number): [number, number, number] => {
+      const t = Math.min(1, Math.max(0, (h - LAND) / 1.6)) + 0.05 * simplex2(x * 0.05, z * 0.05);
+      return [0xe8 + (0x5f - 0xe8) * t, 0xdc + (0x8a - 0xdc) * t, 0xc0 + (0x4a - 0xc0) * t];
+    };
     const bm = [0, 0, 0, 0, 0, 0];
     // bottom colours are sampled every 2 px (5 m) and shared with the neighbour
     // pixel: bottomMaterial is the expensive part of the build (design §1.6)
@@ -117,42 +123,50 @@ export class Minimap {
           const dxOut = Math.max(WORLD.minX - x, x - WORLD.maxX, 0);
           const dzOut = Math.max(WORLD.minZ - z, z - WORLD.maxZ, 0);
           if (z < WORLD.minZ && dzOut >= dxOut) {
-            const t = Math.min(1, Math.max(0, (dzOut - 8) / 62)) + 0.05 * simplex2(x * 0.05, z * 0.05);
-            r = 0xe8 + (0x5f - 0xe8) * t; gg = 0xdc + (0x8a - 0xdc) * t; b = 0xc0 + (0x4a - 0xc0) * t;
+            // the world's south edge is already inland: keep the land colour going
+            [r, gg, b] = land(2, x, z);
           } else {
             const cx = Math.max(WORLD.minX, Math.min(WORLD.maxX, x));
             const cz = Math.max(WORLD.minZ, Math.min(WORLD.maxZ, z));
             const ei = Math.round((WORLD.maxX - cx) / RES), ej = Math.round((WORLD.maxZ - cz) / RES);
-            const edgeD = -hts[Math.max(0, Math.min(WH - 1, ej)) * WW + Math.max(0, Math.min(WW - 1, ei))];
-            const d = Math.min(425, edgeD + 0.3 * Math.hypot(dxOut, dzOut) + 6 * simplex2(x * 0.02, z * 0.02));
-            [r, gg, b] = water(Math.max(0.5, d));
+            const eh = hts[Math.max(0, Math.min(WH - 1, ej)) * WW + Math.max(0, Math.min(WW - 1, ei))];
+            if (eh > LAND) {
+              [r, gg, b] = land(eh, x, z); // east/west margin beside the island
+            } else {
+              const d = Math.min(425, -eh + 0.3 * Math.hypot(dxOut, dzOut) + 6 * simplex2(x * 0.02, z * 0.02));
+              [r, gg, b] = water(Math.max(0.5, d));
+            }
           }
         } else {
           const ii = Math.min(WW - 1, Math.round((WORLD.maxX - x) / RES)), jj = Math.min(WH - 1, Math.round((WORLD.maxZ - z) / RES));
           const h = hts[jj * WW + ii];
-          const d = -h;
-          const wc = water(d);
-          const detail = Math.exp(-d / 9);
-          if (detail > 0.02) {
-            const bc = bottomRGB(i, j, x, z, h);
-            r = wc[0] + (bc[0] - wc[0]) * detail;
-            gg = wc[1] + (bc[1] - wc[1]) * detail;
-            b = wc[2] + (bc[2] - wc[2]) * detail;
+          if (h > LAND) {
+            [r, gg, b] = land(h, x, z); // island: no water colour, no bottom material
           } else {
-            [r, gg, b] = wc;
+            const d = -h;
+            const wc = water(d);
+            const detail = Math.exp(-d / 9);
+            if (detail > 0.02) {
+              const bc = bottomRGB(i, j, x, z, h);
+              r = wc[0] + (bc[0] - wc[0]) * detail;
+              gg = wc[1] + (bc[1] - wc[1]) * detail;
+              b = wc[2] + (bc[2] - wc[2]) * detail;
+            } else {
+              [r, gg, b] = wc;
+            }
+            // kelp canopy seen from above: dark gold-brown patches
+            const kw = kelpWeight(x, z);
+            if (kw > 0.15) {
+              const a = 0.45 * kw * kw * (0.6 + 0.4 * simplex2(x * 0.05 + 9, z * 0.05));
+              r = r + (0x5a - r) * a; gg = gg + (0x5a - gg) * a; b = b + (0x30 - b) * a;
+            }
+            // drift ice in the cold cove: irregular white fragments
+            if (zoneAt(x, z) === 'cold' && simplex2(x * 0.11 + 4, z * 0.11) > 0.25) {
+              r = r + (0xe8 - r) * 0.8; gg = gg + (0xf4 - gg) * 0.8; b = b + (0xf8 - b) * 0.8;
+            }
+            const rip = 1 + 0.06 * simplex2(x * 0.03 + 2, z * 0.03);
+            r *= rip; gg *= rip; b *= rip;
           }
-          // kelp canopy seen from above: dark gold-brown patches
-          const kw = kelpWeight(x, z);
-          if (kw > 0.15) {
-            const a = 0.45 * kw * kw * (0.6 + 0.4 * simplex2(x * 0.05 + 9, z * 0.05));
-            r = r + (0x5a - r) * a; gg = gg + (0x5a - gg) * a; b = b + (0x30 - b) * a;
-          }
-          // drift ice in the cold cove: irregular white fragments
-          if (zoneAt(x, z) === 'cold' && simplex2(x * 0.11 + 4, z * 0.11) > 0.25) {
-            r = r + (0xe8 - r) * 0.8; gg = gg + (0xf4 - gg) * 0.8; b = b + (0xf8 - b) * 0.8;
-          }
-          const rip = 1 + 0.06 * simplex2(x * 0.03 + 2, z * 0.03);
-          r *= rip; gg *= rip; b *= rip;
         }
         img.data[o] = Math.max(0, Math.min(255, r));
         img.data[o + 1] = Math.max(0, Math.min(255, gg));

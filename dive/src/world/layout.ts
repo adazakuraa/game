@@ -1,9 +1,14 @@
 import { clamp, fbm2, lerp, ridged2, simplex2, smoothstep } from '../utils/noise';
 
 // World axes: y up (surface y=0), z increases offshore, x along the shore.
-export const WORLD = { minX: -430, maxX: 430, minZ: -70, maxZ: 1080 };
+export const WORLD = { minX: -430, maxX: 430, minZ: -660, maxZ: 1080 };
 
-export type ZoneId = 'lagoon' | 'reef' | 'rocky' | 'dropoff' | 'offshore' | 'deep' | 'cold' | 'ruins' | 'bluehole' | 'cave' | 'kelp';
+/** Phase 9: the island's beach starts rising out of the water here (z < SHORE_Z is land). Terrain north of -60 is untouched. */
+export const SHORE_Z = -70;
+/** Phase 9: where the seabed is shallower than this, the diver / creatures cannot go (it is the shore) */
+export const SHORE_BLOCK = { diver: -0.8, creature: -0.6 };
+
+export type ZoneId = 'lagoon' | 'reef' | 'rocky' | 'dropoff' | 'offshore' | 'deep' | 'cold' | 'ruins' | 'bluehole' | 'cave' | 'kelp' | 'estuary' | 'river';
 
 export const ZONE_NAMES: Record<ZoneId, string> = {
   lagoon: '浅瀬ラグーン',
@@ -17,6 +22,8 @@ export const ZONE_NAMES: Record<ZoneId, string> = {
   bluehole: 'ブルーホール',
   cave: '水中洞窟',
   kelp: '海藻の森',
+  estuary: '河口',
+  river: '川',
 };
 
 export const VENT = { x: 28, z: 965 };
@@ -298,7 +305,22 @@ function heightCore(x: number, z: number): number {
     const hc = -d0 + rr * 6 + big * 4 - 2 + 0.8 * simplex2(x * 0.28, z * 0.28);
     h = lerp(h, hc, cw);
   }
+  // Phase 9: south of -60 the island's land takes over (terrain at z >= -60 is bit-for-bit unchanged)
+  if (z < -60) return southTerrain(x, z, h);
   return Math.min(h, -0.9);
+}
+
+/** Phase 9: height of the island's land (positive = above the water), valid for z < SHORE_Z. Beach rising to a low plateau. */
+export function landTopAt(x: number, z: number): number {
+  return lerp(-1.6, 1.8, smoothstep(-72, -100, z)) + 0.8 * fbm2(x * 0.02 + 11, z * 0.02 - 4, 2);
+}
+
+/** Phase 9: replaces the sea floor with land to the south (estuary / river carving comes in later steps) */
+function southTerrain(x: number, z: number, h: number): number {
+  const w = smoothstep(-70, -95, z);
+  // w = 0 (-70 < z < -60) keeps the old clamp: without it the cold cove's raw
+  // floor (up to +2.4 m) would form a cliff at z = -60 (Sonnet review, PR #34).
+  return w > 0 ? lerp(h, landTopAt(x, z), w) : Math.min(h, -0.9);
 }
 
 /** Height of reef "bommies" above the surrounding reef flat (0 outside the reef). */

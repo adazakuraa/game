@@ -21,7 +21,7 @@ import { BAIT, dietOf, eatsBait, type BaitId } from './bait';
 import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
-import { BLUEHOLE, caveRoofAt, DIVE_POINTS, heightAt, RUINS, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
+import { BLUEHOLE, caveRoofAt, DIVE_POINTS, heightAt, RUINS, SHORE_BLOCK, VENT, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
@@ -100,6 +100,8 @@ export class Game {
   private narcBlur = 0;
   private narcBlurT = 0;
   private lastWarn = 0;
+  /** Phase 9: last time the shore said "no further" */
+  private lastShoreWarn = -99;
   /** Phase 5: last time the world's edge said "no further" */
   private lastEdgeWarn = -100;
   /** down-current cells for this dive (drop-off / blue water): centre, radius, sink speed m/s */
@@ -1592,7 +1594,24 @@ export class Game {
     // neutral buoyancy drift + breathing bob
     want.y += Math.sin(this.time * (Math.PI * 2) / 5.2) * 0.06;
     this.vel.lerp(want, 1 - Math.exp(-dt * (boosting ? 2.4 : 1.6)));
+    const prevX = cam.position.x, prevZ = cam.position.z;
     cam.position.addScaledVector(this.vel, dt);
+    // Phase 9: the island's shore (south): where the floor is shallower than SHORE_BLOCK.diver the diver cannot go.
+    // Undo the horizontal step and cancel the velocity toward the land (the uphill direction), so he slides along the shore.
+    if (cam.position.z < -60 && heightAt(cam.position.x, cam.position.z) > SHORE_BLOCK.diver) {
+      cam.position.x = prevX; cam.position.z = prevZ;
+      let gx = heightAt(prevX + 1, prevZ) - heightAt(prevX - 1, prevZ), gz = heightAt(prevX, prevZ + 1) - heightAt(prevX, prevZ - 1);
+      const gl = Math.hypot(gx, gz);
+      if (gl > 1e-6) {
+        gx /= gl; gz /= gl;
+        const into = this.vel.x * gx + this.vel.z * gz;
+        if (into > 0) { this.vel.x -= into * gx; this.vel.z -= into * gz; }
+      } else { this.vel.x = 0; this.vel.z = 0; }
+      if (this.time - this.lastShoreWarn > 8) {
+        this.lastShoreWarn = this.time;
+        this.toast('ここから先は浜。これ以上は進めない', 'warn', 3);
+      }
+    }
     // down-current: the water itself sinks and spills seaward; escape by swimming sideways out of the cell
     this.currentF = 0;
     if (!this.ads) {
@@ -2513,6 +2532,9 @@ export class Game {
     };
     (window as unknown as Record<string, unknown>).__THREE_GAME_TEST_HOOKS__ = {
       game: this,
+      /** Phase 9: seabed / land height at (x, z) and its zone */
+      heightAt: (x: number, z: number) => heightAt(x, z),
+      zoneAt: (x: number, z: number) => zoneAt(x, z),
       offerMission: () => { this.missions.forceOffer = true; },
       /** Phase 3: photo spots with their focus points */
       spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r }; }),
