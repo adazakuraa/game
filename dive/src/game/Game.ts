@@ -58,7 +58,7 @@ export type Save = LandSave & {
   /** Phase 5: treasure chests opened, and sights named by a chest's notebook page */
   chests?: string[]; sceneHints?: SceneId[];
   /** 修正バッチ2 (1): HUD button sizes (device preference; progress resets keep it) */
-  ui?: { shutter: number; ctl: number };
+  ui?: { shutter: number; ctl: number; base?: number };
  found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
@@ -71,6 +71,8 @@ export const AIR_WARN = { halfFrac: 0.35, lastBar: 20, lastSec: 30 };
 export const NARCOSIS = { blackoutSec: 60, warnLeftSec: 20 };
 /** 修正バッチ2 (1): HUD size settings (device preference, kept across progress resets) */
 export const UI_SCALE = { min: 0.7, max: 1.3, step: 0.05, def: 1 };
+/** (41) 基準サイズの改定（ui.base = 2）：旧 80%／75% がちょうどよかったので、これを新しい 100% にした（CSS 側の基準 px を ×0.8／×0.75 済み）。旧セーブは 新倍率 = 旧倍率 × 旧基準 ÷ 新基準 で換算 */
+export const UI_REBASE = { ver: 2, shutter: 0.8, ctl: 0.75 };
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -391,6 +393,11 @@ export class Game {
           sv.tutorial = sv.dives > 0;
           if (sv.owned?.length || Object.keys(sv.found).length) (sv.owned ??= []).push('spear');
         }
+        // (41) HUD ボタン基準の改定：見た目の大きさを変えずに倍率を換算（ui.base が付いたら移行済み）
+        if (sv.ui && (sv.ui.base ?? 1) < UI_REBASE.ver) {
+          const r = (v: number, f: number) => Math.round(clamp(Number.isFinite(v) ? v / f : 1, UI_SCALE.min, UI_SCALE.max) * 100) / 100;
+          sv.ui = { shutter: r(sv.ui.shutter, UI_REBASE.shutter), ctl: r(sv.ui.ctl, UI_REBASE.ctl), base: UI_REBASE.ver };
+        } else if (sv.ui) sv.ui.base = UI_REBASE.ver;
         return sv;
       }
     } catch {
@@ -775,7 +782,7 @@ export class Game {
   private bindSettings(): void {
     this.applyUi();
     const set = (key: 'shutter' | 'ctl', v: number) => {
-      const ui = (this.save.ui ??= { shutter: UI_SCALE.def, ctl: UI_SCALE.def });
+      const ui = (this.save.ui ??= { shutter: UI_SCALE.def, ctl: UI_SCALE.def, base: UI_REBASE.ver });
       ui[key] = clamp(v / 100, UI_SCALE.min, UI_SCALE.max);
       this.applyUi();
     };
@@ -783,7 +790,7 @@ export class Game {
     $('set-ctl').addEventListener('input', (e) => set('ctl', Number((e.target as HTMLInputElement).value)));
     $('set-shutter').addEventListener('change', () => this.writeSave());
     $('set-ctl').addEventListener('change', () => this.writeSave());
-    $('set-reset').addEventListener('click', () => { this.save.ui = { shutter: UI_SCALE.def, ctl: UI_SCALE.def }; this.applyUi(); this.writeSave(); });
+    $('set-reset').addEventListener('click', () => { this.save.ui = { shutter: UI_SCALE.def, ctl: UI_SCALE.def, base: UI_REBASE.ver }; this.applyUi(); this.writeSave(); });
     const open = (fromPause: boolean) => {
       this.settingsFromPause = fromPause;
       if (fromPause) $('pause').classList.add('hidden');
@@ -2516,6 +2523,7 @@ export class Game {
 
     // reticle
     const ret = $('reticle');
+    ret.classList.remove('idle');
     const lab = $('ret-label');
     const t = this.target;
     const cc = $('catch-chip');
@@ -2559,6 +2567,7 @@ export class Game {
       const block = rep ? (!rep.tierOk ? `${this.spearTool.name}では退けられない` : rep.reached ? '間に合わない…' : !rep.inReach ? '引きつけてから突く（撃退）' : null) : st ? this.spearBlock(st) : null;
       ret.classList.toggle('lock', !!st && !block);
       ret.classList.toggle('far', !!st && !!block);
+      ret.classList.toggle('idle', !st); // (43) 魚が枠にいないときは薄く
       $('btn-shutter').classList.toggle('ready', !!st && !block && this.reload <= 0);
       if (st) {
         const def = st.rt.def;
@@ -2571,6 +2580,7 @@ export class Game {
     }
     ret.classList.toggle('lock', !!t && t.inRange);
     ret.classList.toggle('far', !!t && !t.inRange);
+    ret.classList.toggle('idle', !t); // (43)
     $('btn-shutter').classList.toggle('ready', !!t && t.inRange && !this.save.found[t.rt.def.id] && !this.pending.has(t.rt.def.id));
     if (t) {
       const known = this.save.found[t.rt.def.id] || this.pending.has(t.rt.def.id);
