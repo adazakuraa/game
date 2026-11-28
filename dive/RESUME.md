@@ -1,6 +1,16 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-28（修正バッチ2 F1b＝(41)〜(44) を実装。修正バッチ2 F1・F2 を実装。修正バッチ2の設計を追加。**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+最終更新: 2026-11-28（**修正バッチ2 F3＝(15)(23)(28)(38)(39) を実装**。修正バッチ2 F1b＝(41)〜(44) を実装。修正バッチ2 F1・F2 を実装。修正バッチ2の設計を追加。**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+
+## 修正バッチ2 F3（`claude/fix2-f3`、2026-11-28、**実装済み**）
+- **何か**：ボート画面をホーム画面の型に（(23)(39)）、エリアの水深を外して生き物の影のアイコンに（(38)）、ショップの未入荷を影で（(15)）、しおさい亭を吹き出し＋時間ボタン＋3 タブに（(28)）。設計は `docs/FIX-BATCH-2-DESIGN.md` の F3、暫定値のまま採用（要確認事項 DM・DQ・DR）。
+- **変えた所**：`index.html`（`#title` を状態の帯 `#home-bar`・`#story-card`（今やること）・`#points`（2 列）・ドック `#dock` に。`#daytime`・`#t-goal`・`#story-card`・`#points .pt .nm` などの id・class は既存プローブのために維持。デバッグ行は `details.dbg-fold` に入れた）。`src/ui/areaIcons.ts`（新規。12 エリアの影の SVG パス `AREA_ICONS` と `areaIconSvg`）。`src/world/layout.ts`（`DIVE_POINTS.sub` の先頭の水深を削除）。`src/game/Game.ts`（`renderStory`＝今やること、`renderTitle`＝カード・バッジ・ドックの鍵、`renderDaytime`＝状態の帯、`setBadge`、`onTodoTap`、`renderShop` の未入荷の影）。`src/game/kitchen.ts`（タブ `tab`・`seenWorkDay`、NEW／作れるバッジ、手銛前は「買い物」のみ）。`src/styles.css`（末尾に F3 の節。旧 `.pt`・`.hub`・`.daytime` などは削除）。
+- **F4 への接続点**：`Game.onTodoTap()`（「今やること」カードと鈴のタップ。今は従来の章カードと同じ動き）を編集長の吹き出しを開く呼び出しに差し替える。しおさい亭の `#k-okami`（女将さんの吹き出し）も F4 の吹き出しの見た目に合わせる。
+- **セーブ形式**：変更なし（キーも項目も）。
+- **挙動の変更**：実績の「N / M」はバッジをやめ `#open-album` の `title` に。しおさい亭・掲示板は未解放でも `hidden` にせず `.locked`（鍵つき）にして、押すと案内の吹き出し（toast）。ボート画面の「次の入荷／目標」は「今やること」カードの下の行へ。
+- **確認**：新規 `scripts/probe-fix2-f3.cjs` 22/22（390×844 の 4 項目・鍵つきドック・夜の案内・ショップの影・しおさい亭のタブとコントラスト・横長）。回帰：probe-phase9 84/84、phase11-final 33/33、fixes 20/20、fix2-f1 30/30、f1b 8/8、f2 12/12、debug 34/34（album バッジの確認先を `title` に更新）、s8 エラー 0。地形には触っていない。スクリーンショット：`docs/screenshots/fix2-f3-*.png`。
+- **注意**：プローブはクラウドでは前面（フォアグラウンド）で実行すること（バックグラウンドだと待機中に進まない）。`probe-phase7.cjs` は `/tmp/probe-env` の playwright-core を前提にしていて、この環境では動かない（既存のまま）。
+- **次**：F4（吹き出しの基盤と編集長）。
 
 ## 修正バッチ2 F1 追加修整 F1b（`claude/fix2-f1b`、2026-11-28、**実装済み**）
 - **何か**：F1 の実機確認で出た (41)〜(44)。(40)（ウニ漁中は光景などのイベントを起こさない）はトラッカーに記録のみで、実装は F7。

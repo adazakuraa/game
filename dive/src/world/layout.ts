@@ -614,18 +614,18 @@ export type DivePoint = {
 };
 
 export const DIVE_POINTS: DivePoint[] = [
-  { id: 'lagoon', name: '浅瀬ラグーン', sub: '水深 2–7m・砂地と海草', x: -10, z: 40 },
-  { id: 'reef', name: 'サンゴ礁', sub: '水深 6–15m・色とりどりの魚', x: -30, z: 215 },
-  { id: 'rocky', name: '岩礁', sub: '水深 8–25m・岩の隙間に潜む', x: 112, z: 200 },
-  { id: 'dropoff', name: 'ドロップオフ／沖', sub: '水深 15m〜・大物と出会う', x: 0, z: 470 },
+  { id: 'lagoon', name: '浅瀬ラグーン', sub: '砂地と海草', x: -10, z: 40 },
+  { id: 'reef', name: 'サンゴ礁', sub: '色とりどりの魚', x: -30, z: 215 },
+  { id: 'rocky', name: '岩礁', sub: '岩の隙間に潜む', x: 112, z: 200 },
+  { id: 'dropoff', name: 'ドロップオフ／沖', sub: '大物と出会う', x: 0, z: 470 },
   { id: 'cold', name: '流氷の入り江', sub: '水温2℃・ドライスーツが無いとエアがすぐ尽きる', x: -300, z: 130 },
-  { id: 'ruins', name: '海底遺跡', sub: '水深 6–24m・石の階段と沈船の墓場', x: -330, z: 440 },
-  { id: 'bluehole', name: 'ブルーホール', sub: '水深 7→55m・浅瀬に開いた底なしの青い穴', x: 300, z: 545 },
-  { id: 'cave', name: '水中洞窟', sub: '水深 22–28m・セノーテから暗い洞窟へ（ライト必須）', x: -330, z: 850 },
-  { id: 'kelp', name: '海藻の森', sub: '水深 9–20m・水面まで伸びるジャイアントケルプの森', x: 330, z: 120 },
-  { id: 'estuary', name: '河口', sub: '水深 1–9m・マングローブと干潟。川の水と海の水が混ざる', x: 300, z: -110, yaw: 0 },
-  { id: 'river', name: '川', sub: '水深 1–7m・瀬と淵。流れに逆らって上流の滝へ', x: 300, z: -340, yaw: 0 },
-  { id: 'deep', name: '深海', sub: '水深 170–430m・大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },
+  { id: 'ruins', name: '海底遺跡', sub: '石の階段と沈船の墓場', x: -330, z: 440 },
+  { id: 'bluehole', name: 'ブルーホール', sub: '浅瀬に開いた底なしの青い穴', x: 300, z: 545 },
+  { id: 'cave', name: '水中洞窟', sub: 'セノーテから暗い洞窟へ（ライト必須）', x: -330, z: 850 },
+  { id: 'kelp', name: '海藻の森', sub: '水面まで伸びるジャイアントケルプの森', x: 330, z: 120 },
+  { id: 'estuary', name: '河口', sub: 'マングローブと干潟。川の水と海の水が混ざる', x: 300, z: -110, yaw: 0 },
+  { id: 'river', name: '川', sub: '瀬と淵。流れに逆らって上流の滝へ', x: 300, z: -340, yaw: 0 },
+  { id: 'deep', name: '深海', sub: '大気圧潜水服が必要', x: 20, z: 900, requires: 'ads' },
 ];
 
 // ---- fast seabed height for the many creatures: a lazily filled 1 m grid, bilinear between samples

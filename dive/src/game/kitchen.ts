@@ -84,7 +84,14 @@ export class Kitchen {
   constructor(private host: Host) {
     $('k-close').addEventListener('click', () => this.close());
     $('k-sleep').addEventListener('click', () => this.timeButton());
+    // 修正バッチ2 (28): タブ「注文」「店の仕事」「買い物」
+    $('k-tabs').querySelectorAll<HTMLButtonElement>('[data-ktab]').forEach((b) => b.addEventListener('click', () => { this.tab = b.dataset.ktab as 'orders' | 'work' | 'shop'; this.render(); }));
   }
+
+  /** 開いているタブ（店を開くたびに「注文」から） */
+  private tab: 'orders' | 'work' | 'shop' = 'orders';
+  /** 今日の店の仕事のタブをもう見たか（タブの NEW バッジ用。保存しない） */
+  private seenWorkDay = -1;
 
   /** what the landlady said on this visit (kept while the diner stays open) */
   private line = '';
@@ -173,7 +180,9 @@ export class Kitchen {
     o.ev = undefined;
     this.say(ev);
     this.newToday = false;
+    this.tab = 'orders';
     $('kitchen').classList.remove('hidden');
+    $('kitchen').scrollTop = 0;
     this.render();
   }
 
@@ -196,7 +205,9 @@ export class Kitchen {
     // before the hand spear the diner is only where the diver stays: no orders, no cooler yet
     const inn = !this.host.progress().spear;
     $('kitchen').classList.toggle('inn', inn);
-    $('k-okami').innerHTML = `<b>女将のハルさん</b>「${this.line}」`;
+    // 手銛を持つ前は、泊まる・買い物だけ（注文・店の仕事のタブは出さない）
+    if (inn) this.tab = 'shop';
+    $('k-okami').innerHTML = `<b>女将のハルさん</b><span class="k-say">${this.line}</span>`;
     const wToday = WEATHER[weatherOf(s.day ?? 1)];
     $('k-status').innerHTML = inn ? `<span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>天気 ${wToday.icon} <b>${wToday.name}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` : `<span>評判 <span class="stars">${stars}</span> Lv<b>${lv}</b></span><span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>天気 ${wToday.icon} <b>${wToday.name}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` +
       (next !== undefined ? `<span>次のLvまで評判 <b>${next - rep}</b></span><div class="k-bar"><i style="width:${((rep - prev) / (next - prev)) * 100}%"></i></div>` : '<span>評判 最高！</span>');
@@ -266,6 +277,18 @@ export class Kitchen {
     $('k-cooler').querySelectorAll<HTMLButtonElement>('[data-eat]').forEach((b) => b.addEventListener('click', () => this.eat(+b.dataset.eat!)));
     $('k-cooler').querySelectorAll<HTMLButtonElement>('[data-sell]').forEach((b) => b.addEventListener('click', () => this.sell(+b.dataset.sell!)));
     $('k-bait').querySelectorAll<HTMLButtonElement>('[data-bait]').forEach((b) => b.addEventListener('click', () => this.buyBait(b.dataset.bait as BaitId)));
+
+    // タブの表示とバッジ（赤 NEW＝新しいこと・緑＝いま作れる／できる）
+    const day = s.day ?? 1;
+    if (this.tab === 'work') this.seenWorkDay = day;
+    const readyN = this.readyCount();
+    const badge = (id: string, text: string, kind: 'new' | 'ok') => { const el = $(id); el.textContent = text; el.className = `bdg ${kind}${text ? '' : ' empty'}`; };
+    badge('kt-orders', this.tab !== 'orders' && readyN ? '作れる' : '', 'ok');
+    badge('kt-work', this.tab !== 'work' && this.seenWorkDay !== day && !sortDone ? 'NEW' : '', 'new');
+    badge('kt-shop', '', 'new');
+    $('k-tabs').classList.toggle('hidden', inn);
+    $('k-tabs').querySelectorAll<HTMLButtonElement>('[data-ktab]').forEach((b) => { const on = b.dataset.ktab === this.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+    $('kitchen').querySelectorAll<HTMLElement>('[data-kpane]').forEach((p) => p.classList.toggle('hidden', p.dataset.kpane !== this.tab));
   }
 
   /** Buy a pack of bait at the tackle shelf. */

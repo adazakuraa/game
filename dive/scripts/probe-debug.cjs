@@ -109,7 +109,7 @@ const KNOWN = new Set(['found', 'dives', 'maxDepth', 'muted', 'money', 'owned', 
   // ---- 宝箱・光景・スポットのリセット
   await seed({ chests: ['c_lagoon', 'c_reef'], sceneHints: ['akameeyes'], scenes: { akameeyes: { photo: '', t: 1 }, ayurun: { photo: '', t: 1 } }, spots: ['lagoon', 'reef'] });
   r = await act('chests-reset'); check('reset: 宝箱の取得状態を戻す（光景・スポットは残る）', r.save.chests.length === 0 && r.save.sceneHints.length === 0 && Object.keys(r.save.scenes).length === 2 && r.save.spots.length === 2);
-  r = await act('scenes-reset'); check('reset: 特別な光景を戻す（アルバムのバッジも 0）', Object.keys(r.save.scenes).length === 0 && r.save.spots.length === 2 && (await ev(() => document.getElementById('album-badge').textContent)).startsWith('0 /'));
+  r = await act('scenes-reset'); check('reset: 特別な光景を戻す（アルバムのバッジも 0）', Object.keys(r.save.scenes).length === 0 && r.save.spots.length === 2 && (await ev(() => document.getElementById('open-album').title)).includes('0 /'));
   r = await act('spots-reset'); check('reset: 写真スポットを戻す', r.save.spots.length === 0);
 
   // ---- 日数と時間帯
