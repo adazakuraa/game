@@ -1,6 +1,7 @@
 import { BLUEHOLE, RUINS, type ZoneId } from '../world/layout';
 import type { FishShape, RayShape } from './models';
 import { MAM_LOOK, paintMammal, type Paint } from './paint';
+import { SHARK_SPEC } from './sharks';
 import type { WeatherId } from '../game/weather';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
@@ -331,17 +332,7 @@ export const SPECIES: SpeciesDef[] = [
     desc: '全長10mを超える世界最大の魚。大きな口で海水ごとプランクトンを吸い込む、おだやかな巨人。',
     hint: '沖の浅い中層。大きな影を探そう。',
     kind: 'fish', fish: { H: 0.17, W: 0.2, headW: 1.45, peak: 0.62, nose: 0.95, ped: 0.08, belly: 0.02, tail: 'hetero', tailL: 0.22, tailH: 0.36, dorsal: [{ a: 0.42, b: 0.6, h: 0.1, sweep: 0.5 }, { a: 0.18, b: 0.24, h: 0.04 }], anal: [{ a: 0.18, b: 0.24, h: 0.035 }], pect: { t: 0.66, len: 0.2, wid: 0.08, down: 0.25, out: 0.7 }, eyes: 0.04, eyeT: 0.93 },
-    paint: (p) => {
-      fins(p, '#2c3a48'); p.shade('#243444', '#3a4c5c', '#d8dcdc', 0.58);
-      p.clipBody(() => {
-        p.g.fillStyle = 'rgba(235,240,240,0.9)';
-        for (let i = 0; i < 260; i++) { const z = p.rnd() - 0.5, y = p.rnd() * 0.09; p.g.beginPath(); p.g.arc(p.U(z), p.V(y), 1.4 + p.rnd() * 1.2, 0, Math.PI * 2); p.g.fill(); }
-        p.g.strokeStyle = 'rgba(220,225,225,0.6)'; p.g.lineWidth = 1;
-        for (let i = 0; i < 16; i++) { p.g.beginPath(); p.g.moveTo(p.U(-0.4 + i * 0.05), p.V(0.09)); p.g.lineTo(p.U(-0.4 + i * 0.05), p.V(0.0)); p.g.stroke(); }
-        p.g.fillStyle = '#101418'; p.g.fillRect(p.U(0.47), p.V(0.0), p.U(0.5) - p.U(0.47), 3);
-      });
-      p.eye(0.04, '#333'); for (let i = 0; i < 5; i++) p.gill('rgba(0,0,0,0.35)', 0.72 + i * 0.025);
-    },
+    paint: (p) => { fins(p, '#2c3a48'); p.shade('#243444', '#3a4c5c', '#d8dcdc', 0.58); p.eye(0.04, '#333'); },
     count: 1, groups: 1, behavior: 'pelagic', region: [-100, 100, 400, 680], speed: 0.9, flee: 0, curious: true, swim: [0.45, 0.06, 2.4], photoRange: 45,
   },
   {
@@ -349,7 +340,7 @@ export const SPECIES: SpeciesDef[] = [
     desc: 'T字型の頭部「頭翼」で獲物の電気を感じ取る。時には数百匹もの大群をつくることがある。',
     hint: 'ドロップオフの深め。群れで回遊している。',
     kind: 'fish', fish: { H: 0.14, W: 0.13, peak: 0.6, nose: 0.6, ped: 0.08, tail: 'hetero', tailL: 0.26, tailH: 0.32, dorsal: [{ a: 0.5, b: 0.64, h: 0.14, sweep: 0.6 }, { a: 0.18, b: 0.24, h: 0.04 }], anal: [{ a: 0.18, b: 0.25, h: 0.04 }], pect: { t: 0.64, len: 0.18, wid: 0.08, down: 0.35, out: 0.7 }, ceph: 0.32, eyes: 0, eyeT: 0.9 },
-    paint: (p) => { fins(p, '#6a7480'); p.shade('#5a6672', '#7a8692', '#e4e8ea', 0.55); p.noise(0.1); for (let i = 0; i < 5; i++) p.gill('rgba(0,0,0,0.3)', 0.74 + i * 0.02); },
+    paint: (p) => { fins(p, '#6a7480'); p.shade('#5a6672', '#7a8692', '#e4e8ea', 0.55); p.noise(0.1); },
     count: 9, groups: 1, behavior: 'pelagic', region: [-140, 140, 360, 520], speed: 1.2, flee: 7, swim: [1.1, 0.06, 3], spread: 5, photoRange: 28,
   },
   {
@@ -552,6 +543,16 @@ function applyWhaleFall() {
   }
 }
 applyWhaleFall();
+
+/** 修正バッチ2 F12b (18)：サメの専用の体（sharks.ts）。写真テクスチャの種は creatures.ts が先に写真を選ぶので影響しない */
+function applySharkBodies() {
+  for (const d of SPECIES) {
+    const sp = SHARK_SPEC[d.id];
+    if (!sp || !d.fish || d.kind !== 'fish') continue;
+    d.fish = { ...d.fish, shark: sp, ...(sp.drawEye ? { eyes: 0.05, eyeT: 0.93 } : {}) };
+  }
+}
+applySharkBodies();
 
 /**
  * 修正バッチ2 F11 (32)：天気限定の種（既存種から 8 種。新種は足さない）。★2 以下だけ。

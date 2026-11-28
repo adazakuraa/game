@@ -3,7 +3,7 @@ import { SPECIES, type SpeciesDef } from './species';
 import { loadPhotoTex, photoFor } from './photoFish';
 import { surfaceAt, surfaceFootAt } from '../world/surface';
 import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr, type FishLayout } from './models';
-import { Paint } from './paint';
+import { Paint, paintSharkExtras } from './paint';
 import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
 import { caveRoofAt, caveTopAt, flowAt, heightFast, riverDist, SHORE_BLOCK, VENT, zoneAt } from '../world/layout';
@@ -16,6 +16,7 @@ import { KEEP, LOD, SHADOW, THIN } from '../game/render';
 import { Impostors, packColor, type ImpostorCell } from './impostors';
 import { resolveCapsule, resolveSphere, segmentBlocked } from '../world/colliders';
 import { buildCetacean, buildPinniped } from './mammals';
+import { buildShark } from './sharks';
 import { SWIM, swimF0, swimFreq, swimModeOf, swimUniforms, type SwimMode } from './swim';
 
 type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number; absent?: boolean;
@@ -136,6 +137,11 @@ function fishGeometries(def: SpeciesDef): { geo: THREE.BufferGeometry; geo1: THR
     const mk = (d: 0 | 1, fixed?: FishLayout) => (f.cet ? buildCetacean(f.cet, f, d, fixed) : buildPinniped(f.pin!, f, d, fixed));
     const a = mk(0);
     return { geo: a.geo, geo1: mk(1, a.layout).geo, layout: a.layout };
+  }
+  if (f.shark) {
+    // サメ（F12b）の専用の体：L1 は同じ作り方で細かさだけ落とす（画像の範囲は L0 に合わせる）
+    const a = buildShark(f.shark, f, 0);
+    return { geo: a.geo, geo1: buildShark(f.shark, f, 1, a.layout).geo, layout: a.layout };
   }
   const v2 = fishV2(def);
   const small = def.size < FISH_TRIS.smallSize;
@@ -954,6 +960,7 @@ export class Creatures {
       rt.geo1 = b.geo1;
       def.paint?.(b.paint);
       const lay = b.paint.fish;
+      if (lay?.shk) paintSharkExtras(b.paint);
       // §3.4: silver flanks and belly marked in the texture's alpha (read by the §5.2 sheen), opaque species only
       if (lay?.v2 && def.mat?.translucent === undefined) b.paint.sheenMask(b.paint.sheen ?? Math.min(1, (def.mat?.metal ?? 0.05) * 1.4));
       const tex = new THREE.CanvasTexture(b.paint.c);
