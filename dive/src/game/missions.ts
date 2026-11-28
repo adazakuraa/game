@@ -63,6 +63,9 @@ export const URCHINS = [
   { id: 'rappa', name: 'ラッパウニ', edible: false, pts: 0, n: 5, geo: { spine: 0.2, n: 170, thin: 0.045 }, color: 0xc8a0ac, emissive: 0x2a1418, scale: 0.17, sting: 14, text: 'ラッパウニの毒でしびれる！（エア -14）' },
 ] as const;
 
+/** F8 (22)：依頼の表示（#mission）に出すウミガメのアイコン */
+const TURTLE_ICON = '<svg class="ms-turtle" viewBox="0 0 32 24" aria-hidden="true"><ellipse cx="15" cy="12" rx="9" ry="7" fill="#5a9a4a" stroke="#d8f0b8" stroke-width="1.4"/><path d="M9 8l6 4-6 4M15 5v14M21 8l-6 4 6 4" fill="none" stroke="#d8f0b8" stroke-width="1" opacity=".7"/><circle cx="27" cy="12" r="3.2" fill="#8ac070"/><circle cx="28" cy="11" r=".7" fill="#12301a"/><path d="M8 5l-4-3M8 19l-4 3M20 5l3-3M20 19l3 3" stroke="#8ac070" stroke-width="2.4" stroke-linecap="round"/></svg>';
+
 export type Kind = 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag';
 
 export type MissionCtx = {
@@ -91,9 +94,13 @@ export type MissionCtx = {
   stage: (id: string, pose: { p: THREE.Vector3; yaw: number; pitch: number } | null) => void;
   /** the rescued animal frees itself and swims with the diver for the rest of the dive */
   companion: (id: string, from: THREE.Vector3) => void;
+  /** F8 (22)：ウミガメが見つかったとき、潜水を止めて［助ける］［今はやめる］を聞く（true＝助ける）。なければ今までどおり自動で始まる */
+  askRescue?: () => Promise<boolean>;
+  /** F8 (22)：初めて助けるときの操作チュートリアル（1＝円の中にいる、2＝円に入った、3＝切れた）。台本を出すかどうかは呼び出し側が決める */
+  rescueTip?: (step: 1 | 2 | 3) => void;
 };
 
-type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; hold?: number; seen?: Set<string>; title: string; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number; area?: Area; inside?: boolean; cut?: number };
+type Active = { kind: Kind; t: number; time: number; need: number; got: number; reward: number; aka?: number; hold?: number; seen?: Set<string>; title: string; tip?: number; tipT?: number; target?: SpeciesDef; spot?: THREE.Vector3; lastHint?: number; area?: Area; inside?: boolean; cut?: number };
 /** a circle (world m) drawn on the map: the goal is somewhere inside it */
 export type Area = { x: number; z: number; r: number };
 
@@ -128,6 +135,11 @@ export class Missions {
   /** dives since the last netted turtle (Phase 3: never two in a row) */
   private restDives = 99;
   private rescuedThisDive = false;
+  /** F8 (22)：ウミガメの［助ける］［今はやめる］を聞いている間（asking）／答え（yes・no）／このダイブでは断った */
+  private rescueAsk: 'none' | 'asking' | 'yes' | 'no' = 'none';
+  private rescueDeclined = false;
+  /** test hook (F8)：次の更新でウミガメの［助ける］［今はやめる］を出す */
+  forceRescueAsk = false;
   private lastEnd = -1e9;
   private nextCheck = 0;
   private items: THREE.Vector3[] = [];
@@ -219,6 +231,8 @@ export class Missions {
     if (this.rescuedThisDive) this.restDives = 0;
     else this.restDives++;
     this.rescuedThisDive = false;
+    this.rescueAsk = 'none';
+    this.rescueDeclined = false;
   }
 
   /** Within reach of the netted turtle, before the cutting has begun: the shutter button cuts. */
@@ -245,6 +259,7 @@ export class Missions {
     this.end(false, true);
     this.offer = null;
     this.answer = null;
+    this.rescueAsk = 'none';
     this.count = 0;
     this.lastEnd = -1e9;
     this.nextCheck = 0;
@@ -343,12 +358,26 @@ export class Missions {
     if (!this.active && this.forceOffer) { this.forceOffer = false; this.propose(c); return; }
     if (!this.active) {
       this.answer = null;
+      // F8 (22)：［助ける］の返事が来た → 円と制限時間が始まる。［今はやめる］ならこのダイブでは出ない
+      if (this.rescueAsk === 'yes') { this.rescueAsk = 'none'; this.start(c, 'rescue'); return; }
+      if (this.rescueAsk === 'no') { this.rescueAsk = 'none'; this.rescueDeclined = true; this.lastEnd = c.time; return; }
+      if (this.rescueAsk === 'asking') return;
+      if (this.forceRescueAsk && c.askRescue) {
+        this.forceRescueAsk = false;
+        this.rescueAsk = 'asking';
+        void c.askRescue().then((ok) => { this.rescueAsk = ok ? 'yes' : 'no'; });
+        return;
+      }
       this.nextCheck -= c.dt;
       if (this.count >= MISSION.maxPerDive || c.diveTime < Math.max(MISSION.firstAfter, MISSION.rescue.after) || c.time - this.lastEnd < MISSION.gap || this.nextCheck > 0) return;
       this.nextCheck = MISSION.checkEvery;
       // only happenings start by themselves at sea (requests are taken on land); Phase 3: rarer, never two dives in a row
-      if (this.restDives < MISSION.rescue.restDives) return;
-      if (Math.random() < MISSION.rescue.chance && (c.zone === 'lagoon' || c.zone === 'reef' || c.zone === 'rocky')) this.start(c, 'rescue');
+      if (this.restDives < MISSION.rescue.restDives || this.rescueDeclined) return;
+      if (Math.random() < MISSION.rescue.chance && (c.zone === 'lagoon' || c.zone === 'reef' || c.zone === 'rocky')) {
+        if (!c.askRescue) { this.start(c, 'rescue'); return; }
+        this.rescueAsk = 'asking';
+        void c.askRescue().then((ok) => { this.rescueAsk = ok ? 'yes' : 'no'; });
+      }
       return;
     }
     const a = this.active;
@@ -392,6 +421,9 @@ export class Missions {
     if (a.kind === 'rescue' && a.spot) {
       const R = MISSION.rescue;
       const d = a.spot.distanceTo(c.player);
+      // F8 (22)：初めて助けるときの操作チュートリアル（円の中にいる → 円に入った → 切れた）
+      if ((a.tip ?? 0) < 1) { a.tip = 1; a.tipT = c.time; c.rescueTip?.(1); }
+      else if (a.tip === 1 && a.inside && c.time - (a.tipT ?? 0) > 6) { a.tip = 2; c.rescueTip?.(2); }
       if (a.cut !== undefined) {
         // the knife strokes: each one tears the net open a little more, the last one sets the turtle free
         a.cut += c.dt;
@@ -409,6 +441,7 @@ export class Missions {
           a.got = 1;
           this.netMesh.visible = false;
           c.companion('turtle', a.spot);
+          c.rescueTip?.(3);
         }
       } else if (d < R.reach) {
         if ((a.lastHint ?? 0) <= c.time - 5) { a.lastHint = c.time; c.toast('ボタンをタップして、ナイフで網を切ろう', 'warn', 2.5); }
@@ -601,7 +634,7 @@ export class Missions {
       this.rescuedThisDive = true;
       c.stage('turtle', { p: spot.clone(), yaw: Math.random() * 6, pitch: 0.15 });
       this.active = { kind, t: T.time, time: T.time, need: 1, got: 0, reward: T.reward, title: '網に絡まったウミガメ', spot, hold: 0, area: this.areaAround(spot) };
-      c.toast('近くでウミガメが捨てられた網に絡まって動けなくなっている！ マップの金色の円の中のどこか。そばでボタンをタップして、ナイフで網を切ってあげよう', 'warn', 5);
+      c.toast(`ウミガメの救出がはじまった。制限時間${T.time}秒　マップの金色の円の中へ`, 'warn', 4);
     } else if (kind === 'survey') {
       const T = MISSION.survey;
       this.active = { kind, t: T.time, time: T.time, need: T.need, got: 0, reward: T.reward, title: '生き物調査', seen: new Set() };
@@ -811,7 +844,10 @@ export class Missions {
 
   private renderHud(): void {
     const a = this.active!;
-    this.el.title.textContent = a.title;
+    // F8 (22)：ウミガメの救出は、専用の表示（ウミガメのアイコン＋残り時間）
+    this.el.root.classList.toggle('rescue', a.kind === 'rescue');
+    if (a.kind === 'rescue') this.el.title.innerHTML = `${TURTLE_ICON}<span>ウミガメを助ける</span>`;
+    else this.el.title.textContent = a.title;
     // time first: on a narrow screen the tail may be cut, the countdown never is
     // Phase 3: the countdown (text and bar) only while inside the circle
     const inside = a.inside ?? true;

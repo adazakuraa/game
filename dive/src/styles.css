@@ -786,3 +786,44 @@ button.gear-item.locked .gi { background: rgba(255,255,255,0.04); }
 #travel .tv-name { font-size: 20px; font-weight: 900; color: #fff; }
 #travel .tv-depth { font-size: 13px; font-weight: 700; color: var(--warn); margin-top: 2px; }
 #travel .tv-skip { position: absolute; right: calc(14px + var(--safe-r)); bottom: calc(12px + var(--safe-b)); font-size: 12px; color: rgba(220, 240, 248, 0.7); pointer-events: none; }
+
+
+/* ===== 修正バッチ2 F8：ウミガメの表示・光景の帯・手記 ===== */
+#mission .ms-turtle { width: 26px; height: 20px; vertical-align: -5px; margin-right: 6px; }
+#mission.rescue { border-color: #8ac070; }
+#mission.rescue #ms-title { color: #bfe6a0; font-size: 12.5px; }
+#mission.rescue .ms-bar i { background: #8ac070; }
+/* 小型吹き出しは、依頼の表示・光景の帯があるときはその下に */
+#app:has(#mission:not(.hidden)) #talk-mini { top: calc(72px + var(--safe-t)); }
+#app:has(#scene-banner.show) #talk-mini { top: calc(72px + var(--safe-t)); }
+#app:has(#mission:not(.hidden)):has(#talk-mini:not(.hidden)) #toast { top: calc(150px + var(--safe-t)); }
+#scene-banner { position: absolute; left: 50%; top: calc(10px + var(--safe-t)); transform: translate(-50%, -10px); z-index: 9; width: min(400px, calc(100vw - 360px)); padding: 6px 14px 8px; border-radius: 12px; text-align: center; background: linear-gradient(180deg, rgba(70, 46, 6, 0.94), rgba(26, 16, 4, 0.94)); border: 2px solid #f0c040; box-shadow: 0 0 20px 3px rgba(240, 192, 64, 0.5); opacity: 0; pointer-events: none; transition: opacity 0.35s, transform 0.35s; }
+#scene-banner.show { opacity: 1; transform: translate(-50%, 0); }
+#scene-banner small { display: block; font-size: 11px; letter-spacing: 0.3em; color: #f0c040; font-weight: 900; }
+#scene-banner b { display: block; font-size: 16px; color: #fff3c8; line-height: 1.4; }
+@media (max-width: 760px) { #scene-banner { width: calc(100vw - 340px); min-width: 200px; } }
+@media (max-width: 560px) {
+  #scene-banner { width: calc(100vw - 24px); top: calc(118px + var(--safe-t)); }
+  #app:has(#scene-banner.show) #talk-mini { top: calc(184px + var(--safe-t)); }
+  #app:has(#mission:not(.hidden)) #talk-mini { top: calc(168px + var(--safe-t)); }
+  #app:has(#scene-banner.show):has(#mission:not(.hidden)) #talk-mini { top: calc(236px + var(--safe-t)); }
+  #app:has(#mission:not(.hidden)):has(#talk-mini:not(.hidden)) #toast { top: calc(250px + var(--safe-t)); }
+}
+@media (prefers-reduced-motion: reduce) { #scene-banner { transition: opacity 0.2s; } }
+#journal { z-index: 12; background: rgba(1, 10, 18, 0.72); overflow-y: auto; }
+.jr-paper { width: min(440px, 100%); margin: auto; padding: 22px 22px 18px; border-radius: 6px; color: #3a2a18; background: radial-gradient(ellipse at 20% 10%, rgba(255, 255, 255, 0.35), transparent 55%), repeating-linear-gradient(0deg, rgba(120, 90, 50, 0.06) 0 2px, transparent 2px 5px), linear-gradient(160deg, #efe2c0, #d9c598 70%, #c8b280); box-shadow: 0 10px 34px rgba(0, 0, 0, 0.6), inset 0 0 30px rgba(120, 80, 30, 0.25); transform: rotate(-0.6deg); font-family: 'Zen Old Mincho', 'Yu Mincho', 'Hiragino Mincho ProN', serif; }
+.jr-kicker { font-size: 12px; letter-spacing: 0.25em; color: #8a6a3a; font-weight: 700; text-align: center; border-bottom: 1px solid rgba(120, 90, 50, 0.4); padding-bottom: 8px; margin-bottom: 12px; }
+.jr-body p { margin: 0 0 8px; font-size: 16px; line-height: 1.9; font-weight: 700; }
+.jr-end { margin: 14px 0 6px; padding-top: 10px; border-top: 1px dashed rgba(120, 90, 50, 0.5); font-size: 15.5px; line-height: 1.8; font-weight: 900; color: #6a2a1a; text-align: center; }
+.jr-met { margin: 4px 0 8px; text-align: center; font-size: 13px; font-weight: 900; color: #2a6a3a; }
+.jr-paper .btn { display: block; margin: 12px auto 0; min-width: 160px; }
+.jr-met.hidden { display: none; }
+/* 実績画面のタブと手記の一覧 */
+.al-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+.al-tab { flex: 1; min-height: 40px; border-radius: 10px; border: 1px solid var(--glass-brd); background: rgba(255, 255, 255, 0.05); color: var(--ink-dim); font: inherit; font-weight: 900; cursor: pointer; }
+.al-tab.on { background: rgba(255, 181, 71, 0.18); border-color: var(--warn); color: var(--warn); }
+.al-journals { display: flex; flex-direction: column; gap: 8px; }
+.al-journal { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 12px; text-align: left; border-radius: 10px; border: 1px solid rgba(200, 170, 110, 0.5); background: linear-gradient(160deg, rgba(239, 226, 192, 0.16), rgba(200, 178, 128, 0.08)); color: var(--ink); font: inherit; cursor: pointer; }
+.al-journal b { font-size: 14px; }
+.al-journal span { font-size: 12px; color: var(--ink-dim); }
+.al-journal.met span { color: var(--ok); font-weight: 900; }

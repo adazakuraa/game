@@ -19,7 +19,7 @@ import { splitText, type MiniLine, type TalkLine, type Who } from '../ui/talk';
 export const TALK_F5_IDS = ['shopOpen', 'tankUp', 'board', 'album', 'kitchen', 'bait'] as const;
 
 /** F8 の接続点：手記を読める機能ができたら '手記もここで読める。' を入れる */
-export const ALBUM_NOTE_TEXT = '';
+export const ALBUM_NOTE_TEXT = '拾った手記もここで読める。';
 
 /** 長い本文を句点で 2〜3 段（話）に分ける */
 export function say(who: Who, text: string, extra?: Partial<TalkLine>): TalkLine[] {

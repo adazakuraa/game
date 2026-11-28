@@ -1,6 +1,17 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-28（**修正バッチ2 F7＝時間の進み方・移動の演出・ウニ漁と餌 (10)(17)(26)(29)(35)(36)(37)(40) を実装**。修正バッチ2 F6＝解放順・強力ライトのアップグレード・海図とゲート (24)・(30)の深海の場所を実装**。修正バッチ2 F5＝機能解放・新アイテムの操作チュートリアル (7)後半を実装**。修正バッチ2 F4＝吹き出しの基盤と編集長 (7)前半・(16) を実装**。修正バッチ2 F3b＝(45)(47) を実装**（(48) は記録のみ）。修正バッチ2 F3＝(15)(23)(28)(38)(39) を実装。修正バッチ2 F1b＝(41)〜(44) を実装。修正バッチ2 F1・F2 を実装。修正バッチ2の設計を追加。**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+最終更新: 2026-11-28（**修正バッチ2 F8＝潜水中のイベントの見せ方 (3)(4)(20)(22) を実装**。修正バッチ2 F7＝時間の進み方・移動の演出・ウニ漁と餌 (10)(17)(26)(29)(35)(36)(37)(40) を実装**。修正バッチ2 F6＝解放順・強力ライトのアップグレード・海図とゲート (24)・(30)の深海の場所を実装**。修正バッチ2 F5＝機能解放・新アイテムの操作チュートリアル (7)後半を実装**。修正バッチ2 F4＝吹き出しの基盤と編集長 (7)前半・(16) を実装**。修正バッチ2 F3b＝(45)(47) を実装**（(48) は記録のみ）。修正バッチ2 F3＝(15)(23)(28)(38)(39) を実装。修正バッチ2 F1b＝(41)〜(44) を実装。修正バッチ2 F1・F2 を実装。修正バッチ2の設計を追加。**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+
+## 修正バッチ2 F8（`claude/fix2-f8`、2026-11-28、**実装済み**）
+- **何か**：(3)(4)(20)(22)。設計書の暫定値のまま採用（要確認事項 CV・DK・DL）。セーブ形式は**項目を足しただけ**（`journals?: { scene: SceneId; t: number }[]`。キー変更なし。`sceneHints` から読み込み時に作る・`sceneHints` も残す）。地形は触っていない。
+- **(4) 写真スポットの円とヒント**（`spots.ts`・`Game.ts`）：`SPOT.hint`（45m）・`spotHintDist(s)`（45m と 円の半径＋10m の大きいほう）。`SpotDef.when?: { day?, weather? }` と `spotOpen(s, weather, night)`（条件つきは 4 か所：lagoon＝晴れの昼、kelp＝晴れか曇りの昼、cenote＝晴れの昼、waterfall＝晴れか曇り）。`Game.updateEvents()`（6 フレームごと）が、発見済み・未撮影・今の天気時間帯で開いているスポットに 45m 以内へ入ると `spotHinted` に足して小型吹き出し「◯◯の見どころが近い…」（吹き出しが出ていれば toast）。`spotMarks()` は `spotHinted` のものだけ。`spotShot()` は閉じているスポットを `spotInView(cam, open)` で除く（撮れない）。ウニ漁の間は出さない。
+- **(4) 章の光景**：`sceneMarks()` は `scenes.sensed`（気配が出た）光景だけ（`stagedScene` の例外を外した）。章の光景が最初の 1 回は必ず出る決まり（`startDive`）は変えていない。潜り始めから 4 秒後に編集長の小型吹き出しで場所の手がかり（`scenes.ts` の `SCENE_CLUE`：whalesleep・spawning）。実績画面の「？？？」に「出会えるかは運しだい」。抽選確率（`SCENES[].chance`）は据え置き。
+- **(20) 光景の帯**（`Game.announceScene`・`SCENE_SEE`、`#scene-banner`）：主役の個体（`Scenes.starPositions(id)`）が画面内（NDC 内）・25m 以内、または粒子の光景（`particlesInView`）。夜の光景は夜だけ。帯は金色の縁・3 秒・チャイム・小型吹き出し。初回の光景（`save.scenes` が空で `talked` に `sceneFirst` なし）だけ「これはすごい…！ 撮影しよう」。1 ダイブ 1 光景 1 回（`sceneAnnounced`）。CSS は依頼の表示・帯があるときに小型吹き出しを下へずらす。
+- **(22) ウミガメ**（`missions.ts`・`Game.askTurtle`・`rescueTip`）：発生の抽選（60 秒後・10 秒ごと 5%・`restDives` はそのまま）が当たったら `MissionCtx.askRescue()`（Game が `paused = true` にして `talk.run` の選ぶ段「助ける」「今はやめる」、スキップは「やめる」扱い）。`rescueAsk`（none/asking/yes/no）で、yes なら `start('rescue')`・no なら `rescueDeclined`（そのダイブでは出ない。`newDive()` で戻る）。初回だけ（`talked` に `turtleHow`）`rescueTip(1〜3)` の小型吹き出し（円の中にいる／円に入って 1 段目から 6 秒後に「ナイフのボタン」／切れたら「ついてくる」）。`#mission` に class `rescue` とウミガメの SVG アイコン（`TURTLE_ICON`）。
+- **(3) 手記**（`journals.ts`・`Game.ts`）：`JOURNALS`（16 光景×3 行）・`JOURNAL_END`。`openChest` は手記を拾ったら `save.journals` に追加・`journalQueue` に積んで小型吹き出し「古い手記の切れはしを拾った…（浮上してから読もう）」。`closeResult()`（と結果画面の「しおさい亭で料理する」）が `flushJournals()` で 1 枚ずつ `#journal`（紙の質感）を出し、終わったら元の流れ（夜明け・ボート画面）へ。実績画面に `.al-tabs`（光景・スポット／手記）。手記の一覧は拾った順、タップで `openJournal`（光景を撮っていれば「◎ ◯◯に出会えた」）。`talks.ts` の `ALBUM_NOTE_TEXT` は「拾った手記もここで読める。」に。`debug.ts` の「宝箱を戻す」は `journals` も空にする。
+- **テストフック**：`spots` に `when`・`open` を足した。ほかは `game`（`__THREE_GAME_TEST_HOOKS__.game`）の private を直接見る。`Missions.forceRescueAsk = true` で次の更新にウミガメの確認を出せる。
+- **確認**：`scripts/probe-fix2-f8.cjs`（54 項目：スポットの条件とヒント・章の光景の円と手がかり・帯・ウミガメの確認とチュートリアル・手記）。`probe-debug.cjs` の既知キーに `journals` を足した。回帰：`probe-fix2-f8` 54/54・`probe-fix2-f5` 30/30・`probe-fix2-f4` 29/29・`probe-phase9` 84/84・`probe-phase11-final` 33/33・`probe-s8`・`probe-debug`・`probe-fixes`・`probe-fix2-f7`・`probe-phase10`・`probe-phase11` は通過。`probe-phase5`（世界の端・ボートの表示・アルバムの行数・黄金のフィン）と `probe-phase6`（窒素酔い・ウニの数）は、F1・F3・F7 で仕様が変わった項目の古い期待値で失敗するが、**変更前の main でも同じ 7 件が同じ内容で失敗する**（今回の回帰ではない。`PROBE_CHROME` に headless shell を指定して実行）。
+- **次の一手**：F9（深海）以降。実機で見てほしい点は `ユーザ確認リスト.md` の「修正バッチ2 F8」。
 
 ## 修正バッチ2 F7（`claude/fix2-f7`、2026-11-28、**実装済み**）
 - **何か**：(10)(17)(26)(29)(35)(36)(37)(40)。設計書の暫定値のまま採用（要確認事項 CY・DJ・DO・DP）。セーブ形式は**項目を足していない**（キー変更なし）。地形は触っていない。
@@ -14,7 +25,7 @@
 - **餌**：`index.html` の見出し「釣具の棚：餌」を削除。`Kitchen.render()` は評判 `BAIT_LEVEL`（2）未満なら「買い物」タブを出さず、`buyBait` も止める。潜水中の餌ボタンは持っている数で出る（旧セーブは Lv1 でも使える）。
 - **テストフック**（`__THREE_GAME_TEST_HOOKS__`）：`urchinInfo`・`faceUrchin`・`finishUrchin`・`transit`・`press`・`beginUrchin`・`missionReset`・`scenesInfo`・`me`。
 - **確認**：`scripts/probe-fix2-f7.cjs`（夜明け・夜の潜水の後の朝・移動演出・ウニ漁・借りた銛・餌）、`probe-fix2-f7-scroll.cjs`（(37)、変更前後）、`probe-fix2-f7-count.cjs`（(35)、変更前後。結果は下）。**(35) の計測（変更前の main と変更後、昼・ライトなし・同じ手順で 12 回）**：開始地点（潜る位置）から 20m 以内のウニ 7.7 個 → 45 個（群れは 0 → 8 か所）、15m 以内の食べられるウニ 2.3 → 25.6 個、画面に映るウニ（距離の制限なし）3.9 → 10.0 個、画面に映る 15m 以内のウニ 0.1 → 3.6 個。
-- **次の一手**：F8（潜水中のイベントの見せ方 (3)(4)(20)(22)）。`talks.ts` の `ALBUM_NOTE_TEXT` はまだ空。実機で見てほしい点は `ユーザ確認リスト.md` の「修正バッチ2 F7」。
+- **次の一手**：F8 は実装済み（上）。実機で見てほしい点は `ユーザ確認リスト.md` の「修正バッチ2 F7」。
 
 ## 修正バッチ2 F6（`claude/fix2-f6`、2026-11-28、**実装済み**）
 - **何か**：(24) と (30) の「深海の場所」。設計書の暫定値のまま採用（要確認事項 DA〜DC）。**地形は変えていない**（`scripts/terrain-dump.ts` 10 万点の前後比較で差分 0）。
