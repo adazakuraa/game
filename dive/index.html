@@ -117,7 +117,22 @@
           </div>
           <div id="daytime" class="panel daytime"></div>
           <div class="panel" id="points"></div>
+          <!-- DEBUG-PANEL:BEGIN（テスト用デバッグ。完成版で削除。手順は dive/RESUME.md） -->
           <div class="debug-row"><span>デバッグ</span><button id="reset-save" type="button" class="reset-link">進行度0にする</button><button id="unlock-all" type="button" class="reset-link">全部解禁済みにする</button><button id="diag-toggle" type="button" class="reset-link" aria-pressed="false">診断表示を出す</button></div>
+          <details id="dbg-panel" class="dbg-panel">
+            <summary>テスト用デバッグ（完成版で削除）</summary>
+            <div id="dbg-state" class="dbg-state"></div>
+            <div class="dbg-group"><label for="dbg-money">所持金</label><input id="dbg-money" type="number" min="0" step="1000" inputmode="numeric"><button type="button" data-dbg="money-set">設定</button><button type="button" data-dbg="money-add10k">+10,000</button><button type="button" data-dbg="money-add100k">+100,000</button></div>
+            <div class="dbg-group"><label for="dbg-dex">図鑑</label><input id="dbg-dex" type="number" min="0" max="100" step="1" inputmode="numeric"><span>%</span><button type="button" data-dbg="dex-set">この割合にする</button><small>図鑑の並びの先頭から発見済みにする（減らすと末尾から取り消す）</small></div>
+            <div class="dbg-group"><label for="dbg-chapter">ストーリー</label><select id="dbg-chapter"></select><button type="button" data-dbg="chapter-set">設定</button></div>
+            <div class="dbg-group"><label for="dbg-rep">しおさい亭の評判</label><select id="dbg-rep"></select><button type="button" data-dbg="rep-set">設定</button></div>
+            <div class="dbg-group"><label>装備</label><button type="button" data-dbg="gear-all">全部持つ（宝箱の装備・タンク最大も）</button><button type="button" data-dbg="gear-none">全部手放す</button></div>
+            <div class="dbg-group"><label>マップ</label><button type="button" data-dbg="maps-all">全部発見済みにする</button><button type="button" data-dbg="maps-none">ラグーンだけに戻す</button></div>
+            <div class="dbg-group"><label>取得状態</label><button type="button" data-dbg="chests-reset">宝箱を戻す</button><button type="button" data-dbg="scenes-reset">特別な光景を戻す</button><button type="button" data-dbg="spots-reset">写真スポットを戻す</button></div>
+            <div class="dbg-group"><label for="dbg-day">日数</label><input id="dbg-day" type="number" min="1" step="1" inputmode="numeric"><span>日目</span><button type="button" data-dbg="day-set">設定</button></div>
+            <div class="dbg-group"><label>時間帯</label><button type="button" data-dbg="time-morning">朝</button><button type="button" data-dbg="time-noon">昼</button><button type="button" data-dbg="time-dusk">夕方</button><button type="button" data-dbg="time-night">夜</button></div>
+          </details>
+          <!-- DEBUG-PANEL:END -->
           <div class="row-actions">
             <button id="open-dex" type="button" class="btn sec">
               <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-4.5A2.5 2.5 0 0 0 13 6.5V20a2.5 2.5 0 0 1 2.5-2.5H20z"/></svg>
