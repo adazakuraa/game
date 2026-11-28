@@ -757,3 +757,11 @@ button.gear-item.locked .gi { background: rgba(255,255,255,0.04); }
 #talk-mini-ring { position: absolute; z-index: 8; border-radius: 14px; border: 3px solid var(--warn); box-shadow: 0 0 14px 3px rgba(255, 181, 71, 0.6); pointer-events: none; animation: tkPulse 1.1s ease-in-out infinite; }
 #talk-mini-ring.hidden { display: none; }
 @media (prefers-reduced-motion: reduce) { #talk-mini-ring { animation: none; } }
+
+/* F6：強力ライトは水中ライトの枠の中の「強化」 */
+.gear-cell { display: flex; flex-direction: column; border: 1px solid var(--glass-brd); border-radius: 10px; background: rgba(255,255,255,0.04); overflow: hidden; }
+#shop .gear-cell > .gear-item { border: 0; background: transparent; border-radius: 0; flex: 1; }
+.gear-cell > .gear-upg { border: 0; border-top: 1px dashed var(--glass-brd); background: rgba(255,255,255,0.03); color: var(--ink-dim); font-family: var(--jp); font-size: 11px; line-height: 1.35; padding: 7px 6px; cursor: pointer; }
+.gear-cell > .gear-upg.can { color: #fff; background: rgba(110,231,160,0.16); box-shadow: 0 0 0 1px rgba(110,231,160,0.35) inset; }
+.gear-cell > .gear-upg.on { color: var(--ok); }
+.gear-cell.upgraded { border-color: rgba(95,227,240,0.5); }

@@ -130,6 +130,15 @@ export function kitchenLines(): TalkLine[] {
   ];
 }
 
+/** deepChart（F6）：大気圧潜水服を買った直後のボート画面。深海の場所を編集長が教える（海図は売らない） */
+export function deepChartLines(): TalkLine[] {
+  return [
+    { who: 'editor', text: '大気圧潜水服を買ったのか！ なら教えよう。沖のさらに先に、深海へ降りられる場所がある。', pre: 'grantDeep' },
+    { who: 'editor', text: 'ボートの「潜る場所」に「深海」が出たはずだ。ここから降りられる。', target: '#points [data-dp="deep"]' },
+    { who: 'editor', text: '深海は真っ暗で、海面にも戻りにくい。無理はしないように。' },
+  ];
+}
+
 /** bait：餌が買えるようになったとき。潜水中の説明は item:bait */
 export function baitLines(afford: boolean): TalkLine[] {
   const head: TalkLine[] = [

@@ -785,7 +785,8 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
 
   // charts from found boxes: only maps with creatures
   const cc = await ev(() => { const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game; const saved = g.save.discovered; g.save.discovered = ['lagoon']; const out = h.chartCandidates(); g.save.discovered = saved; return out; });
-  check('found-box charts: unknown maps with species only (estuary and river included)', cc.includes('estuary') && cc.includes('river') && cc.length >= 10, cc.join(','));
+  // F6：流氷・ブルーホール・水中洞窟・深海は入手元がほかにある（海図の入手元は 1 つ）ので候補から外した（10 → 7）
+  check('found-box charts: unknown maps with species only (estuary and river included; F6: no gated areas / deep)', cc.includes('estuary') && cc.includes('river') && cc.length >= 7 && !['cold', 'bluehole', 'cave', 'deep'].some((a) => cc.includes(a)), cc.join(','));
 
   // board requests: the estuary and the river come up, and the circle is in the water
   const bq = await ev(() => {

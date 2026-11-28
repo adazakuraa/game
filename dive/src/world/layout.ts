@@ -470,6 +470,19 @@ export function bommieAt(x: number, z: number): number {
   return Math.max(0, heightAt(x, z) + d0);
 }
 
+/**
+ * 修正バッチ2 F6：海図がないと入れないエリアのゲート（流れが押し返す壁）。地形は変えない。
+ * 壁は各エリアの重みが `edge` の線（ゾーン判定の 0.5 より手前）。`soft` から壁に向かう速度を弱める。
+ * 遺跡（z 400〜650）はゲートしない：洞窟は westWeight の洞窟の帯（z > 765）だけ。
+ */
+export const GATE = { edge: 0.2, soft: 0.06, toastEvery: 4, text: 'この先は流れが複雑で、海図がないと進めない', areas: ['cold', 'bluehole', 'cave'] as const };
+export type GateArea = (typeof GATE.areas)[number];
+export function gateWeight(area: GateArea, x: number, z: number): number {
+  if (area === 'cold') return coldWeight(x, z);
+  if (area === 'bluehole') return blueWeight(x, z);
+  return (1 - smoothstep(-238, -212, x)) * smoothstep(765, 790, z);
+}
+
 export function zoneAt(x: number, z: number): ZoneId {
   // the estuary's zone starts where its terrain does (z < -60; the lagoon's terrain is untouched north of that), then the river
   if (z < -60) {

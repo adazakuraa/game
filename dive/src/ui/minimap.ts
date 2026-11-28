@@ -1,4 +1,4 @@
-import { ARCH, bottomMaterial, chartHeightAt, DIVE_POINTS, kelpWeight, VENT, WORLD, WRECK, zoneAt } from '../world/layout';
+import { ARCH, bottomMaterial, chartHeightAt, DIVE_POINTS, GATE, gateWeight, kelpWeight, VENT, WORLD, WRECK, zoneAt } from '../world/layout';
 import { simplex2 } from '../utils/noise';
 
 const RES = 2.5; // meters per map pixel
@@ -34,8 +34,13 @@ const ZONE_LABELS = [
  */
 export class Minimap {
   /** dive points the player knows about */
-  known: Set<string> = new Set(['lagoon']);
+  private _known: Set<string> = new Set(['lagoon']);
+  get known(): Set<string> { return this._known; }
+  set known(v: Set<string>) { this._known = v; this.refreshFog(); }
   private chart: HTMLCanvasElement;
+  /** F6：海図のないゲートのエリアを霧で隠した絵（隠すものがなければ chart そのもの） */
+  private view: HTMLCanvasElement;
+  private fogKey = '';
   private W: number;
   private H: number;
   private mini: HTMLCanvasElement;
@@ -52,6 +57,39 @@ export class Minimap {
     this.chart.width = this.W;
     this.chart.height = this.H;
     this.buildChart();
+    this.view = this.chart;
+    this.refreshFog();
+  }
+
+  /** F6：海図を得ていない流氷・ブルーホール・水中洞窟（ゲートの内側）を、霧のような暗い塗りで隠す。海図を得ると晴れる */
+  private refreshFog(): void {
+    if (!this.chart) return;
+    const closed = GATE.areas.filter((a) => !this._known.has(a));
+    const key = closed.join(',');
+    if (key === this.fogKey) return;
+    this.fogKey = key;
+    if (!closed.length) { this.view = this.chart; return; }
+    const v = document.createElement('canvas');
+    v.width = this.W; v.height = this.H;
+    const g = v.getContext('2d')!;
+    g.drawImage(this.chart, 0, 0);
+    const img = g.getImageData(0, 0, this.W, this.H);
+    for (let j = 0; j < this.H; j++) {
+      for (let i = 0; i < this.W; i++) {
+        const x = WORLD.maxX + M - i * RES, z = WORLD.maxZ + M - j * RES;
+        let w = 0;
+        for (const a of closed) w = Math.max(w, gateWeight(a, x, z));
+        if (w < GATE.edge) continue;
+        // 縁はなだらかに、内側ほど濃く。うっすらむらをつけて霧らしく
+        const a = Math.min(0.93, 0.62 + (w - GATE.edge) * 0.4 + 0.06 * simplex2(x * 0.04, z * 0.04));
+        const o = (j * this.W + i) * 4;
+        img.data[o] += (14 - img.data[o]) * a;
+        img.data[o + 1] += (28 - img.data[o + 1]) * a;
+        img.data[o + 2] += (46 - img.data[o + 2]) * a;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    this.view = v;
   }
 
   /** map pixel for a world point */
@@ -269,7 +307,7 @@ export class Minimap {
     g.fillRect(0, 0, size, size);
     g.imageSmoothingEnabled = true;
     const sc = size / span;
-    g.drawImage(this.chart, px - span / 2, py - span / 2, span, span, 0, 0, size, size);
+    g.drawImage(this.view, px - span / 2, py - span / 2, span, span, 0, 0, size, size);
     if (boat) {
       const [bx, by] = this.px(boat.x, boat.z);
       const sx = (bx - px) * sc + size / 2, sy = (by - py) * sc + size / 2;
@@ -357,7 +395,7 @@ export class Minimap {
       return [ox + mx * sc, oy + my * sc];
     };
     g.imageSmoothingEnabled = true;
-    g.drawImage(this.chart, ox, oy, this.W * sc, this.H * sc);
+    g.drawImage(this.view, ox, oy, this.W * sc, this.H * sc);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.font = `700 ${Math.max(11, sc * 6)}px "Zen Kaku Gothic New", sans-serif`;

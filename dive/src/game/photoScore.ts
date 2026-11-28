@@ -86,23 +86,22 @@ export function evaluateShot(t: PhotoTarget, clear: number, depth: number, inCur
  * the total, so adding species never makes the shop harder), then is bought with money. Ordered by need (= stock order).
  * Each item changes how you dive rather than just making numbers bigger.
  */
-export type ShopItem = { id: string; need: number; price: number; name: string; desc: string; icon: string; rep?: number; req?: string; map?: string };
+export type ShopItem = { id: string; need: number; price: number; name: string; desc: string; icon: string; rep?: number; req?: string; map?: string; /** 強化の商品の id（この枠の中に出す） */ upgrade?: string; /** 強化済みのアイコン */ iconUp?: string };
 export const SHOP: readonly ShopItem[] = [
   { id: 'fins', need: 10, price: 1500, name: 'ロングフィン', desc: '泳ぐ速さ +30%', icon: '<path d="M7 3h4l1 8 4 8-3 2-5-7z"/>' },
-  { id: 'drysuit', need: 25, price: 4000, name: 'ドライスーツ', desc: '冷たい海でもエアが普通にもつ', icon: '<path d="M8 3h8l2 6-2 1v11h-3v-7h-2v7H8V10L6 9z"/>' },
+  { id: 'torch', need: 20, price: 800, name: '水中ライト', desc: '暗い所や夜の海を照らせる（夜の海に潜るのに必要）', icon: '<path d="M9 3h6l-1 5h-4zM9 9h6v3l-1 1v8a2 2 0 0 1-4 0v-8l-1-1z"/>', iconUp: '<path d="M9 3h6l-1 5h-4zM9 9h6v3l-1 1v8a2 2 0 0 1-4 0v-8l-1-1z"/><path d="M19 2l.9 2.1 2.1.9-2.1.9L19 8l-.9-2.1-2.1-.9 2.1-.9z"/>', upgrade: 'light' },
+  { id: 'map_cold', map: 'cold', need: 25, price: 3000, name: '海図：流氷の入り江', desc: '流氷の入り江の場所が分かり、直接行ける（水温2℃・ドライスーツ推奨）', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v8M8.5 9l7 4M15.5 9l-7 4" stroke="currentColor" stroke-width="1.6"/>' },
   { id: 'float', need: 30, price: 3000, name: 'シグナルフロート', desc: 'どこからでも浮上の合図を出して、ボートに拾ってもらえる', icon: '<path d="M12 2l3 9h-6z"/><rect x="10.5" y="11" width="3" height="9" rx="1"/><path d="M4 21c2-1.5 4-1.5 6 0s4 1.5 6 0 4-1.5 4-1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' },
-  { id: 'torch', need: 45, price: 800, name: '水中ライト', desc: '暗い所や夜の海を照らせる（夜の海に潜るのに必要）', icon: '<path d="M9 3h6l-1 5h-4zM9 9h6v3l-1 1v8a2 2 0 0 1-4 0v-8l-1-1z"/>' },
-  { id: 'light', need: 55, price: 2500, req: 'torch', name: '強力ライト', desc: '暗い所でも遠くまで照らして撮れる', icon: '<path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/>' },
-  { id: 'spear', need: 60, price: 2500, name: '手銛', desc: '魚を獲れる（しおさい亭から頼まれごとが来る）', icon: '<path d="M3 21L18 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M15 3.5l5.5-1-1 5.5z"/>' },
-  { id: 'macro', need: 70, price: 6000, name: 'マクロレンズ', desc: '小さな生き物（20cm未満）を大きく写せる', icon: '<circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.6"/>' },
+  { id: 'drysuit', need: 35, price: 4000, name: 'ドライスーツ', desc: '冷たい海でもエアが普通にもつ', icon: '<path d="M8 3h8l2 6-2 1v11h-3v-7h-2v7H8V10L6 9z"/>' },
+  { id: 'spear', need: 50, price: 2500, name: '手銛', desc: '魚を獲れる（しおさい亭から頼まれごとが来る）', icon: '<path d="M3 21L18 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M15 3.5l5.5-1-1 5.5z"/>' },
+  { id: 'macro', need: 60, price: 6000, name: 'マクロレンズ', desc: '小さな生き物（20cm未満）を大きく写せる', icon: '<circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.6"/>' },
+  { id: 'light', need: 70, price: 2500, req: 'torch', name: '強力ライト', desc: '暗い所でも遠くまで照らして撮れる（水中ライトの強化）', icon: '<path d="M9 2h6l-1 6h-4zM8 9h8l-2 4v7a2 2 0 0 1-4 0v-7z"/>' },
   { id: 'map_bluehole', map: 'bluehole', need: 80, price: 9000, name: '海図：ブルーホール', desc: 'ブルーホールの場所が分かり、直接行ける', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="11" r="3"/>' },
   { id: 'rebreather', need: 85, price: 9000, name: 'リブリーザー', desc: '泡が出ず、魚に気づかれにくい', icon: '<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M5 15h14v3H5z"/>' },
-  { id: 'wide', need: 100, price: 8000, name: 'ワイドレンズ', desc: '大物（1m以上）を離れた所から撮れる', icon: '<path d="M3 12c4-6 14-6 18 0-4 6-14 6-18 0z"/><circle cx="12" cy="12" r="3" fill="#0b2a3a"/>' },
-  { id: 'map_cave', map: 'cave', need: 100, price: 9000, name: '海図：水中洞窟', desc: 'セノーテの入口の場所が分かり、直接行ける', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 15a4 4 0 0 1 8 0z"/>' },
+  { id: 'wide', need: 95, price: 8000, name: 'ワイドレンズ', desc: '大物（1m以上）を離れた所から撮れる', icon: '<path d="M3 12c4-6 14-6 18 0-4 6-14 6-18 0z"/><circle cx="12" cy="12" r="3" fill="#0b2a3a"/>' },
   { id: 'shield', need: 110, price: 12000, name: 'シャークシールド', desc: '突進してくるサメ・ゴマモンガラを追い払う', icon: '<path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/>' },
   { id: 'scooter', need: 120, price: 18000, name: '水中スクーター', desc: '高速移動ボタン', icon: '<path d="M3 12l7-5v3h8l3 2-3 2h-8v3z"/>' },
   { id: 'sonar', need: 135, price: 15000, name: '魚群探知機', desc: '近くの未撮影の生き物がマップに出る', icon: '<path d="M12 21a9 9 0 0 1-9-9h3a6 6 0 0 0 12 0h3a9 9 0 0 1-9 9z"/><circle cx="12" cy="12" r="2"/>' },
-  { id: 'map_deep', map: 'deep', need: 145, price: 8000, name: '海図：深海', desc: '深海の熱水噴出孔への降下地点（要 大気圧潜水服）', icon: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v8M9 12l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8"/>' },
   { id: 'ads', need: 150, price: 30000, name: '大気圧潜水服', desc: '深海へ潜れる', icon: '<circle cx="12" cy="7" r="4"/><path d="M6 21v-6a6 6 0 0 1 12 0v6z"/>' },
   // fishing gear: comes into stock as the diner's reputation grows (【入荷に必要な評判】rep)
   { id: 'cooler', need: 0, rep: 2, price: 3000, name: 'クーラーボックス', desc: '獲物を15kgまで持ち帰れる', icon: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M8 8V5h8v3" fill="none" stroke="currentColor" stroke-width="2"/>' },
