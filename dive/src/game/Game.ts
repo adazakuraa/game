@@ -30,7 +30,7 @@ import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
 import { areaIconSvg } from '../ui/areaIcons';
 import { TalkUI, type TalkLine } from '../ui/talk';
-import { NIGHT_REST, NO_LIGHT, claimLines, introLines, praiseLines, replayLines } from './talks';
+import { ITEM_ORDER, ITEM_TIPS, NIGHT_REST, NO_LIGHT, albumLines, baitLines, boardLines, claimLines, introLines, kitchenLines, praiseLines, replayLines, shopOpenLines, tankUpLines } from './talks';
 import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
 // DEBUG-PANEL:BEGIN（テスト用。完成版で削除）
 import { installDebugPanel } from './debug';
@@ -46,6 +46,8 @@ export type Save = LandSave & {
   tutorial?: boolean;
   /** 修正バッチ2 F4：見た吹き出しの台本 ID（一度きり） */
   talked?: string[];
+  /** 修正バッチ2 F5：機能解放・新アイテムの台本の既読移行（1 で移行済み） */
+  talkMig?: number;
   /** the night-dive hint (needlefish rush at the light) has been shown */
   nightHint?: boolean;
   /** air tank upgrade level (AIR_TANK) */
@@ -396,6 +398,22 @@ export class Game {
         // 修正バッチ2 F4：吹き出しの既読。今までのプレイヤー（もう潜った人）は夜の休み方を見たことにする
         if (!sv.talked) sv.talked = sv.dives > 0 && sv.tutorial ? ['nightRest'] : [];
         if (sv.airLv === undefined) sv.airLv = sv.owned?.includes('tank') ? 4 : sv.dives > 0 ? 2 : 0;
+        // 修正バッチ2 F5：もう機能を使っている人には解放の台本を出さない（読み込み時に 1 回だけ既読に）
+        if ((sv.talkMig ?? 0) < 1) {
+          const t = new Set(sv.talked ?? []);
+          if (sv.dives > 0 && sv.tutorial) {
+            const own = new Set<string>(sv.owned ?? []);
+            if (SHOP.some((g) => own.has(g.id))) t.add('shopOpen');
+            if ((sv.airLv ?? 0) >= 1) t.add('tankUp');
+            if (sv.boardIntro) t.add('board');
+            if (Object.keys(sv.scenes ?? {}).length) t.add('album');
+            if (own.has('spear') && (sv.orders !== undefined || (sv.story ?? 0) > 0 || (sv.rep ?? 0) > 0)) t.add('kitchen');
+            if (Object.values(sv.bait ?? {}).some((n) => (n ?? 0) > 0)) { t.add('bait'); t.add('item:bait'); }
+            for (const id of Object.keys(ITEM_TIPS)) if (own.has(id)) t.add(`item:${id}`);
+          }
+          sv.talked = [...t];
+          sv.talkMig = 1;
+        }
         if (!sv.discovered) {
           // earlier saves: every place where something was already photographed counts as found
           const zones = new Set(Object.keys(sv.found).map((id) => SPECIES_BY_ID.get(id)?.zone));
@@ -413,7 +431,7 @@ export class Game {
     } catch {
       /* storage unavailable */
     }
-    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p1: 1, p2: 1, talked: [] };
+    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p1: 1, p2: 1, talked: [], talkMig: 1 };
   }
 
   private writeSave(): void {
@@ -696,11 +714,34 @@ export class Game {
     return !$('fade').classList.contains('on');
   }
 
+  /** F5 ④新アイテム：潜水中の小型吹き出し（#coach と同じ場所・暗くしない）。id の台本を一度きり */
+  private itemTip(id: string): void {
+    const talked = (this.save.talked ??= []);
+    const key = `item:${id}`;
+    const lines = ITEM_TIPS[id];
+    if (!lines || talked.includes(key) || this.state !== 'diving' || this.talk.miniOpen) return;
+    talked.push(key);
+    this.writeSave();
+    this.talk.showMiniSeq(lines, 6);
+  }
+
+  /** 潜水開始直後：持っていて説明が要る道具のうち、まだ説明していない最初の 1 つ（残りは次の潜水） */
+  private itemTips(): void {
+    if (this.ads || !this.save.tutorial || this.tut.step >= 0) return;
+    const talked = this.save.talked ?? [];
+    const id = ITEM_ORDER.find((k) => !talked.includes(`item:${k}`) && (k === 'bait' ? this.heldBaits().length > 0 : this.has(k as GearId)));
+    if (id) this.itemTip(id);
+  }
+
   /** 台本を 1 本出す。id があれば一度きり（見終わる／スキップで記録）。claim は報酬の受け取り */
   private async playTalk(id: string | null, lines: TalkLine[], claimIdx?: number, after?: () => void): Promise<void> {
     this.talking = true;
     try {
-      const r = await this.talk.run(lines, { closeKitchen: () => { if (this.kitchen.isOpen) this.kitchen.close(); } });
+      const r = await this.talk.run(lines, { closeKitchen: () => { if (this.kitchen.isOpen) this.kitchen.close(); },
+        // F5：女将さんの第 1 話を吹き出しで読んだので既読に（海図つきの話ならここで渡す）
+        readStory: () => { const n = this.save.story ?? 0; if (n < 1) { const ch = STORY[n]; if (ch?.map) this.grantMap(ch.map); this.save.story = n + 1; this.writeSave(); this.kitchen.render(); } },
+        // F5：掲示板の使い方カードは吹き出しで済んだので畳む
+        boardSeen: () => { this.save.boardIntro = true; this.writeSave(); this.renderQuests(); } });
       if (r.choice === 'claim' && claimIdx !== undefined) this.claimStory(claimIdx);
       if (id) { const t = (this.save.talked ??= []); if (!t.includes(id)) t.push(id); }
       after?.();
@@ -749,7 +790,18 @@ export class Game {
     if (night && !this.hasTorch() && !seen('nightRest')) { this.visitRest = true; return { id: 'nightRest', lines: NIGHT_REST }; }
     const torchGap = this.stockGap(SHOP.find((x) => x.id === 'torch')!) > 0;
     if (!seen('noLight') && torchGap && !this.hasTorch() && (night || i >= 3) && seen('nightRest') && !this.visitRest) return { id: 'noLight', lines: NO_LIGHT };
-    // F5 の接続点：③機能の解放（shopOpen・tankUp・board・album・kitchen・bait）④新アイテム（item:<id>）はここに足す
+    // F5 ③機能の解放（夜の休み方と同じ訪問では重ねない）。④新アイテム（item:<id>）は潜水開始時の小型吹き出し（itemTips）
+    if (this.visitRest) return null;
+    const money = this.save.money ?? 0;
+    const fins = SHOP.find((x) => x.id === 'fins')!;
+    if (!seen('shopOpen') && this.stockGap(fins) === 0 && !this.owns(fins)) return { id: 'shopOpen', lines: shopOpenLines(money >= fins.price, yen(fins.price)) };
+    const nextTank = AIR_TANK[(this.save.airLv ?? 0) + 1];
+    if (!seen('tankUp') && nextTank && money >= nextTank.price) return { id: 'tankUp', lines: tankUpLines() };
+    if (!seen('board') && this.save.boardOn && !this.save.boardIntro) return { id: 'board', lines: boardLines() };
+    if (!seen('album') && Object.keys(this.save.scenes ?? {}).length > 0) return { id: 'album', lines: albumLines() };
+    if (!seen('kitchen') && this.has('spear') && (this.save.story ?? 0) < 1) return { id: 'kitchen', lines: kitchenLines() };
+    const baitCost = Math.min(...BAIT.kinds.map((k) => k.price));
+    if (!seen('bait') && this.has('spear') && repLevel(this.save.rep ?? 0) >= 2 && this.heldBaits().length === 0) return { id: 'bait', lines: baitLines(money >= baitCost) };
     return null;
   }
 
@@ -1385,6 +1437,7 @@ export class Game {
         $('help').classList.remove('hidden');
         window.setTimeout(() => $('help').classList.add('hidden'), 7000);
       }
+      if (!prologue) window.setTimeout(() => this.itemTips(), 1800);
       this.toast(this.ads ? '大気圧潜水服で深海へ降下中…' : `${dp.name}にエントリー${this.env.night >= 0.5 ? '（夜の海）' : ''}　天気：${WEATHER[this.weather].icon}${WEATHER[this.weather].name}${this.buff ? `　まかないの${DISH[this.buff].name}：${DISH[this.buff].short}` : ''}`, '', 3);
     }, 650);
   }
@@ -2524,6 +2577,8 @@ export class Game {
       this.save.owned = [...new Set([...(this.save.owned ?? []), def.gear])];
       const g = CHEST_GEAR[def.gear];
       this.chestCard('宝箱で見つけた装備', g.name, g.desc, '');
+      // F5：結果カードの後に 1 段
+      window.setTimeout(() => this.itemTip(def.gear!), 5400);
     } else {
       // a page of an old notebook: an unphotographed sight, this map's first, unhinted first
       const unshot = (Object.keys(SCENES) as SceneId[]).filter((x) => !this.save.scenes?.[x]);
