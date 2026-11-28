@@ -29,6 +29,8 @@ import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
 import { areaIconSvg } from '../ui/areaIcons';
+import { TalkUI, type TalkLine } from '../ui/talk';
+import { NIGHT_REST, NO_LIGHT, claimLines, introLines, praiseLines, replayLines } from './talks';
 import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
 // DEBUG-PANEL:BEGIN（テスト用。完成版で削除）
 import { installDebugPanel } from './debug';
@@ -42,6 +44,8 @@ export type Save = LandSave & {
   /** special sights photographed */
   scenes?: Partial<Record<SceneId, { photo: string; t: number }>>;
   tutorial?: boolean;
+  /** 修正バッチ2 F4：見た吹き出しの台本 ID（一度きり） */
+  talked?: string[];
   /** the night-dive hint (needlefish rush at the light) has been shown */
   nightHint?: boolean;
   /** air tank upgrade level (AIR_TANK) */
@@ -321,6 +325,7 @@ export class Game {
 
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
+    this.talk = new TalkUI($('toast').parentElement!);
     $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); if (!this.save.tutorial) { this.toast('しおさい亭は、最初のダイブを終えると開く', '', 2.6); return; } this.kitchen.open(); });
     // DEBUG-PANEL:BEGIN（テスト用。完成版で削除。リセット・最大・各種デバッグ操作は game/debug.ts）
     installDebugPanel({ save: this.save, write: () => this.writeSave() });
@@ -388,6 +393,8 @@ export class Game {
           const zones = new Set(Object.keys(sv.found).map((id) => SPECIES_BY_ID.get(id)?.zone as string | undefined));
           sv.visited = DIVE_POINTS.filter((dp) => dp.id === 'lagoon' || zones.has(dp.id) || (dp.id === 'dropoff' && zones.has('offshore'))).map((dp) => dp.id);
         }
+        // 修正バッチ2 F4：吹き出しの既読。今までのプレイヤー（もう潜った人）は夜の休み方を見たことにする
+        if (!sv.talked) sv.talked = sv.dives > 0 && sv.tutorial ? ['nightRest'] : [];
         if (sv.airLv === undefined) sv.airLv = sv.owned?.includes('tank') ? 4 : sv.dives > 0 ? 2 : 0;
         if (!sv.discovered) {
           // earlier saves: every place where something was already photographed counts as found
@@ -406,7 +413,7 @@ export class Game {
     } catch {
       /* storage unavailable */
     }
-    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p1: 1, p2: 1 };
+    return { found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p1: 1, p2: 1, talked: [] };
   }
 
   private writeSave(): void {
@@ -477,7 +484,14 @@ export class Game {
     return CHAPTERS[this.save.storyMain ?? 0];
   }
 
-  private storyCleared: string[] = [];
+  /** 修正バッチ2 F4：この起動でクリアした章（褒め言葉の吹き出し用） */
+  private clearedIdx: number[] = [];
+  talk!: TalkUI;
+  private talking = false;
+  private boatTalks = 0;
+  /** このボート画面で夜の休み方を出した（同じ訪問では noLight を出さない） */
+  private visitRest = false;
+  private talkTimer = 0;
 
   /** Finish every chapter whose goal is met: hand over charts and move on. The reward waits on the chapter card until received (Phase 3). */
   private advanceStory(): void {
@@ -486,8 +500,7 @@ export class Game {
       const ch = CHAPTERS[this.save.storyMain ?? 0];
       if (ch.reward) (this.save.storyClaim ??= []).push(this.save.storyMain ?? 0);
       if (ch.map) this.grantMap(ch.map);
-      const mapName = ch.map ? DIVE_POINTS.find((d) => d.id === ch.map)?.name : '';
-      this.storyCleared.push(`第${(this.save.storyMain ?? 0) + 1}章「${ch.title}」クリア！ 写真家の評価：<b>${ch.title2}</b>${mapName ? `　海図「${mapName}」をもらった` : ''}${ch.praise ? `<div class="sc-praise">${ch.praise}</div>` : ''}`);
+      this.clearedIdx.push(this.save.storyMain ?? 0);
       this.save.storyMain = (this.save.storyMain ?? 0) + 1;
       this.writeSave();
       this.audio.chime(true);
@@ -639,7 +652,7 @@ export class Game {
     const ch = CHAPTERS[i];
     const claims = (this.save.storyClaim ?? []).map((k) => `<div class="sc-claim"><span>第${k + 1}章「${CHAPTERS[k].title}」クリア！ 編集長からの報酬</span><button type="button" class="btn pri" data-claim="${k}">報酬 ${yen(CHAPTERS[k].reward)} を受け取る</button></div>`).join('');
     el.classList.toggle('glow', !!this.save.storyClaim?.length);
-    const cleared = (this.storyCleared.length ? `<div class="sc-clear">${this.storyCleared.join('<br>')}</div>` : '') + claims;
+    const cleared = claims;
     // 夜でライトがないときは、潜れない理由と次の行き先がこのカードに出る
     const dark = this.save.tutorial && nightOf(this.save.clock ?? 0) >= 0.5 && !this.hasTorch();
     const alert = dark ? '<div class="td-alert">夜の海はライトがないと潜れない → <b>しおさい亭で休む</b></div>' : '';
@@ -651,18 +664,16 @@ export class Game {
       return;
     }
     const st = this.storyState();
-    const unread = (this.save.storyRead ?? -1) < i;
+    // F4：章カードは「第◯章 目標：… 進み具合」の短い表示。編集長の話（依頼）は吹き出しで、タップするともう一度読める
     el.innerHTML = `<div class="td-kick"><b>今やること</b><span>第${i + 1}章　${i > 0 ? `写真家の評価：${CHAPTERS[i - 1].title2}` : '駆け出しの海中写真家'}</span></div>${alert}${cleared}<div class="sc-title">${ch.title}</div>` +
-      (unread ? `<div class="sc-intro">${ch.intro}</div><button type="button" class="btn sec" id="sc-ok">了解</button>` : '') +
       `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? `<small class="sc-wait">${this.stockGap(SHOP.find((x) => x.id === 'torch')!) > 0 ? 'ライトがまだない（図鑑を増やすと入荷する）' : 'ライトがない（ボートのショップで買える）'}</small>` : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${next}${ch.tips ? `<details class="sc-tips"><summary>編集長の「Sを取るコツ」</summary><ul>${ch.tips.map((t) => `<li>${t}</li>`).join('')}</ul></details>` : ''}`;
+    el.insertAdjacentHTML('beforeend', '<small class="sc-hint">タップで編集長の話をもう一度</small>');
     this.bindClaims(el);
-    if (unread) document.getElementById('sc-ok')!.addEventListener('click', () => { this.save.storyRead = i; this.storyCleared = []; this.writeSave(); this.renderStory(); });
   }
 
   /**
-   * 「今やること」カード（と右上のお知らせ）のタップ。
-   * 今は従来の章カードと同じ：受け取れる報酬があればその位置を示し、なければ「Sを取るコツ」を開閉する。
-   * F4 では、ここを編集長の吹き出し（src/ui/talk.ts）を開く呼び出しに差し替える（吹き出しへの接続点）。
+   * 「今やること」カード（と右上のお知らせ）のタップ（F4）：
+   * 受け取れる報酬があればその「受け取る」の吹き出し、なければ今の依頼の吹き出しをもう一度。
    */
   private onTodoTap(): void {
     const el = $('story-card');
@@ -670,9 +681,76 @@ export class Game {
     el.classList.remove('flash');
     void el.offsetWidth;
     el.classList.add('flash');
-    if (this.save.storyClaim?.length) return;
-    const tips = el.querySelector<HTMLDetailsElement>('details.sc-tips');
-    if (tips) tips.open = !tips.open;
+    if (this.talk.active || this.talking || !this.talkOk()) return;
+    const k = this.save.storyClaim?.[0];
+    if (k !== undefined) { void this.playTalk(null, claimLines(k, yen(CHAPTERS[k].reward)), k); return; }
+    const i = this.save.storyMain ?? 0;
+    void this.playTalk(null, replayLines(i, CHAPTERS[i]?.progress?.(this.storyState()) ?? ''));
+  }
+
+  /** 吹き出しを出せる状態か：ボート画面で、ほかの画面・暗転が出ていない */
+  private talkOk(): boolean {
+    if (this.state !== 'title' || !this.save.tutorial) return false;
+    if ($('title').classList.contains('hidden') || this.kitchen.isOpen) return false;
+    for (const id of ['shop', 'quests', 'album', 'settings', 'map', 'dex', 'result', 'prologue']) if (!$(id).classList.contains('hidden')) return false;
+    return !$('fade').classList.contains('on');
+  }
+
+  /** 台本を 1 本出す。id があれば一度きり（見終わる／スキップで記録）。claim は報酬の受け取り */
+  private async playTalk(id: string | null, lines: TalkLine[], claimIdx?: number, after?: () => void): Promise<void> {
+    this.talking = true;
+    try {
+      const r = await this.talk.run(lines, { closeKitchen: () => { if (this.kitchen.isOpen) this.kitchen.close(); } });
+      if (r.choice === 'claim' && claimIdx !== undefined) this.claimStory(claimIdx);
+      if (id) { const t = (this.save.talked ??= []); if (!t.includes(id)) t.push(id); }
+      after?.();
+      this.writeSave();
+    } finally { this.talking = false; }
+  }
+
+  /** ボート画面に戻ったとき／画面が整ったときに、キューの先頭から 1 つずつ（1 回のボート画面で最大 3 本） */
+  private pumpTalks(): void {
+    if (this.talking || this.talk.active || this.boatTalks >= 3) return;
+    window.clearTimeout(this.talkTimer);
+    this.talkTimer = window.setTimeout(() => void this.runTalks(), 450);
+  }
+
+  private async runTalks(): Promise<void> {
+    let played = 0;
+    while (this.boatTalks < 3 && !this.talking && this.talkOk()) {
+      const t = this.nextTalk();
+      if (!t) break;
+      this.boatTalks++;
+      played++;
+      await this.playTalk(t.id, t.lines, t.claim, t.after);
+    }
+    if (played && this.state === 'title') this.renderTitle();
+  }
+
+  /** 割り込みの順番：①章の報酬・褒め言葉 → ②次の章の依頼 → ③機能の解放 → ④新アイテムの説明 →（⑤入荷の知らせはトースト）。F5 は ③④に足す */
+  private nextTalk(): { id: string; lines: TalkLine[]; claim?: number; after?: () => void } | null {
+    const talked = this.save.talked ??= [];
+    const seen = (id: string) => talked.includes(id);
+    // ① 章の報酬・褒め言葉
+    const done = [...new Set([...(this.save.storyClaim ?? []), ...this.clearedIdx])].sort((a, b) => a - b);
+    for (const k of done) {
+      if (seen(`praise:${k}`) || k >= (this.save.storyMain ?? 0)) continue;
+      const ch = CHAPTERS[k];
+      const mapName = ch.map ? DIVE_POINTS.find((d) => d.id === ch.map)?.name : '';
+      return { id: `praise:${k}`, lines: praiseLines(k, yen(ch.reward), mapName), claim: this.save.storyClaim?.includes(k) ? k : undefined };
+    }
+    // ② 次の章の依頼
+    const i = this.save.storyMain ?? 0;
+    if (i >= 1 && i < CHAPTERS.length && (this.save.storyRead ?? -1) < i && !seen(`intro:${i}`)) {
+      return { id: `intro:${i}`, lines: introLines(i), after: () => { this.save.storyRead = i; } };
+    }
+    // ③ 機能の解放：夜の休み方（初回のダイブの後）／ライトがまだないとき
+    const night = nightOf(this.save.clock ?? 0) >= 0.5;
+    if (night && !this.hasTorch() && !seen('nightRest')) { this.visitRest = true; return { id: 'nightRest', lines: NIGHT_REST }; }
+    const torchGap = this.stockGap(SHOP.find((x) => x.id === 'torch')!) > 0;
+    if (!seen('noLight') && torchGap && !this.hasTorch() && (night || i >= 3) && seen('nightRest') && !this.visitRest) return { id: 'noLight', lines: NO_LIGHT };
+    // F5 の接続点：③機能の解放（shopOpen・tankUp・board・album・kitchen・bait）④新アイテム（item:<id>）はここに足す
+    return null;
   }
 
   private bindClaims(el: HTMLElement): void {
@@ -915,6 +993,7 @@ export class Game {
       const names = this.announceStock();
       if (names.length) this.toast(`ダイブショップに${names.length > 2 ? `「${names[0]}」ほか${names.length - 1}点` : names.map((n) => `「${n}」`).join('と')}が入荷している`, '', 4.5);
     }
+    if (this.state === 'title' && this.save.tutorial) this.pumpTalks();
   }
 
   /** Fish in the cooler that the shop takes as material (good catches, lightest first). */
@@ -1649,6 +1728,8 @@ export class Game {
     $('title').classList.remove('hidden');
     this.state = 'title';
     this.env.lightOn = false;
+    this.boatTalks = 0;
+    this.visitRest = false;
     this.renderTitle();
   }
 
