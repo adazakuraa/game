@@ -20,9 +20,9 @@ export const PHOTO = {
   fitForS: 0.99,
   /** grade thresholds and pay multipliers */
   grades: [
-    { g: 'S', min: 86, mult: 2.5, word: 'すばらしい！' },
-    { g: 'A', min: 70, mult: 1.8, word: 'いい写真！' },
-    { g: 'B', min: 50, mult: 1.3, word: 'なかなか' },
+    { g: 'S', min: 70, mult: 2.5, word: 'すばらしい！' },
+    { g: 'A', min: 55, mult: 1.8, word: 'いい写真！' },
+    { g: 'B', min: 40, mult: 1.3, word: 'なかなか' },
     { g: 'C', min: 0, mult: 1, word: '記録写真' },
   ],
   /** 【危険手当】subject circling / charging the diver */

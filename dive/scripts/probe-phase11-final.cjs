@@ -140,15 +140,18 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     talk(15, 0, 'back');  // gear hint (suit)
     talk(15, 3, 'back');  // sunken town
     const boardBefore = g.save.boardOn;
-    k.say('morning');
+    // 修正バッチ2 F1 (33): the board is introduced on the morning of day 5 (BOARD_DAY), not before
+    g.save.day = 4; k.say('morning');
+    const boardDay4 = g.save.boardOn;
+    g.save.day = 5; k.say('morning');
     const boardAfter = g.save.boardOn;
-    return { said, boardBefore, boardAfter, morning: k.line };
+    return { said, boardBefore, boardDay4, boardAfter, morning: k.line };
   });
   const s = lore.said;
   check('landlady: one piece per visit, in order (self-intro → island → cold sea → gear hint → sunken town), none all at once',
     s[0].includes('女将') && s[1].includes('世界中の魚') && !s[2].includes('寒い海') && s[3].includes('寒い海') && s[4].includes('気づかれにくい') && s[5].includes('昔の町'), s.map((t) => t.slice(0, 12)).join(' | '));
   check('landlady: the gear hint does not promise gear ("will be sold later" is never said)', !/売る|売って|入荷|あとで買え/.test(s[4]), s[4].slice(0, 60));
-  check('landlady: the notice board is introduced on the first morning', !lore.boardBefore && lore.boardAfter && lore.morning.includes('掲示板'), lore.morning.slice(0, 80));
+  check('landlady: the notice board is introduced on the morning of day 5 (not day 4)', !lore.boardBefore && !lore.boardDay4 && lore.boardAfter && lore.morning.includes('掲示板'), lore.morning.slice(0, 80));
 
   // ---- 6. sleeping makes morning; the light unlocks the "go out at night" button, which swaps with the time
   const time = await ev(() => {
@@ -188,7 +191,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     g.save.owned = g.save.owned.filter((x) => x !== 'float');
     return out;
   });
-  check('air: the readout is the ring and the bar number only (no remaining-time text)', !eco.airHasTime && /^\d+bar/.test(eco.airText.replace(/\s/g, '')), JSON.stringify({ t: eco.airText, max: eco.airMax }));
+  check('air: the readout is the ring and the bar number only (no remaining-time text)', !eco.airHasTime && /^(エア)?\d+bar/.test(eco.airText.replace(/\s/g, '')), JSON.stringify({ t: eco.airText, max: eco.airMax }));
   check('surface anywhere: only after buying the signal float', eco.floatOff === false && eco.floatOn === true, JSON.stringify(eco));
   const shop = await ev(() => {
     const g = window.__THREE_GAME_TEST_HOOKS__.game; const out = {};

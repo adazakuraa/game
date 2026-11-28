@@ -1,6 +1,13 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-28（修正バッチ2の設計を追加。**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+最終更新: 2026-11-28（修正バッチ2 F1 を実装。修正バッチ2の設計を追加。**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+
+## 修正バッチ2 F1（`claude/fix2-f1`、2026-11-28、**実装済み**）
+- **何か**：表示・文言・数値の小さな直し 13 件（(1)(5)(6)(8)(9)(12)(13)(19)(21)(25)(27)(33)(34)）。設計書の暫定値をそのまま採用。
+- **変えた所**：`styles.css`（HUD を一段小さく、`--shutter-k`・`--ctl-k`、エアの数字を flex 中央寄せ、点滅の廃止、設定画面）、`index.html`（設定画面・歯車ボタン・方位/最大水深の行と「図鑑を見る」の削除）、`Game.ts`（`AIR_WARN`・`NARCOSIS`・`UI_SCALE` の定数、`airWarnings()`、`dexDirect`、`bindSettings()`/`applyUi()`、セーブ `ui`）、`kitchen.ts`（`BOARD_DAY = 5`）、`chests.ts`（glint 削除）、`photoScore.ts`（S 70・A 55・B 40）、`story.ts`（ENDING）、`core/audio.ts`（`warn(strong)`）、`debug.ts`（リセットで `ui` を残す）。
+- **セーブ形式**：`ui?: { shutter: number; ctl: number }` を足しただけ（キー `blue-depths-save-v1` はそのまま）。
+- **確認**：`scripts/probe-fix2-f1.cjs`（新規）と既存プローブ。`probe-phase6`・`probe-phase7` は `/tmp/probe-env` の固定パスを使うため、この環境では起動しない（F1 とは無関係の既存の事情）。
+- **次の一手**：F2（潜水中の操作と置き物 (11)(14)(31)）。
 
 ## 修正バッチ2の設計（`claude/fix-batch2-design`、2026-11-28、**設計のみ・実装はまだ**）
 - **何か**：ユーザー実機確認の修整依頼 39 件（最初の 34 件＋同日の追加 (35)〜(39)）。原文はトラッカー末尾の「実機確認後の修整（2026-11-28 ユーザー実機確認）」に全件そのまま転記（状態はすべて未着手）。設計は `dive/docs/FIX-BATCH-2-DESIGN.md`（手順 F1〜F13、各手順に現行実装の確認結果と変更方針）。判断は要確認事項 CV〜DR。

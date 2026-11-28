@@ -138,16 +138,16 @@ export class Audio {
     });
   }
 
-  warn(): void {
+  warn(strong = false): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < (strong ? 6 : 3); i++) {
       const o = this.ctx.createOscillator();
       o.type = 'square';
-      o.frequency.value = 1400;
+      o.frequency.value = strong ? 1800 : 1400;
       const g = this.ctx.createGain();
       g.gain.setValueAtTime(0, t + i * 0.18);
-      g.gain.linearRampToValueAtTime(0.05, t + i * 0.18 + 0.01);
+      g.gain.linearRampToValueAtTime(strong ? 0.08 : 0.05, t + i * 0.18 + 0.01);
       g.gain.linearRampToValueAtTime(0, t + i * 0.18 + 0.09);
       o.connect(g).connect(this.master);
       o.start(t + i * 0.18);

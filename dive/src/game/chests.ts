@@ -8,7 +8,7 @@ import { PROP_VIEW } from './render';
  * Three hold limited gear (not sold in the shop); the rest hold a page of an old notebook
  * that names an unphotographed sight. Their number is never displayed anywhere.
  */
-export const CHEST = { openR: 1.8, glintR: 12, openTime: 0.8, silver: 1000 };
+export const CHEST = { openR: 1.8, openTime: 0.8, silver: 1000 };
 
 export type ChestGearId = 'oldreg' | 'goldfins' | 'compass';
 export const CHEST_GEAR: Record<ChestGearId, { name: string; desc: string }> = {
@@ -48,18 +48,7 @@ type Item = { def: ChestDef; pos: THREE.Vector3; mesh: THREE.Mesh; setLid: (angl
 export class Chests {
   readonly group = new THREE.Group();
   private items: Item[] = [];
-  private glint: THREE.Points;
-  private glintPos: Float32Array;
   private time = 0;
-
-  constructor() {
-    this.glintPos = new Float32Array(CHESTS.length * 3);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(this.glintPos, 3));
-    this.glint = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffd76a, size: 0.45, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
-    this.glint.frustumCulled = false;
-    this.glint.visible = false;
-  }
 
   /** (Re)place every chest for a dive; opened ones stand open and empty. */
   build(opened: Set<string>): void {
@@ -88,7 +77,6 @@ export class Chests {
       this.group.add(mesh);
       this.items.push({ def, pos: pos.clone(), mesh, setLid, opened: isOpen, openT: isOpen ? 1 : 0 });
     }
-    if (!this.group.children.includes(this.glint)) this.group.add(this.glint);
   }
 
   /** Swing a chest's lid open (the contents are decided by the caller). */
@@ -98,14 +86,12 @@ export class Chests {
   }
 
   /**
-   * Per-frame: animate lids, refresh the gold glints of unopened chests near the
-   * player, and return the id of an unopened chest within opening reach.
+   * Per-frame: animate lids, and return the id of an unopened chest within opening reach.
    */
   update(player: THREE.Vector3, dt: number): string | null {
     this.time += dt;
     let near: string | null = null;
     let nearD = CHEST.openR;
-    let n = 0;
     for (const it of this.items) {
       if (it.opened && it.openT < 1) {
         it.openT = Math.min(1, it.openT + dt / CHEST.openTime);
@@ -116,17 +102,7 @@ export class Chests {
       it.mesh.visible = d < PROP_VIEW;
       if (it.opened) continue;
       if (d < nearD) { nearD = d; near = it.def.id; }
-      if (d < CHEST.glintR) {
-        this.glintPos[n * 3] = it.pos.x;
-        this.glintPos[n * 3 + 1] = it.pos.y + 1.1 + Math.sin(this.time * 2.4 + n) * 0.15;
-        this.glintPos[n * 3 + 2] = it.pos.z;
-        n++;
-      }
     }
-    (this.glint.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    this.glint.geometry.setDrawRange(0, n);
-    this.glint.visible = n > 0;
-    (this.glint.material as THREE.PointsMaterial).opacity = 0.65 + 0.35 * Math.sin(this.time * 3);
     return near;
   }
 
