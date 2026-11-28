@@ -5,6 +5,9 @@ import { runFuguExam } from './kitchenGames';
 import { CAT_NAME, DISH, FISHING, FUGU_EXAM, PENALTY, STORY, nightOf, dishFor, edibleInfo, fits, isFugu, isGoodCatch, poisonFor, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
 import { yen } from './photoScore';
 
+/** 修正バッチ2 (33): the morning of this day (or later) is when the landlady introduces the notice board */
+export const BOARD_DAY = 5;
+
 /** The land half of the game lives in the save next to the dex. */
 export type LandSave = {
   money?: number;
@@ -98,7 +101,7 @@ export class Kitchen {
       // Phase 4: the morning word is the day's weather (the island talk waits for the next visit);
       // on the morning the notice board is introduced, the two are told together
       const w = WEATHER[weatherOf(s.day ?? 1)];
-      if (!s.boardOn) {
+      if (!s.boardOn && (s.day ?? 1) >= BOARD_DAY) {
         s.boardOn = true;
         this.line = w.morning + LINES.board[0].replace(/^おはよう。/, ' ');
         this.host.write();

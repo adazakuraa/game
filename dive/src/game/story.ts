@@ -117,7 +117,7 @@ export const CHAPTERS: Chapter[] = [
   },
 ];
 
-export const ENDING = '『月刊うみなか』の表紙に、あなたの写真が載った。編集長「おめでとう。もう立派な海中写真家だ。海はまだまだ広い。図鑑の空欄、全部埋めてみせて」';
+export const ENDING = '『月刊うみなか』の表紙に、あなたの写真が載った。編集長「おめでとう。もう立派な海中写真家だ。」';
 
 /**
  * First dive tutorial (the test dive the editor asked for): one thing at a time, learned by doing, each step

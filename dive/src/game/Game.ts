@@ -56,11 +56,20 @@ export type Save = LandSave & {
   storyClaim?: number[]; visited?: string[]; spots?: string[];
   /** Phase 5: treasure chests opened, and sights named by a chest's notebook page */
   chests?: string[]; sceneHints?: SceneId[];
+  /** 修正バッチ2 (1): HUD button sizes (device preference; progress resets keep it) */
+  ui?: { shutter: number; ctl: number };
  found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
 
 const SAVE_KEY = 'blue-depths-save-v1';
+
+/** 修正バッチ2 (8): air warnings — each shows once per dive (half-tank, then the last stretch), no constant blinking */
+export const AIR_WARN = { halfFrac: 0.35, lastBar: 20, lastSec: 30 };
+/** 修正バッチ2 (34): nitrogen narcosis — seconds spent below ~55 m before the diver blacks out */
+export const NARCOSIS = { blackoutSec: 60, warnLeftSec: 20 };
+/** 修正バッチ2 (1): HUD size settings (device preference, kept across progress resets) */
+export const UI_SCALE = { min: 0.7, max: 1.3, step: 0.05, def: 1 };
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -108,6 +117,11 @@ export class Game {
   private narc = 0;
   /** Phase 6: seconds spent in the narcosis blackout band (narc >= 0.83) */
   private narcDeepT = 0;
+  /** (12) the dex page was opened straight from a photo (discover card / result card) */
+  private dexDirect = false;
+  /** (8) which air warnings this dive has shown (1 = half, 2 = last) */
+  private airWarned = 0;
+  private airRate = 0.4;
   /** Phase 6: narcosis stage-2 disorientation: time left of the current instrument blur, and until the next */
   private narcBlur = 0;
   private narcBlurT = 0;
@@ -712,7 +726,6 @@ export class Game {
     $('btn-pause').addEventListener('click', () => this.setPaused(true));
     $('resume').addEventListener('click', () => this.setPaused(false));
     $('abort').addEventListener('click', () => { if (this.surfaceAnywhere()) this.endDive('surface'); });
-    $('pause-dex').addEventListener('click', () => this.openDex());
     $('dex-chip').addEventListener('click', () => this.openDex());
     $('open-dex').addEventListener('click', () => this.openDex());
     $('dex-close').addEventListener('click', () => this.closeDex());
@@ -722,7 +735,11 @@ export class Game {
       $('discover').classList.add('hidden');
       this.openDex(id);
     });
-    $('dd-close').addEventListener('click', () => $('dex-detail').classList.add('hidden'));
+    // (12) opened straight from a photo → closing the page goes back to the dive / result; opened from the list → back to the list
+    $('dd-close').addEventListener('click', () => {
+      $('dex-detail').classList.add('hidden');
+      if (this.dexDirect) this.closeDex();
+    });
     $('surface-btn').addEventListener('click', () => this.endDive('surface'));
     $('res-ok').addEventListener('click', () => this.toTitle());
     $('minimap-btn').addEventListener('click', () => this.toggleMap(true));
@@ -734,6 +751,48 @@ export class Game {
       this.writeSave();
     });
     $('snd-wave').style.opacity = this.save.muted ? '0.15' : '1';
+    this.bindSettings();
+  }
+
+  /** 修正バッチ2 (1): the settings screen — HUD button sizes through the CSS variables --shutter-k / --ctl-k */
+  private settingsFromPause = false;
+  private applyUi(): void {
+    const k = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? clamp(v, UI_SCALE.min, UI_SCALE.max) : UI_SCALE.def);
+    const ui = this.save.ui;
+    const root = document.documentElement.style;
+    root.setProperty('--shutter-k', String(k(ui?.shutter)));
+    root.setProperty('--ctl-k', String(k(ui?.ctl)));
+    const pct = (v: unknown) => `${Math.round(k(v) * 100)}%`;
+    ($('set-shutter') as HTMLInputElement).value = String(Math.round(k(ui?.shutter) * 100));
+    ($('set-ctl') as HTMLInputElement).value = String(Math.round(k(ui?.ctl) * 100));
+    $('set-shutter-val').textContent = pct(ui?.shutter);
+    $('set-ctl-val').textContent = pct(ui?.ctl);
+  }
+  private bindSettings(): void {
+    this.applyUi();
+    const set = (key: 'shutter' | 'ctl', v: number) => {
+      const ui = (this.save.ui ??= { shutter: UI_SCALE.def, ctl: UI_SCALE.def });
+      ui[key] = clamp(v / 100, UI_SCALE.min, UI_SCALE.max);
+      this.applyUi();
+    };
+    $('set-shutter').addEventListener('input', (e) => set('shutter', Number((e.target as HTMLInputElement).value)));
+    $('set-ctl').addEventListener('input', (e) => set('ctl', Number((e.target as HTMLInputElement).value)));
+    $('set-shutter').addEventListener('change', () => this.writeSave());
+    $('set-ctl').addEventListener('change', () => this.writeSave());
+    $('set-reset').addEventListener('click', () => { this.save.ui = { shutter: UI_SCALE.def, ctl: UI_SCALE.def }; this.applyUi(); this.writeSave(); });
+    const open = (fromPause: boolean) => {
+      this.settingsFromPause = fromPause;
+      if (fromPause) $('pause').classList.add('hidden');
+      $('settings').classList.remove('hidden');
+    };
+    $('open-settings').addEventListener('click', () => open(false));
+    $('pause-settings').addEventListener('click', () => open(true));
+    $('set-close').addEventListener('click', () => {
+      $('settings').classList.add('hidden');
+      if (this.settingsFromPause && this.state === 'paused') $('pause').classList.remove('hidden');
+      this.settingsFromPause = false;
+      this.writeSave();
+    });
   }
 
   /** Stock notices go by "announced", not by dex-count deltas, so players who already met a threshold are told once too (Fix batch 1, P2-3). */
@@ -936,13 +995,14 @@ export class Game {
         c.className = 'dcard' + (f ? '' : ' unk');
         const stars = s.rarity >= 4 ? '伝説' : '★'.repeat(s.rarity);
         c.innerHTML = `<div class="ph" style="${f ? `background-image:url(${f.photo})` : ''}">${f ? '' : '?'}</div><div class="nm"><span class="stars">${stars}</span>${f ? s.name : '？？？'}</div>`;
-        c.addEventListener('click', () => this.showDetail(s.id));
+        c.addEventListener('click', () => { this.dexDirect = false; this.showDetail(s.id); });
         g.appendChild(c);
       }
       grid.appendChild(g);
     }
     // Phase 7: opened from a photo (result card / discover card) — go straight to the page
-    if (at && (this.save.found[at] || this.pending.has(at))) this.showDetail(at);
+    this.dexDirect = false;
+    if (at && (this.save.found[at] || this.pending.has(at))) { this.dexDirect = true; this.showDetail(at); }
   }
 
   private showDetail(id: string): void {
@@ -960,6 +1020,7 @@ export class Game {
   }
 
   private closeDex(): void {
+    this.dexDirect = false;
     $('dex').classList.add('hidden');
     $('dex-detail').classList.add('hidden');
     this.state = this.stateBeforeDex;
@@ -1046,7 +1107,7 @@ export class Game {
 
   private startDive(dp: DivePoint, quick = false, prologue = false): void {
     if (dp.requires !== 'ads' && this.nightBlocked()) {
-      this.toast('夜の海はライトがないと潜れない。しおさい亭で休んで朝を待とう（ライトがあれば夜も潜れる）', 'warn', 3.5);
+      this.toast('夜の海はライトがないと潜れない。しおさい亭で休んで朝を待とう', 'warn', 3.5);
       return;
     }
     if (!quick) this.quick = null;
@@ -1066,6 +1127,7 @@ export class Game {
       this.sDoneCh.clear();
       this.flowWarned = false; this.flowAir = 1; this.riverBan = false; this.riverToasted = false;
       this.narcDeepT = 0;
+      this.airWarned = 0;
       this.narcBlur = 0;
       this.narcBlurT = 0;
       this.diveMaxDepth = 0;
@@ -1514,7 +1576,7 @@ export class Game {
     const affordable = SHOP.filter((g) => !this.has(g.id) && this.stockGap(g) === 0 && this.save.money! >= g.price && (moneyBefore < g.price || stockedNow.includes(g)));
     const goal = this.nextGoal();
     $('res-unlock').innerHTML = [
-      ...stockedNow.map((g) => `ダイブショップに「${g.name}」が入荷した！（${g.desc}）`),
+      ...stockedNow.map((g) => `ダイブショップに「${g.name}」が入荷した！`),
       ...affordable.map((g) => `「${g.name}」が買えるようになった！ ボートのショップへ`),
     ].join('<br>') || (goal ? `<span class="res-goal">所持金 ${yen(this.save.money!)}　次の目標${goal.species > 0 ? `「？」入荷まで図鑑あと${goal.species}種` : `「${goal.name}」まであと${yen(goal.need)}`}</span>` : '');
     if (affordable.length || stockedNow.length || earn > 0) this.audio.chime(affordable.length + stockedNow.length > 0);
@@ -1740,6 +1802,7 @@ export class Game {
     const rate = this.ads ? 0.26 : 0.42 * (1 + d / 10) * moving * (boosting ? 1.25 : 1) * (1 + this.narc * 0.5) * (1 + this.currentF * 0.8) * this.flowAir * (this.cold ? (this.buff === 'nitsuke' ? 1.5 : 3) : 1) * (this.buff === 'sashimi' ? 0.85 : this.buff === 'fugu' ? 0.9 : 1)
       * (1 + Math.min(PENALTY.carryAirMax, this.carryKg * PENALTY.carryAirPerKg)) * (this.tut.step >= 0 ? 0.5 : 1) * (!this.ads && this.has('oldreg') ? 0.9 : 1);
     this.air = Math.max(0, this.air - rate * dt);
+    this.airRate = rate;
     if (this.frame % 10 === 0) this.exploreCheck(p);
     const picked = this.finds.update(this.time, p);
     if (picked) {
@@ -1780,14 +1843,10 @@ export class Game {
     if (this.narcBlur > 0) this.narcBlur -= dt;
     if (!this.ads && this.narc >= 0.83) {
       this.narcDeepT += dt;
-      if (this.narcDeepT >= 10) { this.narcDeepT = 0; this.endDive('narcosis'); }
+      if (this.narcDeepT >= NARCOSIS.blackoutSec) { this.narcDeepT = 0; this.endDive('narcosis'); }
     } else this.narcDeepT = Math.max(0, this.narcDeepT - 2 * dt);
     if (this.air <= 0) this.endDive('blackout');
-    else if (this.air < 50 && this.time - this.lastWarn > 6) {
-      this.audio.warn();
-      this.toast('エア残量わずか！ すぐに浮上しよう', 'danger', 3);
-      this.lastWarn = this.time;
-    }
+    else this.airWarnings(dt);
 
     // occasional requests (mini-games), not during the tutorial
     if (this.tut.step < 0) {
@@ -2402,25 +2461,37 @@ export class Game {
   /** Phase 6: the heading the instruments show — narcosis stage 2 falsifies it briefly. */
   private displayYaw(): number { return this.yaw + (this.narcBlur > 0 ? 2.2 : 0); }
 
+  /** (8) at most two warnings per dive: the tank is half gone, and the last stretch (few bar or ~30 s of air left) */
+  private airWarnings(_dt: number): void {
+    if (this.airWarned >= 2) return;
+    const left = this.air / Math.max(0.01, this.airRate);
+    if (this.air < AIR_WARN.lastBar || left < AIR_WARN.lastSec) {
+      this.airWarned = 2;
+      this.audio.warn(true);
+      this.toast('エアがあとわずか！ すぐに浮上しよう', 'danger', 3);
+    } else if (this.airWarned < 1 && this.air / this.airMax < AIR_WARN.halfFrac) {
+      this.airWarned = 1;
+      this.audio.warn();
+      this.toast('エアが半分を切った… 戻り始めよう', 'warn', 3);
+    }
+  }
+
   private updateHud(dt: number): void {
     const p = this.camera.position;
     const d = this.bodyDepth();
-    $('depth-value').textContent = d.toFixed(1);
-    $('max-depth').textContent = this.diveMaxDepth.toFixed(0);
+    // (13) narcosis stage 2: the depth readout flickers (the old heading read-out is gone)
+    $('depth-value').textContent = this.narcBlur > 0 ? Math.max(0, d + (Math.sin(this.time * 41) > 0 ? 1 : -1) * (1.5 + 6 * ((this.time * 7) % 1))).toFixed(1) : d.toFixed(1);
     $('zone-name').textContent = ZONE_NAMES[zoneAt(p.x, p.z)];
-    const hdg = ((-this.displayYaw() * 180) / Math.PI + 180 + 720) % 360; // 0 = offshore(+z)
-    const dirs = ['沖', '沖東', '東', '岸東', '岸', '岸西', '西', '沖西'];
-    $('heading').textContent = `${dirs[Math.round(hdg / 45) % 8]} ${Math.round(hdg)}°`;
     $('depth-warn').classList.toggle('hidden', this.ads || (d < 40 && this.currentF < 0.1 && !this.cold));
-    $('depth-warn').textContent = this.narcDeepT > 0 ? '窒素酔い：このままでは意識を失う' : this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い：エア消費増・視界が揺れる';
+    $('depth-warn').textContent = this.narcDeepT > 0 ? (NARCOSIS.blackoutSec - this.narcDeepT <= NARCOSIS.warnLeftSec ? '窒素酔い：もうすぐ意識を失う！ 浅い所へ' : '窒素酔い：このままでは意識を失う') : this.currentF >= 0.1 ? 'ダウンカレント' : this.cold ? '低水温' : d > 52 ? '限界深度に接近' : '窒素酔い：エア消費増・視界が揺れる';
     const frac = this.air / this.airMax;
     $('air-value').textContent = String(Math.ceil(this.air));
     $('air-ring').style.strokeDashoffset = String(169.6 * (1 - frac));
     const air = $('air');
-    air.classList.toggle('low', frac < 0.35 && this.air >= 50);
-    air.classList.toggle('crit', this.air < 50);
+    air.classList.toggle('crit', this.airWarned >= 2);
+    air.classList.toggle('low', frac < AIR_WARN.halfFrac && this.airWarned < 2);
     $('narc').style.opacity = String(this.narc * 0.8);
-    $('narc').classList.toggle('deep', this.narcDeepT >= 5);
+    $('narc').classList.toggle('deep', this.narcDeepT >= NARCOSIS.blackoutSec * 0.5);
     if (this.minimap && this.frame % 10 === 0) {
       if (this.has('sonar') && this.frame % 20 === 0) this.sonarBlips = this.creatures.sonar(p, 45, (id) => !!this.save.found[id] || this.pending.has(id));
       this.minimap.blips = [...(this.has('sonar') ? this.sonarBlips : []), ...this.missions.marks(), ...this.sceneMarks(), ...this.spotMarks(), ...(this.save.quests ?? []).filter((q) => q.kind !== 'photo' && q.id !== this.activeQuest).map((q) => ({ x: q.x, z: q.z, rare: true, r: QUEST.arrive }))];

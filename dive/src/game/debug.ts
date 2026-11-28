@@ -62,7 +62,7 @@ const ACTIONS: Record<string, Action> = {
       sv.storyRead = CHAPTERS.length;
       sv.airLv = AIR_TANK.length - 1;
       sv.tutorial = true;
-      sv.boardOn = true;
+      sv.boardOn = true; // BOARD_DAY を待たずに掲示板を出す
       sv.dives = Math.max(sv.dives, 1);
     },
   },
@@ -154,7 +154,12 @@ export function installDebugPanel(host: Host): void {
   const reset = $<HTMLButtonElement>('reset-save');
   if (reset) {
     armTap(reset, '本当にリセットする？', () => {
-      try { localStorage.removeItem(DEBUG_SAVE_KEY); } catch { /* storage unavailable */ }
+      // 修正バッチ2 (1): the HUD size settings (save.ui) are a device preference — a progress reset keeps them
+      const ui = host.save.ui;
+      try {
+        localStorage.removeItem(DEBUG_SAVE_KEY);
+        if (ui) localStorage.setItem(DEBUG_SAVE_KEY, JSON.stringify({ found: {}, dives: 0, maxDepth: 0, money: 0, owned: [], earned: 0, discovered: ['lagoon'], visited: ['lagoon'], storyMain: 0, storyRead: -1, airLv: 0, p1: 1, p2: 1, ui }));
+      } catch { /* storage unavailable */ }
       window.location.reload();
     });
   }
