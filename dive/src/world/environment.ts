@@ -27,17 +27,21 @@ export const ZONE_WATER: Record<ZoneId, [number, number, number, number]> = {
 /** Phase 9 S2 (§3.2): the river's water clears towards upstream (t 0 = mouth end -> 1 = waterfall); only read while the zone is river.
  * Near the waterfall (<= foam.r m) white foam whitens the fog and cuts the visibility. */
 export const RIVER_WATER = {
-  down: [0.05, 0.19, 0.14, 18] as [number, number, number, number],
-  up: [0.03, 0.22, 0.2, 34] as [number, number, number, number],
+  // F10: the down/up colour gap is halved and both ends are a greenish clear stream (visibility gap kept)
+  down: [0.045, 0.2, 0.155, 18] as [number, number, number, number],
+  up: [0.035, 0.21, 0.185, 34] as [number, number, number, number],
+  /** F10: inside the river the depth-based colour absorption is only this fraction of the sea's. */
+  depthAtt: 1 / 3,
   foam: { r: 8, color: [0.5, 0.6, 0.6] as [number, number, number], maxMix: 0.25, maxVisCut: 0.4 },
 };
 
 /** Phase 9 S1 (CB): the estuary's salt wedge, expressed with fog only. Above 1.8 m the water is the river's, below it the sea's;
  * the fog thickens 1.4x right at the boundary. */
 export const ESTUARY_WEDGE = {
-  depth: 1.8, half: 0.6, bump: 1.4,
+  depth: 1.8, half: 2.0, bump: 1.4,
   upper: [0.06, 0.16, 0.1, 10] as [number, number, number, number],
-  lower: [0.03, 0.18, 0.2, 20] as [number, number, number, number],
+  // F10: a murky blue-green instead of the sea's blue (the gap to `upper` is halved); the visibility gap stays
+  lower: [0.04, 0.17, 0.15, 20] as [number, number, number, number],
 };
 
 /** Water volume visuals: fog, lighting by depth, surface with Snell's window, god rays, marine snow, bubbles. */
@@ -61,6 +65,7 @@ export class Environment {
   private smoothedZone = new THREE.Vector4(0.04, 0.27, 0.4, 46);
   /** 0..1: how much the estuary's salt wedge applies (follows the zone with the same smoothing) */
   private wedgeK = 0;
+  private riverK = 0;
   /** the fog-density multiplier of the salt wedge's boundary layer (1 elsewhere); read by tests */
   wedgeBump = 1;
   /** river position t (0..1) of the camera while in the river zone, else 0; and the waterfall foam's strength (0..1); read by tests */
@@ -376,13 +381,16 @@ export class Environment {
     this.wedgeBump = 1 + (W.bump - 1) * wk * Math.exp(-(((depth - W.depth) / (W.half * 0.75)) ** 2));
 
     // water color darkens with depth, red and green absorbed first
-    const att = Math.exp(-Math.max(0, depth - 4) / 38);
-    const attR = Math.exp(-depth / 9);
-    const attG = Math.exp(-Math.max(0, depth - 3) / 46);
+    // F10: in the river the absorption runs at 1/3 of the sea's, so the water does not turn blue with depth
+    this.riverK = lerp(this.riverK, zone === 'river' ? 1 : 0, k);
+    const ad = depth * lerp(1, RIVER_WATER.depthAtt, this.riverK);
+    const att = Math.exp(-Math.max(0, ad - 4) / 38);
+    const attR = Math.exp(-ad / 9);
+    const attG = Math.exp(-Math.max(0, ad - 3) / 46);
     this.waterCol.setRGB(
       zr * (0.4 + 0.6 * attR) * att,
       zg * attG * att,
-      zb * att * (0.35 + 0.65 * Math.exp(-depth / 160)),
+      zb * att * (0.35 + 0.65 * Math.exp(-ad / 160)),
     );
     this.shadeS = lerp(this.shadeS, this.shade, 1 - Math.exp(-dt * 2.5));
     const D = Math.max(this.night * 0.97, this.shadeS * 0.95);

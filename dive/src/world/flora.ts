@@ -11,7 +11,7 @@ import { baked, pbr } from '../render/baked';
 import { makeBlade, makeSeaFan } from '../render/textures';
 import { fbm2, mulberry32, simplex2 } from '../utils/noise';
 import { boneTuftGeometry, matGeometry, ribGeometry, skullGeometry, vertebraGeometry, whaleLayout } from './whalefall';
-import { driftwoodGeometry, mangroveGeometry, planSouth, reedGeometry, SOUTH_HOME_NAMES, sunkenBoatGeometry } from './southScenery';
+import { driftwoodGeometry, leafLitterGeometry, mangroveGeometry, planSouth, reedGeometry, SOUTH_HOME_NAMES, sunkenBoatGeometry, sunkenTreeGeometry } from './southScenery';
 
 export const GARDEN_EEL_PATCH = { x: 28, z: 78, r: 13 };
 
@@ -1386,6 +1386,18 @@ export class Flora {
       add(stoneG, rockMat, plan.stones.filter((b) => !b.solid).map(stoneItem), 45, 35, undefined, false, stoneFar, 20);
       solid(stoneG, rockMat, plan.stones.filter((b) => b.solid).map(stoneItem), 45, 35, undefined, stoneFar, 20);
       solid(rockGeometry(41, 4, 0.8), rockMat, plan.boulders.map(stoneItem), 80, 35, undefined, rockGeometry(41, 2, 0.8), 30); // 500 / 180
+      // F10 river bed: cobbles + bedrock slabs (one set), 3 sunken-tree shapes, leaf litter, plant colonies (6 sets, no colliders)
+      add(stoneG, rockMat, plan.cobbles.map(stoneItem), 40, 35, undefined, false, stoneFar, 18);
+      noShadow();
+      ([0, 1, 2] as const).forEach((k) => add(sunkenTreeGeometry(k), southMat, plan.trees[k].map((t) => ({ m: t.m, c: new THREE.Color().setScalar(t.tone) })), 55, 35));
+      add(leafLitterGeometry(), southMat, plan.leaves.map((l) => ({ m: l.m, c: new THREE.Color().setScalar(l.tone) })), 40, 35);
+      noShadow();
+      add(weedG, grassMat, plan.plants.map((w) => {
+        const q = new THREE.Quaternion().setFromAxisAngle(_ax.set(Math.cos(w.flow), 0, -Math.sin(w.flow)), 0.2 + (w.s % 0.2));
+        q.multiply(yawQ(w.s * 40));
+        return { m: new THREE.Matrix4().compose(new THREE.Vector3(w.x, w.y, w.z), q, new THREE.Vector3(w.s, w.s * 1.3, w.s)), c: color(0.27 + (w.s % 0.08), 0.5, 0.36 + (w.s - 0.7) * 0.12) };
+      }), 40, 35);
+      noShadow();
       for (const n of [...SOUTH_HOME_NAMES, 'riverSand' as const]) this.homes[n] = plan.homes[n].map(([x, y, z]) => new THREE.Vector3(x, y, z));
     }
 

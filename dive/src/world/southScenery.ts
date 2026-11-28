@@ -30,6 +30,11 @@ export type SouthPlan = {
   stones: Stone[];
   boulders: Stone[];
   weeds: Weed[];
+  /** F10 river-bed dressing (own RNG, so everything above and the homes are unchanged): cobble bands + bedrock slabs, sunken trees (3 shapes), leaf litter, plant colonies */
+  cobbles: Stone[];
+  trees: { m: THREE.Matrix4; tone: number }[][];
+  leaves: { m: THREE.Matrix4; tone: number }[];
+  plants: Weed[];
   homes: Record<SouthHomeName | 'riverSand', XYZ[]>;
 };
 
@@ -299,7 +304,90 @@ export function planSouth(): SouthPlan {
     if (p && p.h < -1.2 && !stoneSp.near(p.x, p.z, 2.5)) put('riverSand', p.x, p.h + rr(0.1, 0.35), p.z, 'river');
   });
 
-  return { mangroves, reeds, logs, boat, stones, boulders, weeds, homes };
+  const bed = planRiverBed();
+  return { mangroves, reeds, logs, boat, stones, boulders, weeds, cobbles: bed.cobbles, trees: bed.trees, leaves: bed.leaves, plants: bed.plants, homes };
+}
+
+/**
+ * F10: less bare sand on the river floor. (1) bands of cobbles (玉石) in the shallow runs and flat bedrock slabs,
+ * (2) sunken trees of three shapes, (3) leaf litter on the pools' floors, (4) plant colonies where the water is slow.
+ * Uses its own RNG and never touches the height field.
+ */
+function planRiverBed() {
+  const r = mulberry32(10101);
+  const rr = (a: number, b: number) => a + r() * (b - a);
+  const ri: RiverInfo = { d: 0, w: 0, D: 0, t: 0, tx: 0, tz: 0 };
+  type P = { x: number; z: number; h: number; w: number; d: number; t: number; D: number };
+  const pick = (tMin: number, tMax: number, dFrac: number, zA: number, zB: number, ok?: (p: P) => boolean): P | null => {
+    for (let i = 0; i < 80; i++) {
+      const x = rr(190, 350), z = rr(zA, zB);
+      if (riverWeight(x, z) < 0.6) continue;
+      riverDist(x, z, ri);
+      if (ri.t < tMin || ri.t > tMax || ri.d > ri.w * dFrac) continue;
+      const p = { x, z, h: heightAt(x, z), w: ri.w, d: ri.d, t: ri.t, D: ri.D };
+      if (p.h > -0.9) continue;
+      if (!ok || ok(p)) return p;
+    }
+    return null;
+  };
+  const clear = (p: P) => Math.hypot(p.x - 300, p.z + 340) > 7; // keep the dive point's landing clear
+  // (1) cobble bands: clusters in the shallow runs (floor 0.9–3 m), plus a few big round stones
+  const cobbles: Stone[] = [];
+  const mk = (x: number, z: number, s: number, flat: number, tone: number): Stone => ({ x, z, y: heightAt(x, z) - s * 0.3, sx: s * rr(0.9, 1.3), sy: s * flat * rr(0.8, 1.1), sz: s * rr(0.9, 1.3), rot: r() * 6.28, tone, solid: false, r: s });
+  for (let c = 0; c < 40; c++) {
+    const p = pick(0.05, 0.95, 0.95, -620, -310, (q) => q.h > -3.2 && clear(q));
+    if (!p) continue;
+    const rad = rr(3.5, 7), n = Math.round(rr(18, 30));
+    for (let i = 0; i < n; i++) {
+      const a = r() * 6.28, d = Math.sqrt(r()) * rad, x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
+      if (riverWeight(x, z) < 0.6 || heightAt(x, z) > -0.9) continue;
+      cobbles.push(mk(x, z, r() < 0.12 ? rr(0.45, 0.8) : rr(0.12, 0.4), 0.7, rr(0.45, 0.78)));
+    }
+  }
+  // bedrock showing through: wide flat pale slabs
+  for (let c = 0, got = 0; c < 400 && got < 45; c++) {
+    const p = pick(0.3, 1, 0.9, -640, -420, (q) => q.h > -3 && clear(q));
+    if (!p) continue;
+    const s = rr(1.3, 3), sl = mk(p.x, p.z, s, 0.16, rr(0.62, 0.8));
+    sl.y = p.h - s * 0.1;
+    cobbles.push(sl); got++;
+  }
+  // (2) sunken trees: 3 shapes (long forked / thin with branches / root-ball stump), mostly in the middle and lower reach
+  const trees: { m: THREE.Matrix4; tone: number }[][] = [[], [], []];
+  const want = [6, 5, 4];
+  for (let k = 0; k < 3; k++) for (let c = 0; c < 300 && trees[k].length < want[k]; c++) {
+    const p = pick(0.08, 0.8, 0.8, -580, -320, (q) => q.h < -1.3 && q.h > -5 && clear(q));
+    if (!p) continue;
+    const s = rr(0.8, 1.2);
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rr(-0.1, 0.1), r() * 6.28, rr(-0.18, 0.18), 'YXZ'));
+    trees[k].push({ m: new THREE.Matrix4().compose(new THREE.Vector3(p.x, p.h + 0.12 * s, p.z), q, new THREE.Vector3(s, s, s)), tone: rr(0.8, 1.15) });
+  }
+  // (3) leaf litter on the pools' floors (floor >= 3 m)
+  const leaves: { m: THREE.Matrix4; tone: number }[] = [];
+  for (let c = 0; c < 60 && leaves.length < 24; c++) {
+    const p = pick(0.05, 0.97, 0.85, -640, -310, (q) => q.h < -3 && clear(q));
+    if (!p) continue;
+    for (let i = 0, n = 1 + Math.floor(r() * 3); i < n; i++) {
+      const x = p.x + rr(-2.5, 2.5), z = p.z + rr(-2.5, 2.5), h = heightAt(x, z);
+      if (riverWeight(x, z) < 0.6 || h > -2.6) continue;
+      const s = rr(0.9, 1.6);
+      leaves.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, h + 0.04, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * 6.28), new THREE.Vector3(s, 1, s)), tone: rr(0.75, 1.2) });
+    }
+  }
+  // (4) plant colonies where the flow is slow (v = 0.35 * 3.5 / D < 0.3 m/s, i.e. pools D > 4)
+  const plants: Weed[] = [];
+  for (let c = 0; c < 60 && plants.length < 330; c++) {
+    const p = pick(0.05, 0.97, 0.7, -640, -310, (q) => q.D > 4 && q.h < -1.6 && q.h > -5 && clear(q));
+    if (!p) continue;
+    riverDist(p.x, p.z, ri);
+    const flow = Math.atan2(ri.tx, ri.tz);
+    for (let i = 0, n = Math.round(rr(10, 18)); i < n; i++) {
+      const x = p.x + rr(-2.2, 2.2), z = p.z + rr(-2.2, 2.2), h = heightAt(x, z);
+      if (riverWeight(x, z) < 0.6 || h > -1.4) continue;
+      plants.push({ x, y: h - 0.05, z, s: rr(0.7, 1.4), flow });
+    }
+  }
+  return { cobbles, trees, leaves, plants };
 }
 
 // ---------------------------------------------------------------- geometry
@@ -392,6 +480,57 @@ export function reedGeometry(): THREE.BufferGeometry {
     for (let i = 0; i < p.count; i++) { const y = p.getY(i); p.setX(i, p.getX(i) * (1 - y * 0.65)); p.setZ(i, p.getZ(i) + y * y * 0.12); }
     g.rotateY(rot);
     parts.push(g);
+  }
+  const g = mergeGeometries(parts)!;
+  g.computeVertexNormals();
+  return g;
+}
+
+/** limb from a to b (tapered, 5-sided), vertex-coloured bark */
+function limb(a: XYZ, b: XYZ, r0: number, r1: number, col: XYZ): THREE.BufferGeometry {
+  const v = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const g = new THREE.CylinderGeometry(r1, r0, v.length(), 5, 1, false);
+  g.translate(0, v.length() / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), v.normalize()));
+  g.translate(a[0], a[1], a[2]);
+  return paint(g.toNonIndexed(), (_x, y) => [col[0] * (0.9 + y * 0.1), col[1] * (0.9 + y * 0.1), col[2]]);
+}
+/** F10 sunken trees (along +x, ~4–5 m, base at y 0): 0 = trunk with 4 branches, 1 = thin forked trunk, 2 = root-ball stump with up-turned roots. 90–230 triangles. */
+export function sunkenTreeGeometry(kind: 0 | 1 | 2): THREE.BufferGeometry {
+  const bark: XYZ = [0.3, 0.23, 0.17], wet: XYZ = [0.26, 0.24, 0.18];
+  const p: THREE.BufferGeometry[] = [];
+  if (kind === 0) {
+    p.push(limb([-2.4, 0.3, 0], [2.4, 0.2, 0], 0.32, 0.12, bark));
+    for (const [x, up, side, len] of [[-1.2, 0.9, 0.5, 1.5], [-0.2, 1.1, -0.4, 1.3], [0.9, 0.9, 0.6, 1.1], [1.6, 0.6, -0.4, 0.8]] as const)
+      p.push(limb([x, 0.28, 0], [x + 0.45, 0.28 + up * len * 0.7, side * len * 0.7], 0.07, 0.03, wet));
+  } else if (kind === 1) {
+    p.push(limb([-2.0, 0.2, 0], [0.4, 0.45, 0], 0.18, 0.1, wet));
+    p.push(limb([0.4, 0.45, 0], [2.4, 0.9, 0.7], 0.1, 0.04, bark));
+    p.push(limb([0.4, 0.45, 0], [2.0, 0.4, -0.9], 0.1, 0.04, bark));
+    p.push(limb([-0.8, 0.3, 0], [-0.4, 1.1, 0.5], 0.06, 0.02, wet));
+    p.push(limb([1.4, 0.7, 0.4], [1.9, 1.3, 0.6], 0.04, 0.015, wet));
+  } else {
+    const ball = new THREE.IcosahedronGeometry(0.55, 0);
+    ball.scale(1, 0.75, 1); ball.translate(-1.6, 0.4, 0);
+    p.push(paint(ball.toNonIndexed(), () => [0.27, 0.2, 0.15]));
+    p.push(limb([-1.4, 0.4, 0], [1.4, 0.25, 0.1], 0.24, 0.12, bark));
+    for (let i = 0; i < 6; i++) { const a = (i / 6) * 6.28 + 0.4; p.push(limb([-1.6, 0.45, 0], [-1.6 - Math.cos(a) * 0.9, 0.5 + Math.abs(Math.sin(a)) * 0.9 + 0.4, Math.sin(a) * 0.9], 0.09, 0.02, wet)); }
+  }
+  return mergeGeometries(p)!;
+}
+
+/** F10 leaf litter: a 1.2 m patch of ~26 small tilted leaves, ochre / brown / olive vertex colours: ~52 triangles, lying at y 0 */
+export function leafLitterGeometry(): THREE.BufferGeometry {
+  const r = mulberry32(77);
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 26; i++) {
+    const g = new THREE.PlaneGeometry(0.13 + r() * 0.1, 0.07 + r() * 0.05);
+    g.rotateX(-Math.PI / 2 + (r() - 0.5) * 0.5);
+    g.rotateY(r() * 6.28);
+    const a = r() * 6.28, d = Math.sqrt(r()) * 0.6;
+    g.translate(Math.cos(a) * d, 0.01 + r() * 0.05, Math.sin(a) * d);
+    const t = r(), col: XYZ = t < 0.4 ? [0.42, 0.3, 0.12] : t < 0.75 ? [0.3, 0.2, 0.1] : [0.27, 0.3, 0.12];
+    parts.push(paint(g.toNonIndexed(), () => col));
   }
   const g = mergeGeometries(parts)!;
   g.computeVertexNormals();
