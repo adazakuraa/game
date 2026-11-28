@@ -228,7 +228,7 @@ function envSamples(lay: FishLayout): number[] {
  */
 function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false, lay?: FishLayout, lod1 = false): THREE.MeshStandardMaterial {
   const m = def.mat ?? {};
-  const v2 = !photo && (lay ? !!lay.v2 : fishV2(def));
+  const v2 = !photo && !(def.fish?.cet || def.fish?.pin) && (lay ? !!lay.v2 : fishV2(def));
   const mode: SwimMode | null = swimModeOf(def);
   const translucent = m.translucent !== undefined;
   const mat = new THREE.MeshStandardMaterial({

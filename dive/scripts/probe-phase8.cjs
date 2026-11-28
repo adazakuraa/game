@@ -395,8 +395,9 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
   const swimOk = swim.rows.length >= 4 && swim.rows.every((r) => !r.noAttr && Math.abs(r.got - r.want) <= r.want * 0.05);
   check('9: 泳ぎの周波数（速さ 0.1 と 1.0、式どおり ±5%）', swimOk, swim.rows.map((r) => r.noAttr ? `${r.id}: aSwim なし` : `${r.id} U=${r.U}: ${r.got}Hz/${r.want}Hz`).join(', '));
   check('9: 速さが急に変わっても位相が飛ばない（1 ステップ ≤ 2π·4Hz·0.05s）', swim.jump <= 2 * Math.PI * 4 * 0.05 + 1e-6, `max ${swim.jump.toFixed(3)} rad`);
-  const nonFish = Object.entries(swim.kinds).filter(([k]) => k !== 'fish');
-  check('9: 魚以外（と縦に振る哺乳類）は従来の動きのまま', nonFish.every(([, [v2]]) => v2 === 0), JSON.stringify(swim.kinds));
+  // F12a：海生哺乳類（fish(bendY)）は専用の泳ぎ（cetacean・pinniped、上下のしなり）に移った
+  const nonFish = Object.entries(swim.kinds).filter(([k]) => k !== 'fish' && k !== 'fish(bendY)');
+  check('9: 魚以外は従来の動きのまま（海生哺乳類は F12a から上下のしなりの新しい泳ぎ）', nonFish.every(([, [v2]]) => v2 === 0), JSON.stringify(swim.kinds));
 
   // ---------- S4: generated model v2 (§3, §1.1): triangle budgets of every generated fish, L1 geometry, aAO
   const tri = await page.evaluate(() => {
@@ -414,6 +415,8 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
       out.gen++; out.ms.push(ms);
       if ('FISH_V2' in (m.defines || {})) out.v2++;
       const t = n(rt.mesh.geometry), big = rt.def.size >= 0.4;
+      // F12a：海生哺乳類は専用の体（1 頭 3〜6k 以内、L1 は L0 の半分以下）
+      if (rt.def.fish?.cet || rt.def.fish?.pin) { if (t > 6000) out.over.push(`${rt.def.id}:${t}`); if (rt.geo1 && n(rt.geo1) > t / 2) out.over1.push(`${rt.def.id}:${n(rt.geo1)}`); continue; }
       out.max[big ? 1 : 0] = Math.max(out.max[big ? 1 : 0], t);
       if (t > (big ? 2500 : 1500)) out.over.push(`${rt.def.id}:${t}`);
       if (!rt.geo1) out.noL1.push(rt.def.id);
