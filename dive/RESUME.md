@@ -1,6 +1,14 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-28（修正バッチ2 F1 を実装。修正バッチ2の設計を追加。**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+最終更新: 2026-11-28（修正バッチ2 F1・F2 を実装。修正バッチ2の設計を追加。**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+
+## 修正バッチ2 F2（`claude/fix2-f2`、2026-11-28、**実装済み**）
+- **何か**：潜水中の操作と置き物 3 件（(31)(11)(14)）。設計書の暫定値をそのまま採用。
+- **変えた所**：`Game.ts`（`STICK`：スティックの前後は水平、|pitch| 50°〜70° で縦にも。テストフック `surfaceAt` を追加）、`world/flora.ts`（`PLACE`・`footMin()`：足元 5 点の最小値＋傾き×半径だけ埋める。巨大昆布の根元も。ボートの揺れ `update`、`placeBoat` で錨を置き直す）、`world/surface.ts`（`surfaceFootAt()`）、`game/missions.ts`・`life/creatures.ts`（ウニ・無脊椎は足元の最小値の側へ）、新規 `world/anchor.ts`（`BoatAnchor`・`ANCHOR`：錨綱と錨、2 メッシュ・102 三角形、ミニマップには出さない）。
+- **セーブ形式**：変更なし。
+- **確認**：`terrain-dump.ts` の前後比較（z ≥ -60 の 100,003 点）で `cmp` 一致（差分 0）。新規 `scripts/probe-float.cjs`（浮きの計測。0.15m 超が全体 1951→99 件、サンゴ類の大きな組は 521→26 など、ウニ漁のウニは 0 件）と `scripts/probe-fix2-f2.cjs`（12/12）。回帰：`probe-phase9` 84/84、`probe-phase11-final` 33/33、`probe-fix2-f1` 30/30、`probe-debug`、`probe-s8`。
+- **残り**：浮きは 0 にはなっていない（サンゴのじゅうたんで最大 0.4m が 2% ほど）。深く埋めすぎるとサンゴが隠れるため `PLACE`（flora.ts）の `corner`・`tilt` で調整する。氷・昆布の冠などもともと底に付かない物は計測から別扱い（hover）。
+- **次の一手**：F3（メニュー画面・ショップ・しおさい亭の見た目）。F4 の前。
 
 ## 修正バッチ2 F1（`claude/fix2-f1`、2026-11-28、**実装済み**）
 - **何か**：表示・文言・数値の小さな直し 13 件（(1)(5)(6)(8)(9)(12)(13)(19)(21)(25)(27)(33)(34)）。設計書の暫定値をそのまま採用。

@@ -22,6 +22,7 @@ import { BAIT, dietOf, eatsBait, type BaitId } from './bait';
 import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
+import { surfaceAt } from '../world/surface';
 import { BLUEHOLE, caveRoofAt, DIVE_POINTS, flowAt, FLOW_MIN_DEPTH, heightAt, RUINS, riverDist, SHORE_BLOCK, VENT, WATERFALL, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
@@ -72,6 +73,9 @@ export const NARCOSIS = { blackoutSec: 60, warnLeftSec: 20 };
 export const UI_SCALE = { min: 0.7, max: 1.3, step: 0.05, def: 1 };
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+/** 修正バッチ2 F2 (31): スティックの前後が縦にも進み始める視線の傾き（ラジアン） */
+const STICK = { vertFrom: (50 * Math.PI) / 180, vertFull: (70 * Math.PI) / 180 };
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -1651,7 +1655,12 @@ export class Game {
     let speed = (this.ads ? 2.3 : 2.4) * (this.has('fins') ? 1.3 : 1) * (this.has('goldfins') ? 1.1 : 1) * (this.buff === 'shioyaki' ? 1.15 : this.buff === 'fugu' ? 1.1 : 1) * (1 - Math.min(0.3, this.carryKg / 120));
     if (boosting) speed = 6;
     if (this.creatures.grab) speed *= 0.25; // Phase 4: an octopus on the arms — barely able to swim
-    const want = new THREE.Vector3().addScaledVector(fwd, inp.moveY * speed).addScaledVector(right, inp.moveX * speed * 0.7);
+    // 修正バッチ2 F2 (31): スティックの前後は水平に進む（開始時の約 20° 下向きで勝手に沈まない）。真上・真下を見ているとき
+    // （|pitch| が STICK.vertFrom を超えたら）だけ、STICK.vertFull までに滑らかに見ている向きへ縦にも進む
+    const vk = THREE.MathUtils.smoothstep(Math.abs(this.pitch), STICK.vertFrom, STICK.vertFull);
+    const flat = new THREE.Vector3(fwd.x, 0, fwd.z).normalize();
+    const dir = flat.multiplyScalar(1 - vk).addScaledVector(fwd, vk);
+    const want = new THREE.Vector3().addScaledVector(dir, inp.moveY * speed).addScaledVector(right, inp.moveX * speed * 0.7);
     if (inp.up) want.y += speed * 0.75;
     if (inp.down) want.y -= speed * (this.ads ? 1.3 : 0.75);
     // neutral buoyancy drift + breathing bob
@@ -2690,6 +2699,8 @@ export class Game {
       game: this,
       /** Phase 9: seabed / land height at (x, z) and its zone */
       heightAt: (x: number, z: number) => heightAt(x, z),
+      /** 修正バッチ2 F2: 足元の高さ（岩・サンゴ頭の上面を含む） */
+      surfaceAt: (x: number, z: number) => surfaceAt(x, z),
       zoneAt: (x: number, z: number) => zoneAt(x, z),
       riverDist: (x: number, z: number) => { const r = riverDist(x, z); return { d: r.d, w: r.w }; },
       /** Phase 9 S1: the estuary's water table (zone base + salt-wedge layers) */
