@@ -4,7 +4,7 @@ import type { Paint } from './paint';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
 export type Kind = 'fish' | 'ray' | 'jelly' | 'squid' | 'octopus' | 'dumbo' | 'turtle' | 'lobster' | 'isopod' | 'nudi' | 'gardenEel' | 'inv' | 'none';
-export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots' | 'coldSpots' | 'caveSpots' | 'caveTopSpots' | 'kelpSpots'
+export type Region = [number, number, number, number] | 'anemones' | 'crevices' | 'reefSpots' | 'rockSpots' | 'vent' | 'whale' | 'eelPatch' | 'coralTops' | 'underTables' | 'wallSpots' | 'sandSpots' | 'grassSpots' | 'bommieSpots' | 'coldSpots' | 'caveSpots' | 'caveTopSpots' | 'kelpSpots'
   // Phase 9 S3: estuary and river homes (flora.ts `Homes`)
   | 'estChannel' | 'estFlat' | 'mangrove' | 'reed' | 'riverLow' | 'riverRiffle' | 'riverPool' | 'riverUp' | 'riverStones' | 'riverSand';
 /** Micro-habitat: where in the 3D reef structure a species lives and how it reacts. */
@@ -52,6 +52,8 @@ export type SpeciesDef = {
   rainbow?: boolean;
   /** only out on night dives */
   when?: 'night';
+  /** 修正バッチ2 F9 (30)：最初のこの数の群れは、ふだんの region ではなく鯨骨（whalefall.ts）に住む */
+  whale?: number;
   /** lateral thickness / core height for photo-based models */
   photoWidth?: number;
   /**
@@ -427,7 +429,7 @@ export const SPECIES: SpeciesDef[] = [
   {
     id: 'isopod', name: 'ダイオウグソクムシ', sci: 'Bathynomus giganteus', zone: 'deep', depth: [250, 430], size: 0.4, rarity: 2,
     desc: 'ダンゴムシの仲間で最大級。海底に落ちてくる死骸を食べる深海の掃除屋。何年も絶食できるという。',
-    hint: '深海の海底、熱水噴出孔の近くを這っている。',
+    hint: '深海の海底、熱水噴出孔や鯨骨の近くを這っている。',
     kind: 'isopod',
     paint: (p) => { p.fill('#c8b8a0'); for (let i = 0; i < 9; i++) { p.g.fillStyle = 'rgba(120,100,80,0.6)'; p.g.fillRect(0, i * 28 + 22, p.W, 4); } p.noise(0.25, true, false); },
     tex: [128, 256],
@@ -454,7 +456,8 @@ import { KELP_SPECIES } from './species10';
 import { MORE_600 } from './species11';
 import { FUGU_SPECIES } from './species12';
 import { ESTUARY_RIVER_SPECIES } from './species13';
-SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES, ...WILD_SPECIES, ...SITE_SPECIES, ...KELP_SPECIES, ...MORE_600, ...FUGU_SPECIES, ...ESTUARY_RIVER_SPECIES);
+import { WHALE_FALL_SPECIES } from './species14';
+SPECIES.push(...MORE_SPECIES, ...MORE_FISH, ...FISH_300, ...INVERTS, ...INVERTS_2, ...COLD_SPECIES, ...WILD_SPECIES, ...SITE_SPECIES, ...KELP_SPECIES, ...MORE_600, ...FUGU_SPECIES, ...ESTUARY_RIVER_SPECIES, ...WHALE_FALL_SPECIES);
 
 /**
  * Phase 4 balance pass (runs once, before any Creatures are built):
@@ -526,6 +529,30 @@ function applyMapMoves() {
   }
 }
 applyMapMoves();
+
+/**
+ * 修正バッチ2 F9 (30)：鯨骨（whalefall.ts）を深海の掃除屋の住みかに足す。最初の `whale` 個の群れが骨に住む。
+ * 群れが 1 つだけの種（グソクムシ以外）は、元の場所を残すため群れ・頭数を増やしてから割り当てる。
+ */
+const WHALE_HOMES_OF: { id: string; whale: number; groups?: number; count?: number }[] = [
+  { id: 'isopod', whale: 3 },
+  { id: 'goemonkoshiori', whale: 1, groups: 2 },
+  { id: 'sodara', whale: 1 },
+  { id: 'kagurazame', whale: 1, groups: 2, count: 2 },
+  { id: 'ondenzame', whale: 1, groups: 2, count: 2 },
+];
+function applyWhaleFall() {
+  const byId = new Map(SPECIES.map((d) => [d.id, d]));
+  for (const w of WHALE_HOMES_OF) {
+    const d = byId.get(w.id);
+    if (!d) continue;
+    d.whale = w.whale;
+    if (w.groups) d.groups = w.groups;
+    if (w.count) d.count = w.count;
+    if (d.zone === 'deep') d.hint = d.hint.replace(/。?$/, '。鯨骨のまわりにも集まる。');
+  }
+}
+applyWhaleFall();
 balanceZones();
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));

@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { ARCH, BLUEHOLE, CENOTE, heightAt, KELP, RUINS, VENT, WRECK } from '../world/layout';
+import { whaleWorld } from '../world/whalefall';
 import type { WeatherId } from './weather';
+
+const WHALE_SPOT = whaleWorld(0, 0);
 
 /**
  * Photo spots (Phase 3): famous views of the island. Shooting one from inside its circle, with the
@@ -53,6 +56,8 @@ export const SPOTS: SpotDef[] = [
   { id: 'cenote', name: 'セノーテの光のカーテン', point: 'cave', x: CENOTE.x, z: CENOTE.z, y: -12, pay: 1000, desc: '天井の穴から、光がカーテンのように降りてくる', when: { day: true, weather: ['sunny'] } },
   { id: 'mangrove', name: 'マングローブの根の迷路', point: 'estuary', x: 262, z: -192, y: -1, pay: 600, desc: '水に浸かった根が編み目のように重なり、そのすき間を小魚がすり抜けていく' },
   { id: 'waterfall', name: '滝つぼの光の泡', point: 'river', x: 222, z: -615, y: -3, pay: 800, desc: '滝の泡が光を散らして、水の中に白いカーテンがゆれている', when: { weather: ['sunny', 'cloudy'] } },
+  // 修正バッチ2 F9 (30)：鯨骨生物群集（いつ行ってもある場所なので光景にはしない）
+  { id: 'whalefall', name: '鯨骨生物群集', point: 'deep', x: WHALE_SPOT[0], z: WHALE_SPOT[1], h: 1.2, pay: 1200, desc: '沈んだクジラの骨に、白いバクテリアと赤いホネクイハナムシがびっしり群がる' },
   { id: 'vent', name: '熱水噴出孔', point: 'deep', x: VENT.x, z: VENT.z, h: 4, pay: 2000, desc: '深海の煙突から、黒い熱水が噴き上がる' },
 ];
 

@@ -1320,7 +1320,7 @@ export class Game {
     this.state = p ? 'paused' : 'diving';
     this.paused = p;
     $('pause').classList.toggle('hidden', !p);
-    // Phase 2: surfacing from the pause menu only with the signal float (or the ADS winch)
+    // Phase 2: surfacing from the pause menu only with the signal float (or the ADS: F9 (30))
     const anywhere = this.surfaceAnywhere();
     $('abort').classList.toggle('hidden', !anywhere);
     $('pause-note').textContent = anywhere ? '途中で終了しても、浮上するので写真は保存されます。' : '浮上するには水面近く（水深1.6mより浅く）まで上がろう。';
@@ -2687,6 +2687,8 @@ export class Game {
   }
 
   private canSurface(): boolean {
+    // F9 (30)：ADS は HUD の浮上ボタンを出さず、水面近く以外は一時停止メニューの「浮上して終了」から浮上する
+    if (this.ads) return this.camera.position.y > -1.6;
     return this.surfaceAnywhere() || this.camera.position.y > -1.6;
   }
 
@@ -3081,7 +3083,7 @@ export class Game {
     const sb = $('surface-btn');
     const can = this.canSurface();
     sb.classList.toggle('hidden', !can);
-    $('surface-text').textContent = this.ads ? 'ウインチで回収してもらう' : '浮上してボートに戻る';
+    $('surface-text').textContent = '浮上してボートに戻る';
 
     // reticle
     const ret = $('reticle');

@@ -8,6 +8,7 @@ import { underwaterMaterial } from '../render/underwater';
 import { makeSoftDot } from '../render/textures';
 import { caveRoofAt, caveTopAt, flowAt, heightFast, riverDist, SHORE_BLOCK, VENT, zoneAt } from '../world/layout';
 import { GARDEN_EEL_PATCH, type Homes } from '../world/flora';
+import { whaleHomes } from '../world/whalefall';
 /** Phase 9 S3: regions that name an estuary / river `Homes` list */
 const SOUTH_REGIONS = new Set(['estChannel', 'estFlat', 'mangrove', 'reed', 'riverLow', 'riverRiffle', 'riverPool', 'riverUp', 'riverStones', 'riverSand']);
 import { clamp, mulberry32 } from '../utils/noise';
@@ -660,12 +661,16 @@ export class Creatures {
     return own.length ? own : all;
   }
 
+  private whaleList: THREE.Vector3[] | null = null;
+
   private pickHome(def: SpeciesDef, homes: Homes, i: number): THREE.Vector3 {
     const r = this.rnd;
     const reg = def.region;
     const fromList = (arr: THREE.Vector3[]) => (this.pickSpread(arr, () => true, 8, def.id) ?? arr[Math.floor(r() * arr.length) % Math.max(1, arr.length)]).clone();
     let p: THREE.Vector3;
-    if (reg === 'anemones') {
+    if (reg === 'whale' || (def.whale !== undefined && i < def.whale)) {
+      p = fromList(this.whaleList ??= whaleHomes());
+    } else if (reg === 'anemones') {
       // each anemonefish species keeps its own host anemones
       const off: Record<string, number> = { clownfish: 0, hamakumanomi: 9, kumanomi: 14, hanabirakuma: 19 };
       p = homes.anemones[((off[def.id] ?? 0) + i) % homes.anemones.length].clone();
@@ -889,7 +894,7 @@ export class Creatures {
         a.p.y = heightFast(a.p.x, a.p.z) + (def.kind === 'lobster' ? 0.05 : 0.35 + r() * 0.4);
         a.fixed = true;
       } else if (def.behavior === 'static') {
-        const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots' || def.region === 'riverStones';
+        const onTop = def.region === 'rockSpots' || def.region === 'coralTops' || def.region === 'bommieSpots' || def.region === 'coldSpots' || def.region === 'riverStones' || def.region === 'whale';
         const spread = onTop ? 1.2 : 3;
         a.p.copy(g.home).add(new THREE.Vector3((r() - 0.5) * spread, 0, (r() - 0.5) * spread));
         a.p.y = this.restY(def, a.p.x, a.p.z, a.s);
@@ -1396,13 +1401,14 @@ export class Creatures {
 
   private canRelocate(def: SpeciesDef): boolean {
     if (def.kind === 'none' || def.behavior === 'anemone' || def.behavior === 'crevice') return false;
-    if (def.region === 'eelPatch' || def.region === 'vent' || def.region === 'anemones' || def.region === 'crevices' || def.region === 'reefSpots') return false;
+    if (def.region === 'eelPatch' || def.region === 'vent' || def.region === 'whale' || def.region === 'anemones' || def.region === 'crevices' || def.region === 'reefSpots') return false;
     return true;
   }
 
   /** Move a far-away group into matching habitat 30-75 m from the diver (outside the visible range). */
   private relocate(rt: SpeciesRuntime, gi: number, player: THREE.Vector3, minD = 32): boolean {
     const def = rt.def;
+    if (def.whale !== undefined && gi < def.whale) return false; // F9 (30): 鯨骨に住む群れは動かさない
     const r = this.rnd;
     const reg = def.region;
     let p: THREE.Vector3 | null = null;
