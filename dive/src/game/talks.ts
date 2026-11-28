@@ -175,6 +175,11 @@ export const ITEM_TIPS: Record<string, MiniLine[]> = {
   oldreg: [{ who: 'editor', text: 'この古いレギュレーターは自動で効く。エアの減りが少なくなる。' }],
   goldfins: [{ who: 'editor', text: '黄金のフィンは自動で効く。泳ぐ速さが上がる。' }],
   bait: [{ who: 'okami', text: '餌のボタンでまく。好きな餌に魚が寄ってくる。', target: '#btn-bait' }],
+  // F7 (36)：初めてのウニ漁。持ち替えボタンを指す（item の一種。潜水開始時ではなく、ウニ漁が始まったときに出す）
+  urchin: [
+    { who: 'gen', text: '持ち替えボタンで銛に替えよう。手銛がなくても、ウニ漁の間は漁協のヤスを貸すよ。', target: '#btn-tool' },
+    { who: 'gen', text: 'ウニに近づくと、銛のボタンが「突いてはがす」になる。3回突くと取れるぞ。' },
+  ],
 };
 /** 潜水開始時に見る順番 */
 export const ITEM_ORDER = ['bait', 'spear', 'torch', 'light', 'float', 'scooter', 'sonar', 'macro', 'wide', 'speargun', 'shield'] as const;

@@ -67,7 +67,7 @@ export function makeQuest(known: Set<string>, rnd: () => number = Math.random, t
   switch (kind) {
     case 'urchin': {
       const zone = pick(zones(['rocky', 'kelp', 'cold']));
-      return { ...base(zone), giver: '漁協', title: 'ウニ漁', desc: '増えすぎたウニを獲ってほしい。食べられるウニだけをバールではがしてくる', reward: QUEST.reward.urchin * (zone === 'cold' ? 1.5 : 1) };
+      return { ...base(zone), giver: '漁協', title: 'ウニ漁', desc: '増えすぎたウニを獲ってほしい。漁協のヤスを貸すので、食べられるウニだけを突いてはがしてくる（夜に潜ると報酬 ×1.5）', reward: QUEST.reward.urchin * (zone === 'cold' ? 1.5 : 1) };
     }
     case 'trash': {
       const zone = pick(zones(['lagoon', 'reef', 'estuary', 'river']));

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MISSION, Missions, type MissionCtx } from './missions';
-import { BOARD_DAY, Kitchen, type LandSave } from './kitchen';
+import { BOARD_DAY, Kitchen, type LandSave, type Morning } from './kitchen';
 import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } from './story';
 import { SCENE_AT, Scenes } from './scenes';
 import { SPOT, SPOTS, spotFocus, spotInView } from './spots';
@@ -9,7 +9,7 @@ import { setUwMobile } from '../render/underwater';
 import { Diag } from '../ui/diag';
 import { makeQuest, QUEST, type Quest } from './quests';
 import { FIND_NAME, FINDS, Finds, openFind, type FindKind } from './finds';
-import { buildBar, buildHandSpear, buildKnife, buildSpeargun } from './gearModels';
+import { buildHandSpear, buildKnife, buildSpeargun } from './gearModels';
 import { BIG_KG, DISH, FISHING, PENALTY, STORY, edibleInfo, isFugu, isGoodCatch, repelTier, fmtKg, nightOf, repLevel, timeLabel, weightOf, type Catch, type DishId } from './fishing';
 import { AIR_TANK, evaluateShot, sAdvice, LEGACY_NEED, LEGACY_NEED_PCT, PHOTO, SHOP, yen, type GearId } from './photoScore';
 import { patchFogChunks, UW } from '../render/underwater';
@@ -27,6 +27,7 @@ import { BLUEHOLE, caveRoofAt, DIVE_POINTS, flowAt, FLOW_MIN_DEPTH, GATE, gateWe
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
+import { BoatTravel, Dawn, PORT, travelSeconds } from '../ui/transit';
 import { Minimap } from '../ui/minimap';
 import { areaIconSvg } from '../ui/areaIcons';
 import { TalkUI, type TalkLine } from '../ui/talk';
@@ -84,6 +85,8 @@ export const UI_SCALE = { min: 0.7, max: 1.3, step: 0.05, def: 1 };
 export const UI_REBASE = { ver: 2, shutter: 0.8, ctl: 0.75 };
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+/** 漁協から借りるウニ用の銛（F7 (36)）。魚には使えない */
+const LOAN_SPEAR = { ...FISHING.tools.hand, name: '漁協のヤス' };
 
 /** 修正バッチ2 F2 (31): スティックの前後が縦にも進み始める視線の傾き（ラジアン） */
 const STICK = { vertFrom: (50 * Math.PI) / 180, vertFull: (70 * Math.PI) / 180 };
@@ -187,7 +190,6 @@ export class Game {
   private vmHand!: THREE.Group;
   private vmGun!: THREE.Group;
   private vmGunShaft!: THREE.Mesh;
-  private vmBar!: THREE.Group;
   /** the diver's knife (Phase 3: cutting the net off a turtle) */
   private vmKnife!: THREE.Group;
   private cutReady = false;
@@ -294,9 +296,8 @@ export class Game {
     const gun = buildSpeargun();
     this.vmGun = gun.gun;
     this.vmGunShaft = gun.shaft;
-    this.vmBar = buildBar();
     this.vmKnife = buildKnife();
-    for (const m of [this.vmHand, this.vmGun, this.vmBar, this.vmKnife]) {
+    for (const m of [this.vmHand, this.vmGun, this.vmKnife]) {
       m.position.set(0.14, -0.15, -0.28);
       m.rotation.set(0.05, 0.08, 0);
       m.visible = false;
@@ -322,6 +323,7 @@ export class Game {
       known: (id) => !!this.save.found[id],
       grantMap: (id) => this.grantMap(id),
       urchinDive: () => this.quickUrchin(),
+      dawn: (r) => this.playDawn(r),
       hasTorch: () => this.hasTorch(),
       progress: () => ({ found: this.foundCount, chapter: this.save.storyMain ?? 0, spear: this.has('spear') }),
     });
@@ -333,6 +335,10 @@ export class Game {
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
     this.talk = new TalkUI($('toast').parentElement!);
+    this.dawnUI = new Dawn($('dawn'));
+    this.travelUI = new BoatTravel($('travel'), $<HTMLCanvasElement>('tv-canvas'), () => this.ensureMinimap(), (sec) => this.audio.travel(sec));
+    // しおさい亭で料理してから閉じたとき、夜に潜った後なら朝にする
+    $('k-close').addEventListener('click', () => { if (this.morningDue && !this.dawning) this.playDawn(this.kitchen.nextMorning()); });
     $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); if (!this.save.tutorial) { this.toast('しおさい亭は、最初のダイブを終えると開く', '', 2.6); return; } this.kitchen.open(); });
     // DEBUG-PANEL:BEGIN（テスト用。完成版で削除。リセット・最大・各種デバッグ操作は game/debug.ts）
     installDebugPanel({ save: this.save, write: () => this.writeSave() });
@@ -521,6 +527,16 @@ export class Game {
   private clearedIdx: number[] = [];
   talk!: TalkUI;
   private talking = false;
+  /** F7：夜明けの演出（寝たとき・夜の潜水の後）と、ボートで向かう演出 */
+  private dawnUI!: Dawn;
+  private travelUI!: BoatTravel;
+  private dawning = false;
+  private traveling = false;
+  /** ボートがいま浮かんでいる所（さっき潜った地点）。null は港。朝になると港に戻る */
+  private boatAt: { x: number; z: number } | null = null;
+  /** 夜に始めた潜水の後は朝にする：結果画面を閉じた時点で朝にする（(26)） */
+  private diveNight = false;
+  private morningDue = false;
   private boatTalks = 0;
   /** このボート画面で夜の休み方を出した（同じ訪問では noLight を出さない） */
   private visitRest = false;
@@ -726,7 +742,7 @@ export class Game {
     if (this.state !== 'title' || !this.save.tutorial) return false;
     if ($('title').classList.contains('hidden') || this.kitchen.isOpen) return false;
     for (const id of ['shop', 'quests', 'album', 'settings', 'map', 'dex', 'result', 'prologue']) if (!$(id).classList.contains('hidden')) return false;
-    return !$('fade').classList.contains('on');
+    return !$('fade').classList.contains('on') && !this.dawning && !this.traveling;
   }
 
   /** F5 ④新アイテム：潜水中の小型吹き出し（#coach と同じ場所・暗くしない）。id の台本を一度きり */
@@ -752,7 +768,7 @@ export class Game {
   private async playTalk(id: string | null, lines: TalkLine[], claimIdx?: number, after?: () => void): Promise<void> {
     this.talking = true;
     try {
-      const r = await this.talk.run(lines, { closeKitchen: () => { if (this.kitchen.isOpen) this.kitchen.close(); },
+      const r = await this.talk.run(lines, { closeKitchen: () => { if (!this.dawning && this.kitchen.isOpen) this.kitchen.close(); },
         // F5：女将さんの第 1 話を吹き出しで読んだので既読に（海図つきの話ならここで渡す）
         readStory: () => { const n = this.save.story ?? 0; if (n < 1) { const ch = STORY[n]; if (ch?.map) this.grantMap(ch.map); this.save.story = n + 1; this.writeSave(); this.kitchen.render(); } },
         // F5：掲示板の使い方カードは吹き出しで済んだので畳む
@@ -934,7 +950,7 @@ export class Game {
       if (this.dexDirect) this.closeDex();
     });
     $('surface-btn').addEventListener('click', () => this.endDive('surface'));
-    $('res-ok').addEventListener('click', () => this.toTitle());
+    $('res-ok').addEventListener('click', () => this.closeResult());
     $('minimap-btn').addEventListener('click', () => this.toggleMap(true));
     $('map').addEventListener('click', () => this.toggleMap(false));
     $('toggle-sound').addEventListener('click', () => {
@@ -1317,7 +1333,7 @@ export class Game {
     this.startDive(dp, true);
   }
 
-  private startDive(dp: DivePoint, quick = false, prologue = false): void {
+  private startDive(dp: DivePoint, quick = false, prologue = false, instant = false): void {
     if (dp.requires !== 'ads' && this.nightBlocked()) {
       this.toast('夜の海はライトがないと潜れない。しおさい亭で休んで朝を待とう', 'warn', 3.5);
       return;
@@ -1325,9 +1341,28 @@ export class Game {
     if (!quick) this.quick = null;
     this.audio.unlock();
     const fade = $('fade');
-    fade.classList.add('on');
-    window.setTimeout(() => {
+    if (prologue || instant) {
+      fade.classList.add('on');
+      window.setTimeout(() => this.beginDive(dp, quick, prologue, fade, Promise.resolve()), 650);
+      return;
+    }
+    if (this.traveling || this.dawning) return;
+    // F7 (17)(29)：ボートで向かう演出。潜水の準備（生き物の生成・シェーダの事前コンパイル）はこの演出の裏で進める
+    this.traveling = true;
+    const from = quick ? PORT : this.boatAt ?? PORT;
+    const depth = Math.max(1, Math.round(-heightAt(dp.x, dp.z)));
+    let done: Promise<void> = Promise.resolve();
+    done = this.travelUI.play({ from, to: dp, name: dp.name, depth, sec: travelSeconds(from, dp, quick), urchin: quick }, () => {
+      fade.classList.add('on');
+      this.beginDive(dp, quick, prologue, fade, done);
+    }).then(() => { this.traveling = false; });
+  }
+
+  /** 暗転のあいだに潜水を始める（旧 startDive の本体）。hold が終わるまで暗転を解かない */
+  private beginDive(dp: DivePoint, quick: boolean, prologue: boolean, fade: HTMLElement, hold: Promise<void>): void {
+    {
       this.point = dp;
+      this.boatAt = quick ? this.boatAt : { x: dp.x, z: dp.z };
       this.ads = dp.requires === 'ads';
       // the dish eaten in the diner powers up this one dive
       this.buff = this.ads ? null : this.save.buff ?? null;
@@ -1398,14 +1433,16 @@ export class Game {
       this.surveySeen.clear();
       this.spearFx.visible = false;
       $('hud').classList.remove('spear');
-      $('btn-tool').classList.toggle('hidden', !this.has('spear') || this.ads);
+      this.toolBtnHidden = !this.has('spear') || this.ads;
+      $('btn-tool').classList.toggle('hidden', this.toolBtnHidden);
       this.vmHand.visible = this.vmGun.visible = false;
       // special sights: staged for the chapter that asks for them, later left to chance
       const ch = this.chapter;
       const nightNow = nightOf(this.save.clock ?? 0) >= 0.5;
       const sceneIds: SceneId[] = [];
-      if (!this.ads && ch?.scene && !this.save.scenes?.[ch.scene]) sceneIds.push(ch.scene);
-      if (!this.ads) {
+      if (!this.ads && !quick && ch?.scene && !this.save.scenes?.[ch.scene]) sceneIds.push(ch.scene);
+      // F7 (40)：ウニ漁（しおさい亭の仕込み）の間は光景などのイベントの抽選を止める（ウニ漁に集中できるように）
+      if (!this.ads && !quick) {
         // at most one sight left to luck per dive; the story ones only after the story has shown them
         const luck = (Object.keys(SCENES) as SceneId[]).filter((id) => {
           const S = SCENES[id];
@@ -1454,7 +1491,8 @@ export class Game {
       this.paused = false;
       this.clock.getDelta();
       // the screen stays black until this dive's shaders are compiled (never longer than RENDER.warmMaxMs)
-      void Promise.race([this.warmShaders(), new Promise((r) => window.setTimeout(r, RENDER.warmMaxMs))])
+      this.diveNight = !this.ads && !quick && !prologue && nightOf(this.save.clock ?? 0) >= 0.5;
+      void Promise.all([Promise.race([this.warmShaders(), new Promise((r) => window.setTimeout(r, RENDER.warmMaxMs))]), hold])
         .finally(() => { fade.classList.remove('on'); });
       if (prologue) {
         // the opening story sits over the first view of the sea; the dive (and the tutorial) waits for a tap
@@ -1471,7 +1509,7 @@ export class Game {
       }
       if (!prologue) window.setTimeout(() => this.itemTips(), 1800);
       this.toast(this.ads ? '大気圧潜水服で深海へ降下中…' : `${dp.name}にエントリー${this.env.night >= 0.5 ? '（夜の海）' : ''}　天気：${WEATHER[this.weather].icon}${WEATHER[this.weather].name}${this.buff ? `　まかないの${DISH[this.buff].name}：${DISH[this.buff].short}` : ''}`, '', 3);
-    }, 650);
+    }
   }
 
   /** stand-ins for materials that only appear during a dive; kept so that their programs stay compiled */
@@ -1699,6 +1737,9 @@ export class Game {
       this.save.clock = Math.max(this.save.clock ?? 0, FISHING.duskAt + FISHING.duskLen);
       (this.save.okami ??= { lore: 0 }).ev = 'back';
     }
+    // F7 (26)：夜に始めた潜水の後は、結果画面を閉じたときに朝にする（ウニ漁の短い潜水は時間を変えない）
+    this.morningDue = this.diveNight && !this.quick;
+    this.diveNight = false;
     this.save.maxDepth = Math.max(this.save.maxDepth, this.diveMaxDepth);
     // the catch goes into the cooler at the diner; a blackout loses it to the sea
     let caught = reason === 'surface' ? this.diveCatch : [];
@@ -1808,9 +1849,41 @@ export class Game {
     }
   }
 
+  /** 浮上の結果画面を閉じる。夜に潜った後は、寝たのと同じ処理（朝にする）と夜明けの演出へ */
+  private closeResult(): void {
+    if (this.morningDue && !this.dawning) { this.playDawn(this.kitchen.nextMorning()); return; }
+    this.toTitle();
+  }
+
+  /**
+   * F7 (10)：夜明けの演出。0.6 秒で暗転 → 「◯日目の朝」と天気を 1.2 秒 → 明けてボート画面へ（しおさい亭・結果画面は暗転のあいだに閉じる）。
+   * 女将さんの朝のひとこと（天気・残りの魚の売上）はボート画面の吹き出しで 1 段だけ。タップで早送り。
+   */
+  private playDawn(r: Morning): void {
+    if (this.dawning) return;
+    this.dawning = true;
+    this.morningDue = false;
+    this.boatAt = null;
+    this.audio.unlock();
+    this.audio.dawn();
+    const w = WEATHER[weatherOf(r.day)];
+    void this.dawnUI.play({ day: r.day, icon: w.icon, weather: w.name }, () => {
+      $('kitchen').classList.add('hidden');
+      this.toTitle();
+    }).then(async () => {
+      this.dawning = false;
+      // 吹き出しの台本の途中（初回の夜の休み方など）なら、その台本が「おはよう」を言う
+      if (!this.talking && !this.talk.active && this.talkOk()) {
+        await this.playTalk(null, [{ who: 'okami', text: r.line }]);
+      }
+      this.pumpTalks();
+    });
+  }
+
   private toTitle(): void {
     $('result').classList.add('hidden');
     $('title').classList.remove('hidden');
+    $('title').scrollTop = 0; // F7 (37)：ボート画面に戻るときは一番上から
     this.state = 'title';
     this.env.lightOn = false;
     this.boatTalks = 0;
@@ -1847,12 +1920,9 @@ export class Game {
     if (inp.consume('surface') && this.canSurface()) this.endDive('surface');
     // Phase 9 S6: no spearfishing in the river (the estuary follows the sea's rules). The button hides while the diver is in the river.
     const riverNow = this.camera.position.z < -60 && zoneAt(this.camera.position.x, this.camera.position.z) === 'river';
-    if (riverNow !== this.riverBan) {
-      this.riverBan = riverNow;
-      $('btn-tool').classList.toggle('hidden', riverNow || !this.has('spear') || this.ads);
-    }
+    if (riverNow !== this.riverBan) this.riverBan = riverNow;
     if (riverNow && this.tool === 'spear') this.setTool('camera');
-    if (inp.consume('tool') && !riverNow) this.setTool(this.tool === 'camera' ? 'spear' : 'camera');
+    if (inp.consume('tool') && !riverNow && !this.toolBtnHidden) this.setTool(this.tool === 'camera' ? 'spear' : 'camera');
     else if (riverNow && this.has('spear') && !this.ads && !this.riverToasted) {
       this.riverToasted = true;
       this.toast('川では銛は使えない（川の漁は漁協の決まりで禁止）', 'warn', 4);
@@ -2035,7 +2105,8 @@ export class Game {
       this.toast(`「${FIND_NAME[picked]}」を拾った！ 中身はボートに戻ってから開けてみよう（持って泳ぐと少し息が上がる）`, '', 3.5);
     }
     this.scenes.update(dt, this.env.night, p, this.vel.length(), this.camera.getWorldDirection(this.tmpDir), this.env.lightOn);
-    const sensed = this.frame % 15 === 0 ? this.scenes.senseNear(p) : null;
+    // F7 (40)：ウニ漁の間は光景の気配も出さない（掲示板のウニ漁も同じ）
+    const sensed = this.frame % 15 === 0 && this.missions.active?.kind !== 'urchin' ? this.scenes.senseNear(p) : null;
     if (sensed && (!SCENES[sensed].night || this.env.night >= 0.5)) { this.audio.chime(false); this.toast(SCENES[sensed].sense, 'warn', 4); }
     if (this.tut.step >= 0) this.updateTutorial(dt);
     // the day goes on while diving: dusk, then night
@@ -2077,6 +2148,8 @@ export class Game {
       this.questT -= dt;
       if (this.questT <= 0) { this.questT = 0.5; this.questCheck(p); }
     }
+    // F7 (36)：初めてのウニ漁では、持ち替えボタンを小型吹き出しで指す（一度きり）
+    if (this.missions.active?.kind === 'urchin' && this.frame % 6 === 0) this.itemTip('urchin');
     if (this.quick && !this.quick.started && this.diveTime > 0.6) {
       // diner urchin harvest: the urchins are right there when the diver arrives
       this.quick.started = true;
@@ -2096,11 +2169,10 @@ export class Game {
     cam.updateMatrixWorld();
     this.target = this.creatures.findTarget(cam, { clear, dark: d > 140 || this.env.night >= 0.5 || this.env.shade > 0, lightOn: this.env.lightOn, cropX, cropY, beam: this.has('light') ? 1.6 : 1, macro: this.has('macro'), wide: this.has('wide') });
     this.reload = Math.max(0, this.reload - dt);
-    // the pry bar comes out when an urchin is within reach in front of the mask
-    this.pryIdx = this.tool === 'camera' ? this.missions.pryTarget(p, this.tmpDir.set(0, 0, -1).applyQuaternion(cam.quaternion).clone()) : null;
-    this.vmBar.visible = this.pryIdx !== null;
+    // F7 (36)：ウニを取るのは銛（持ち替えボタンで銛に替えた状態）のときだけ。前方 1.8m 以内にウニがあるとき、銛のボタンが「突いてはがす」になる
+    this.pryIdx = this.tool === 'spear' ? this.missions.pryTarget(p, this.tmpDir.set(0, 0, -1).applyQuaternion(cam.quaternion).clone()) : null;
     this.barJab = Math.max(0, this.barJab - dt);
-    this.vmBar.position.z = -0.28 - Math.sin((this.barJab / 0.25) * Math.PI) * 0.18;
+    this.syncToolBtn();
     // the netted turtle: within reach the shutter button cuts; the knife then makes its strokes on its own (Phase 3)
     this.cutReady = this.tool === 'camera' && this.pryIdx === null && this.missions.cutReady(p);
     // Phase 5: treasure chests — the shutter button opens one within reach
@@ -2134,9 +2206,15 @@ export class Game {
         }
       }
     } else if (this.tool === 'spear') {
-      this.spearT = this.creatures.findSpearTarget(cam, this.spearTool.range);
+      this.spearT = this.urchinLoan ? null : this.creatures.findSpearTarget(cam, this.spearTool.range);
       this.updateSpearFx(dt);
-      if (inp.consume('shutter')) this.fireSpear();
+      // 突いてはがす（ウニの判定は魚を突く fireSpear より先。手銛の reload は使わない）
+      if (this.pryIdx !== null && this.spearAnim < 0 && this.barJab > 0 && this.vmHand.visible) this.vmHand.position.z = -0.28 - Math.sin((this.barJab / 0.25) * Math.PI) * 0.18;
+      if (inp.consume('shutter')) {
+        if (this.pryIdx !== null) this.pryUrchin();
+        else if (this.urchinLoan) this.toast('借りたヤスはウニ専用。魚は獲れない', 'warn', 1.8);
+        else this.fireSpear();
+      }
     } else if (this.cutReady && inp.consume('shutter')) {
       this.missions.startCut();
       this.audio.chime(false);
@@ -2144,13 +2222,6 @@ export class Game {
       this.openChest(this.chestReady);
     } else if (cutK !== null && inp.consume('shutter')) {
       // the strokes are already under way
-    } else if (this.pryIdx !== null && inp.consume('shutter')) {
-      // urchin harvest: the shutter button works the pry bar
-      const fw = this.tmpDir.set(0, 0, -1).applyQuaternion(cam.quaternion);
-      void fw;
-      this.missions.pry(this.pryIdx, { chime: (b) => this.audio.chime(b), toast: (t, k, d) => this.toast(t, k ?? '', d), sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); } });
-      this.barJab = 0.25;
-      this.shake = Math.max(this.shake, 0.15);
     } else if (inp.consume('shutter')) {
       this.captureReq = this.target;
       this.audio.shutter();
@@ -2161,12 +2232,44 @@ export class Game {
     }
   }
 
+  /** テスト用：画面に映っているウニの数（取っていないもの。dist m 以内。縁の光は問わない） */
+  private urchinOnScreen(dist = 1e9): number {
+    const m = this.missions as unknown as { items: THREE.Vector3[]; taken: boolean[] };
+    this.camera.updateMatrixWorld();
+    const v = new THREE.Vector3();
+    let n = 0;
+    m.items.forEach((p, i) => {
+      if (m.taken[i] || p.distanceTo(this.camera.position) > dist) return;
+      v.copy(p).project(this.camera);
+      if (v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1) n++;
+    });
+    return n;
+  }
+
+  /** F7 (36)：銛でウニを 1 回突く */
+  private pryUrchin(): void {
+    if (this.pryIdx === null) return;
+    this.audio.shutter();
+    this.missions.pry(this.pryIdx, { chime: (b) => this.audio.chime(b), toast: (t, k, d) => this.toast(t, k ?? '', d), sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); } });
+    this.barJab = 0.25;
+    this.shake = Math.max(this.shake, 0.15);
+  }
+
+  private toolBtnHidden = true;
+  /** 持ち替えボタン：手銛を持っている人は常に（川と深海を除く）、持っていない人はウニ漁の間だけ（借りた銛）。ウニ漁が終わったらカメラに戻す */
+  private syncToolBtn(): void {
+    const hidden = this.riverBan || this.ads || !(this.has('spear') || this.urchinLoan);
+    if (hidden !== this.toolBtnHidden) { this.toolBtnHidden = hidden; $('btn-tool').classList.toggle('hidden', hidden); }
+    if (this.tool === 'spear' && !this.has('spear') && !this.urchinLoan) this.setTool('camera');
+  }
+
   /** What a request or happening needs from the dive. */
   private missionCtx(): MissionCtx {
     const p = this.camera.position;
     return {
       dt: this.lastDt, time: this.time, diveTime: this.diveTime, player: p, forward: this.tmpDir.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).clone(),
       zone: zoneAt(p.x, p.z),
+      night: this.env.night >= 0.5,
       blocked: (x, z) => this.gateBlocked(x, z),
       nearbySpecies: () => this.creatures.randomNear(p, 25),
       toast: (t, k, d) => this.toast(t, k ?? '', d),
@@ -2320,7 +2423,12 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ spearfishing
+  /** F7 (36)：手銛を持っていない人は、ウニ漁の間だけ漁協から借りたウニ用の銛（ヤス）を持つ。魚は獲れない */
+  private get urchinLoan(): boolean {
+    return !this.has('spear') && this.missions.active?.kind === 'urchin';
+  }
   private get spearTool() {
+    if (this.urchinLoan) return LOAN_SPEAR;
     return this.has('powerhead') ? FISHING.tools.big : this.has('speargun') ? FISHING.tools.gun : FISHING.tools.hand;
   }
   private get bagCap(): number {
@@ -2335,7 +2443,8 @@ export class Game {
     $('hud').classList.toggle('spear', t === 'spear');
     $('tool-label').textContent = t === 'spear' ? 'カメラ' : '銛';
     $('btn-shutter').setAttribute('aria-label', t === 'spear' ? '銛を突く' : 'シャッター');
-    if (t === 'spear' && !this.diveCatch.length && !this.save.cooler?.length) this.toast(`${this.spearTool.name}に持ち替えた。魚に${this.spearTool.range}mまで近づいて突こう`, '', 3);
+    if (t === 'spear' && this.urchinLoan) this.toast('漁協のヤスに持ち替えた。ウニに近づいて3回突いてはがそう（魚は獲れない）', '', 3);
+    else if (t === 'spear' && !this.diveCatch.length && !this.save.cooler?.length) this.toast(`${this.spearTool.name}に持ち替えた。魚に${this.spearTool.range}mまで近づいて突こう`, '', 3);
     this.spearFx.visible = false;
     const gun = this.has('speargun') || this.has('powerhead');
     this.vmHand.visible = t === 'spear' && !gun;
@@ -2587,6 +2696,7 @@ export class Game {
   /** Circles for the sights of this dive: the staged one from the start, lucky ones once sensed; gone once photographed. */
   private sceneMarks(): { x: number; z: number; rare: boolean; r: number }[] {
     const out: { x: number; z: number; rare: boolean; r: number }[] = [];
+    if (this.missions.active?.kind === 'urchin') return out; // F7 (40)：ウニ漁の間は光景の円も出さない
     for (const [id, c] of this.scenes.centre) {
       if (!this.scenes.active.has(id) || this.pendingScenes.has(id)) continue;
       if (id !== this.stagedScene && !this.scenes.sensed.has(id)) continue;
@@ -2774,7 +2884,7 @@ export class Game {
     const lab = $('ret-label');
     const t = this.target;
     const cc = $('catch-chip');
-    cc.classList.toggle('hidden', this.tool !== 'spear' && !this.diveCatch.length);
+    cc.classList.toggle('hidden', this.urchinLoan ? true : this.tool !== 'spear' && !this.diveCatch.length);
     $('catch-val').textContent = `${this.bagKg.toFixed(1)}/${this.bagCap}kg`;
     cc.classList.toggle('full', this.bagKg >= this.bagCap - 0.05);
     $('btn-shutter').classList.toggle('reload', this.tool === 'spear' && this.reload > 0);
@@ -2803,7 +2913,7 @@ export class Game {
     if (this.pryIdx !== null) {
       ret.classList.add('lock');
       ret.classList.remove('far');
-      lab.innerHTML = `ウニ<small>バールではがす（あと${this.missions.pryLeft(this.pryIdx)}回押す）</small>`;
+      lab.innerHTML = `ウニ<small>銛で突いてはがす（あと${this.missions.pryLeft(this.pryIdx)}回突く）</small>`;
       $('btn-shutter').classList.add('ready');
       return this.updateToasts(dt);
     }
@@ -2822,7 +2932,7 @@ export class Game {
         const kg = weightOf(def, st.agent.s);
         const sub = rep ? (block ?? `<span class="gA">${rep.just ? 'ジャスト！ 今だ（撃退）' : '突け！（撃退）'}</span>`) : (block ?? `<span class="gA">命中 ${Math.round(this.hitChance(st) * 100)}%</span>　約${fmtKg(kg)}${st.speed > 0.6 ? '　動きが速い' : st.ang > 0.12 ? '　中心で狙う↑' : ''}`) + this.spearWarn(st);
         lab.innerHTML = `${known ? def.name : '？？？'}<small>${sub}</small>`;
-      } else lab.innerHTML = `<small>${this.spearTool.name}（射程${this.spearTool.range}m）— 魚に近づいて中央で狙う</small>`;
+      } else lab.innerHTML = this.urchinLoan ? `<small>${this.spearTool.name}（ウニ専用）— ウニに近づいて突く</small>` : `<small>${this.spearTool.name}（射程${this.spearTool.range}m）— 魚に近づいて中央で狙う</small>`;
       return this.updateToasts(dt);
     }
     ret.classList.toggle('lock', !!t && t.inRange);
@@ -2976,6 +3086,46 @@ export class Game {
       /** Phase 3: photo spots with their focus points */
       spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r }; }),
       startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag') => { this.missions.force = k; },
+      /** F7：ウニ漁の状態（群れの中心・各ウニの位置と種類・取った印・報酬・夜か・持ち替え状態） */
+      urchinInfo: () => {
+        const m = this.missions as unknown as { items: THREE.Vector3[]; taken: boolean[]; itemType: number[] };
+        const a = this.missions.active;
+        return a?.kind === 'urchin' ? {
+          clusters: this.missions.clusters, reward: a.reward, need: a.need, got: a.got, time: a.t, loan: this.urchinLoan, tool: this.tool,
+          pryIdx: this.pryIdx, btnToolHidden: this.toolBtnHidden, glow: this.missions.glowNow(), clear: this.lastClear, onScreen: this.urchinOnScreen(), onScreen15: this.urchinOnScreen(15), items: m.items.map((v, i) => ({ x: v.x, y: v.y, z: v.z, type: m.itemType[i], taken: m.taken[i] })),
+        } : null;
+      },
+      /** F7：ウニ漁の最中に、カメラの正面 d m・高さそのままの位置へ（ウニの真上ではなく手前）移動して向きをウニに向ける */
+      faceUrchin: (i: number, back = 1.2) => {
+        const m = this.missions as unknown as { items: THREE.Vector3[] };
+        const u = m.items[i];
+        this.camera.position.set(u.x, u.y + 0.45, u.z + back);
+        this.yaw = 0;
+        this.pitch = -0.3;
+        return true;
+      },
+      press: (n: string) => this.input.press(n),
+      /** F7：ボートで向かう演出の 1 コマを描いて見せる（スクリーンショット用）。e は進み具合 0〜1 */
+      travelPreview: (id: string, e: number) => {
+        const dp = DIVE_POINTS.find((d) => d.id === id) ?? DIVE_POINTS[1];
+        $('travel').classList.remove('hidden');
+        $('tv-name').textContent = dp.name;
+        $('tv-depth').textContent = `水深 ${Math.max(1, Math.round(-heightAt(dp.x, dp.z)))}m`;
+        $('tv-name').parentElement!.classList.add('show');
+        this.ensureMinimap().drawRoute($<HTMLCanvasElement>('tv-canvas'), PORT, dp, e, { dark: 0, name: dp.name, port: true });
+        return true;
+      },
+      travelPreviewOff: () => { $('travel').classList.add('hidden'); },
+      /** F7：掲示板のウニ漁を、いまの位置の 8m 前で始める（報酬は掲示板の値） */
+      beginUrchin: (reward: number) => { const at = this.camera.position.clone().addScaledVector(new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), 6); at.y = heightAt(at.x, at.z); this.missions.begin('urchin', this.missionCtx(), at, undefined, reward); return true; },
+      missionReset: () => this.missions.reset(),
+      scenesInfo: () => ({ active: this.scenes.active.size, marks: this.sceneMarks().length }),
+      me: () => ({ x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z }),
+      setToolHook: (t: 'camera' | 'spear') => this.setTool(t),
+      /** F7：ウニ漁を終えて店に戻る（ok=達成扱い） */
+      finishUrchin: (ok = true) => { if (this.quick) { this.quick.ok = ok; this.quick.done = true; this.endDive('surface'); } },
+      /** F7：演出の状態（夜明け・移動）と、ボートの位置 */
+      transit: () => ({ dawning: this.dawning, traveling: this.traveling, boatAt: this.boatAt, morningDue: this.morningDue, diveNight: this.diveNight, state: this.state }),
       currents: () => this.currents,
       /** Phase 5: treasure chests (id, position, opened) */
       /** Phase 9 S6: chart candidates of a found box, the kitchen's order pool, a board request from a seeded generator */
@@ -3021,7 +3171,7 @@ export class Game {
         if (!pl) throw new Error('unknown state ' + name);
         if (this.state !== 'diving' || (name === 'deep') !== this.ads) {
           this.state = 'title';
-          this.startDive(DIVE_POINTS.find((d) => d.id === (name === 'deep' ? 'deep' : 'reef')) ?? DIVE_POINTS[1]);
+          this.startDive(DIVE_POINTS.find((d) => d.id === (name === 'deep' ? 'deep' : 'reef')) ?? DIVE_POINTS[1], false, false, true);
           return new Promise((res) => window.setTimeout(() => res(this.applyPlace(pl, name)), 900));
         }
         return this.applyPlace(pl, name);

@@ -183,6 +183,83 @@ export class Audio {
     vib.stop(t + 3);
   }
 
+  /** F7 (17)(29)：ボートで向かう間の音（Web Audio で合成）。エンジン（低いのこぎり波＋ぽこぽこ揺れ・回転が上がる）と波のざわめき */
+  travel(sec: number): void {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const out = ctx.createGain();
+    out.gain.setValueAtTime(0, t);
+    out.gain.linearRampToValueAtTime(1, t + 0.18);
+    out.gain.setValueAtTime(1, t + Math.max(0.2, sec - 0.35));
+    out.gain.linearRampToValueAtTime(0, t + sec);
+    out.connect(this.master);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 2;
+    lp.frequency.setValueAtTime(240, t);
+    lp.frequency.linearRampToValueAtTime(520, t + sec * 0.5);
+    const eg = ctx.createGain();
+    eg.gain.value = 0.15;
+    lp.connect(eg).connect(out);
+    for (const [type, f] of [['sawtooth', 52], ['sawtooth', 52.8], ['square', 26]] as const) {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(f * 0.8, t);
+      o.frequency.linearRampToValueAtTime(f * 1.3, t + sec * 0.45);
+      o.connect(lp);
+      o.start(t);
+      o.stop(t + sec + 0.05);
+    }
+    // ぽこぽこ（エンジンの揺れ）
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 11;
+    const lg = ctx.createGain();
+    lg.gain.value = 0.06;
+    lfo.connect(lg).connect(eg.gain);
+    lfo.start(t);
+    lfo.stop(t + sec + 0.05);
+    // 波のざわめき（帯域ノイズを、ゆっくりの波で揺らす）
+    const n = ctx.createBufferSource();
+    n.buffer = this.noiseBuf;
+    n.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 800;
+    bp.Q.value = 0.6;
+    const wg = ctx.createGain();
+    wg.gain.value = 0.1;
+    const wl = ctx.createOscillator();
+    wl.frequency.value = 1.1;
+    const wlg = ctx.createGain();
+    wlg.gain.value = 0.07;
+    wl.connect(wlg).connect(wg.gain);
+    n.connect(bp).connect(wg).connect(out);
+    n.start(t);
+    n.stop(t + sec + 0.05);
+    wl.start(t);
+    wl.stop(t + sec + 0.05);
+  }
+
+  /** F7 (10)：夜明けのやわらかい音（小さな鐘と波） */
+  dawn(): void {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t = this.ctx.currentTime + 0.5;
+    [523.25, 659.25, 783.99].forEach((f, i) => {
+      const o = this.ctx!.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = f;
+      const g = this.ctx!.createGain();
+      const tt = t + i * 0.22;
+      g.gain.setValueAtTime(0, tt);
+      g.gain.linearRampToValueAtTime(0.1, tt + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, tt + 1.3);
+      o.connect(g).connect(this.master);
+      o.start(tt);
+      o.stop(tt + 1.4);
+    });
+  }
+
   /** Per-frame: breathing cycle and zone ambience. */
   update(dt: number, s: { diving: boolean; depth: number; reef: number; whale: number; deep: number; air: number }): void {
     if (!this.ctx || this.ctx.state !== 'running') return;

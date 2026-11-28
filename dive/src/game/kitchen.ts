@@ -4,6 +4,7 @@ import { WEATHER, weatherOf } from './weather';
 import { runFuguExam } from './kitchenGames';
 import { CAT_NAME, DISH, FISHING, FUGU_EXAM, PENALTY, STORY, nightOf, dishFor, edibleInfo, fits, isFugu, isGoodCatch, poisonFor, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
 import { yen } from './photoScore';
+import { MISSION } from './missions';
 
 /** 修正バッチ2 (33): the morning of this day (or later) is when the landlady introduces the notice board */
 export const BOARD_DAY = 5;
@@ -61,6 +62,12 @@ const LINES = {
   board: ['おはよう。そうそう、島の人から依頼が来ているよ。ボートの「依頼の掲示板」に貼っておいたから、見てごらん'],
 };
 
+/** F7：朝にしたときの結果 */
+export type Morning = { day: number; line: string; left: number; v: number; boardNew: boolean };
+
+/** F7 (29)：餌が買えるようになる評判レベル */
+export const BAIT_LEVEL = 2;
+
 type Host = {
   save: LandSave;
   write: () => void;
@@ -73,6 +80,8 @@ type Host = {
   grantMap: (id: string) => void;
   /** go diving straight away for the urchin harvest */
   urchinDive: () => void;
+  /** F7 (10)：朝になった（寝た）。夜明けの演出のあと、しおさい亭を閉じてボート画面へ戻る */
+  dawn: (r: Morning) => void;
   hasTorch: () => boolean;
   progress: () => Progress;
 };
@@ -207,6 +216,7 @@ export class Kitchen {
     $('kitchen').classList.toggle('inn', inn);
     // 手銛を持つ前は、泊まる・買い物だけ（注文・店の仕事のタブは出さない）
     if (inn) this.tab = 'shop';
+    else if (this.tab === 'shop' && this.level < BAIT_LEVEL) this.tab = 'orders';
     $('k-okami').innerHTML = `<b>女将のハルさん</b><span class="k-say">${this.line}</span>`;
     const wToday = WEATHER[weatherOf(s.day ?? 1)];
     $('k-status').innerHTML = inn ? `<span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>天気 ${wToday.icon} <b>${wToday.name}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` : `<span>評判 <span class="stars">${stars}</span> Lv<b>${lv}</b></span><span>${s.day}日目・<b>${timeLabel(s.clock ?? 0)}</b></span><span>天気 ${wToday.icon} <b>${wToday.name}</b></span><span>所持金 <b>${yen(s.money ?? 0)}</b></span>` +
@@ -252,7 +262,8 @@ export class Kitchen {
     const lv2 = this.level;
     const sortDone = s.uniDay === s.day;
     const work: string[] = [];
-    work.push(`<div class="k-item"><div><div class="what">今日の仕込み：ウニ漁</div><div class="who">ウニ丼用のウニを獲りに、店の前の岩場へすぐ潜る（1日1回）</div></div><div class="acts"><button type="button" class="btn ${sortDone ? 'sec' : 'pri'}" id="k-sort" ${sortDone ? 'disabled' : ''}>${sortDone ? '今日は済んだ' : '海へ'}</button></div></div>`);
+    const nightNow = nightOf(s.clock ?? 0) >= 0.5;
+    work.push(`<div class="k-item"><div><div class="what">今日の仕込み：ウニ漁${nightNow ? ` <span class="k-ok">夜は報酬 ×${MISSION.urchin.nightMult}</span>` : ''}</div><div class="who">ウニ丼用のウニを獲りに、店の前の岩場へすぐ潜る（1日1回）。銛でウニを突いてはがす${nightNow ? '。夜は報酬が増えるかわり、ウニが見つけにくい' : '。夜に行くと報酬が ×' + MISSION.urchin.nightMult}</div></div><div class="acts"><button type="button" class="btn ${sortDone ? 'sec' : 'pri'}" id="k-sort" ${sortDone ? 'disabled' : ''}>${sortDone ? '今日は済んだ' : '海へ'}</button></div></div>`);
     if (this.licensed) work.push(`<div class="k-item"><div><div class="what">ふぐ調理師免許 <span class="k-ok">取得済み</span></div><div class="who">トラフグ・ヒガンフグ・クサフグなどをさばいて出せる（ほかの毒魚はだめ）</div></div></div>`);
     else if (lv2 >= FUGU_EXAM.level) work.push(`<div class="k-item"><div><div class="what">ふぐ調理師試験</div><div class="who">学科と実技。合格するとフグ料理を出せる（受験料 ${yen(FUGU_EXAM.fee)}・1問でも間違えると不合格）</div></div><div class="acts"><button type="button" class="btn sec" id="k-exam">受験する</button></div></div>`);
 
@@ -265,8 +276,11 @@ export class Kitchen {
     $('k-sleep').classList.toggle('hidden', !night && !this.host.hasTorch());
     $('k-sleep').innerHTML = night ? `☾→☀ 朝にする<small>${inn ? '部屋で寝る' : '店を閉めて寝る'}（${(s.day ?? 1) + 1}日目の朝へ）</small>` : '☀→☾ 夜にする<small>夜の海に潜れるようにする</small>';
 
-    // Phase 4: the tackle shelf — bait for luring fish, sold in packs of BAIT.pack uses
-    $('k-bait').innerHTML = BAIT.kinds.map((k) => {
+    // 餌（F7 (29)：「釣具の棚」の見出しは外し、「買い物」タブに入れた。評判 Lv2 で解放。それまではタブごと出さない）。BAIT.pack 回分ずつ
+    const baitOpen = lv >= BAIT_LEVEL;
+    $('k-bait').classList.toggle('hidden', !baitOpen);
+    $('k-shop-empty').classList.toggle('hidden', baitOpen);
+    $('k-bait').innerHTML = !baitOpen ? '' : BAIT.kinds.map((k) => {
       const have = s.bait?.[k.id] ?? 0;
       const afford = (s.money ?? 0) >= k.price;
       return `<div class="k-item"><div><div class="what">${k.name}　<span class="who">手持ち ${have}回分</span></div><div class="who">${k.desc}（${BAIT.pack}回分）</div></div>
@@ -286,6 +300,7 @@ export class Kitchen {
     badge('kt-orders', this.tab !== 'orders' && readyN ? '作れる' : '', 'ok');
     badge('kt-work', this.tab !== 'work' && this.seenWorkDay !== day && !sortDone ? 'NEW' : '', 'new');
     badge('kt-shop', '', 'new');
+    $('k-tabs').querySelector('[data-ktab="shop"]')!.classList.toggle('hidden', !baitOpen);
     $('k-tabs').classList.toggle('hidden', inn);
     $('k-tabs').querySelectorAll<HTMLButtonElement>('[data-ktab]').forEach((b) => { const on = b.dataset.ktab === this.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
     $('kitchen').querySelectorAll<HTMLElement>('[data-kpane]').forEach((p) => p.classList.toggle('hidden', p.dataset.kpane !== this.tab));
@@ -295,6 +310,7 @@ export class Kitchen {
   buyBait(id: BaitId): void {
     const s = this.host.save;
     const k = BAIT.kinds.find((x) => x.id === id)!;
+    if (this.level < BAIT_LEVEL) return;
     if ((s.money ?? 0) < k.price) { this.host.toast(`所持金が足りない（${yen(k.price)}）`, 'warn'); return; }
     s.money = (s.money ?? 0) - k.price;
     (s.bait ??= {})[id] = (s.bait?.[id] ?? 0) + BAIT.pack;
@@ -311,7 +327,7 @@ export class Kitchen {
   private mgResult(html: string, bad = false): void {
     const box = $('mg-box');
     box.innerHTML = `<div class="mg-result ${bad ? 'bad' : ''}">${html}</div><button type="button" class="btn pri" id="mg-ok">店に戻る</button>`;
-    $('mg-ok').addEventListener('click', () => { $('mg').classList.add('hidden'); box.innerHTML = ''; this.render(); });
+    $('mg-ok').addEventListener('click', () => { $('mg').classList.add('hidden'); box.innerHTML = ''; this.render(); $('kitchen').scrollTop = 0; });
   }
 
   private playSort(): void {
@@ -324,6 +340,10 @@ export class Kitchen {
 
   /** Back from the urchin harvest. */
   harvestResult(ok: boolean, earned: number): void {
+    // F7 (37)：ウニ漁から戻ったときは、しおさい亭を一番上で開き、「店の仕事」タブの頭が見える位置にする（結果の箱 #mg は画面に固定）
+    $('kitchen').scrollTop = 0;
+    this.tab = 'work';
+    this.render();
     this.mgOpen();
     this.mgResult(ok ? `仕込み完了！<br><b>ウニ丼が出せる</b><br>売上 +${yen(earned)}　評判+1` : `時間切れ…<br><b>ウニが足りなかった</b><br>${earned ? `売上 +${yen(earned)}` : 'また明日がんばろう'}`, !ok);
     if (ok) this.host.chime(true);
@@ -428,10 +448,19 @@ export class Kitchen {
     this.render();
   }
 
-  /** End of the day: leftovers go to the market, the clock returns to morning, new guests come tomorrow. */
+  /** 寝る：朝にして、夜明けの演出へ（ボート画面に戻る） */
   sleep(): void {
+    if (nightOf(this.host.save.clock ?? 0) < 0.5) return;
+    this.host.dawn(this.nextMorning());
+  }
+
+  /**
+   * F7 (26)：朝にする共通の処理（寝たときも、夜に潜った後もこれ）。
+   * 残りの魚は市場へ・日付 +1・時計 0・注文の作り直し・女将さんの朝のひとこと。画面は変えない（演出は Game 側）。
+   */
+  nextMorning(): Morning {
     const s = this.host.save;
-    if (nightOf(s.clock ?? 0) < 0.5) return;
+    const boardNew = !s.boardOn && (s.day ?? 1) + 1 >= BOARD_DAY;
     const left = s.cooler ?? [];
     const v = left.reduce((a, c) => a + marketPrice(SPECIES_BY_ID.get(c.id)!, c.kg), 0);
     s.money = (s.money ?? 0) + v;
@@ -440,9 +469,10 @@ export class Kitchen {
     s.clock = 0;
     s.orders = makeOrders(this.level, this.pool(this.level), Math.random, this.licensed);
     this.host.write();
-    this.host.toast(`${s.day}日目の朝。${this.host.progress().spear ? '新しい注文が届いた' : 'よく眠れた'}${left.length ? `（残りの魚は市場へ +${yen(v)}）` : ''}`, '', 3.5);
     this.say('morning');
-    if (this.leaveOnTimeChange) { this.leaveOnTimeChange = false; this.close(); this.host.changed(); return; }
-    this.render();
+    this.leaveOnTimeChange = false;
+    // 掲示板の紹介の朝は、その話を台本 board（F5）が言うので、ひとことは天気だけ
+    const head = boardNew ? WEATHER[weatherOf(s.day)].morning : this.line;
+    return { day: s.day, line: head + (left.length ? `　クーラーに残っていた魚は、市場に卸しておいたよ（+${yen(v)}）。` : ''), left: left.length, v, boardNew };
   }
 }
