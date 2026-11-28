@@ -28,8 +28,11 @@ import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
 import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
+// DEBUG-PANEL:BEGIN（テスト用。完成版で削除）
+import { installDebugPanel } from './debug';
+// DEBUG-PANEL:END
 
-type Save = LandSave & {
+export type Save = LandSave & {
   /** dive points known (reached while diving, or from a chart) */
   discovered?: string[];
   /** current main-story chapter, and the last one whose briefing was read */
@@ -206,7 +209,7 @@ export class Game {
     setUwMobile(mobile);
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.setPixelRatio(this.targetDpr());
-    this.diag = new Diag($('diag'), $<HTMLButtonElement>('diag-toggle'), this.renderer);
+    this.diag = new Diag($('diag'), document.getElementById('diag-toggle') as HTMLButtonElement | null, this.renderer);
     this.photoCanvas.width = 320;
     this.photoCanvas.height = 240;
 
@@ -298,44 +301,9 @@ export class Game {
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
     $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
-    // Phase 7: two-tap confirm on the button itself — window.confirm is blocked
-    // inside the artifact iframe, which made these buttons look dead.
-    const armTap = (id: string, armedLabel: string, run: () => void) => {
-      const b = $<HTMLButtonElement>(id);
-      const label = b.textContent;
-      let armed = false;
-      let timer = 0;
-      b.addEventListener('click', () => {
-        if (!armed) {
-          armed = true;
-          b.textContent = armedLabel;
-          timer = window.setTimeout(() => { armed = false; b.textContent = label; }, 3500);
-          return;
-        }
-        window.clearTimeout(timer);
-        run();
-      });
-    };
-    armTap('reset-save', '本当にリセットする？', () => {
-      try { localStorage.removeItem(SAVE_KEY); } catch { /* storage unavailable */ }
-      window.location.reload();
-    });
-    armTap('unlock-all', '本当に全解禁する？', () => {
-      const sv = this.save;
-      sv.owned = [...new Set([...(sv.owned ?? []), ...SHOP.map((g) => g.id), 'fugulicense'])];
-      sv.discovered = DIVE_POINTS.map((d) => d.id);
-      sv.money = Math.max(sv.money ?? 0, 999999);
-      sv.rep = Math.max(sv.rep ?? 0, FISHING.repLevels[FISHING.repLevels.length - 1]);
-      sv.story = STORY.length;
-      sv.storyMain = CHAPTERS.length;
-      sv.storyRead = CHAPTERS.length;
-      sv.airLv = AIR_TANK.length - 1;
-      sv.tutorial = true;
-      sv.boardOn = true;
-      sv.dives = Math.max(sv.dives, 1);
-      this.writeSave();
-      window.location.reload();
-    });
+    // DEBUG-PANEL:BEGIN（テスト用。完成版で削除。リセット・最大・各種デバッグ操作は game/debug.ts）
+    installDebugPanel({ save: this.save, write: () => this.writeSave() });
+    // DEBUG-PANEL:END
     $('open-quests').addEventListener('click', () => { $('quests').classList.remove('hidden'); this.renderQuests(); });
     $('quests-close').addEventListener('click', () => { $('quests').classList.add('hidden'); this.renderTitle(); });
     $('open-album').addEventListener('click', () => { $('album').classList.remove('hidden'); this.renderAlbum(); });

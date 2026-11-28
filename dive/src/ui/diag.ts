@@ -20,11 +20,11 @@ export class Diag {
   private shadow: Count = { calls: 0, tris: 0 };
   private shadowFrame = false;
 
-  constructor(private el: HTMLElement, private button: HTMLButtonElement, private renderer: THREE.WebGLRenderer) {
+  constructor(private el: HTMLElement, private button: HTMLButtonElement | null, private renderer: THREE.WebGLRenderer) {
     let stored = false;
     try { stored = localStorage.getItem(KEY) === '1'; } catch { /* storage unavailable */ }
     this.set(stored || new URLSearchParams(window.location.search).has('diag'));
-    button.addEventListener('click', () => {
+    button?.addEventListener('click', () => {
       this.set(!this.on);
       try { localStorage.setItem(KEY, this.on ? '1' : '0'); } catch { /* storage unavailable */ }
     });
@@ -33,8 +33,10 @@ export class Diag {
   private set(on: boolean): void {
     this.on = on;
     this.el.classList.toggle('hidden', !on);
-    this.button.textContent = on ? '診断表示を消す' : '診断表示を出す';
-    this.button.setAttribute('aria-pressed', String(on));
+    if (this.button) {
+      this.button.textContent = on ? '診断表示を消す' : '診断表示を出す';
+      this.button.setAttribute('aria-pressed', String(on));
+    }
     // three resets its counters after the shadow pass; reset them by hand so that the pass is included
     this.renderer.info.autoReset = !on;
     this.frames = 0;

@@ -485,7 +485,18 @@ button.gear-item.locked .req { color: var(--ink-dim); }
 #album-body figcaption b { display: block; color: var(--ink); font-size: 13.5px; }
 #album-body .al-count { font-size: 14px; margin-bottom: 8px; }
 #album-body .al-count b { color: var(--warn); font-family: var(--num); font-size: 18px; }
+/* DEBUG-PANEL:BEGIN（テスト用デバッグ。完成版で削除） */
 .debug-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-dim); opacity: 0.8; }
+.dbg-panel { font-size: 12px; color: var(--ink-dim); background: var(--panel); border: 1px dashed var(--glass-brd); border-radius: 12px; padding: 8px 10px; }
+.dbg-panel summary { cursor: pointer; text-align: center; padding: 4px; }
+.dbg-state { margin: 6px 0; line-height: 1.5; font-family: var(--num); font-size: 11px; word-break: break-all; }
+.dbg-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.dbg-group > label { min-width: 5.5em; color: var(--ink); }
+.dbg-group > small { flex-basis: 100%; opacity: 0.75; }
+.dbg-group input, .dbg-group select { min-height: 36px; max-width: 9em; background: rgba(0,0,0,0.25); color: var(--ink); border: 1px solid var(--glass-brd); border-radius: 8px; padding: 0 8px; font: inherit; }
+.dbg-group select { max-width: 16em; }
+.dbg-group button { min-height: 36px; padding: 0 10px; background: rgba(255,255,255,0.08); color: var(--ink); border: 1px solid var(--glass-brd); border-radius: 8px; font: inherit; cursor: pointer; }
+/* DEBUG-PANEL:END */
 
 /* ---- しおさい亭: a warm wooden diner, unlike the blue sea screens */
 #kitchen.screen.full { background:

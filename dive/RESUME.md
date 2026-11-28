@@ -2,6 +2,20 @@
 
 最終更新: 2026-11-28（**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
 
+## テスト用デバッグ機能（`claude/debug-panel`、**完成版で削除する**。要確認事項 CU）
+- **何か**：ボート画面の「デバッグ」行（進行度0にする／全部解禁済みにする／診断表示）の下に、折りたたみパネル「テスト用デバッグ」を追加。所持金（任意額・+10,000・+100,000）、図鑑の割合（0〜100%、図鑑の並びの先頭から発見済み／減らすと末尾から取り消し）、ストーリーの章（クリア数）、しおさい亭の評判（Lv1〜6）、装備（全部持つ／全部手放す）、マップ（全発見／ラグーンだけ）、宝箱・特別な光景・写真スポットの取得状態リセット、日数、時間帯（朝・昼・夕方・夜）。すべてボタン内 2 タップ確認で、実行するとセーブを書いてページを読み直す。**セーブ形式は変えていない**（既存の項目 `money`・`found`・`storyMain`・`storyRead`・`storyClaim`・`rep`・`story`・`owned`・`airLv`・`discovered`・`visited`・`chests`・`sceneHints`・`scenes`・`spots`・`day`・`clock` への書き込みだけ）。
+- **置き場所**：コードは `src/game/debug.ts`（`installDebugPanel`）。接点は `src/game/Game.ts` の `DEBUG-PANEL:BEGIN`〜`END` の 2 か所（import と呼び出し）、`index.html` と `src/styles.css` の `DEBUG-PANEL:BEGIN`〜`END`。`Game.ts` の `Save` 型は debug.ts のために `export` した（外しても害はない）。`ui/diag.ts` はボタンがなくても動くようにした（`button` が null 可）。
+- **除去手順**（完成版の前、ユーザーの指示を受けてから）：
+  1. `src/game/debug.ts` を削除。
+  2. `src/game/Game.ts` の `DEBUG-PANEL:BEGIN`〜`DEBUG-PANEL:END`（import 1 か所・`installDebugPanel(...)` 呼び出し 1 か所）をマーカーごと削除。
+  3. `index.html` の `<!-- DEBUG-PANEL:BEGIN` 〜 `<!-- DEBUG-PANEL:END -->`（既存の「デバッグ」行を含む）を削除。
+  4. `src/styles.css` の `/* DEBUG-PANEL:BEGIN` 〜 `/* DEBUG-PANEL:END */`（`.debug-row` を含む）を削除。
+  5. （任意）`Game.ts` の `export type Save` を `type Save` に戻す。診断表示は `?diag` の URL でも出せるので、ボタンを消しても `ui/diag.ts` はそのまま動く。
+  6. `scripts/probe-debug.cjs` を削除し、`probe-phase7.cjs`・`probe-phase11-final.cjs` の「reset-save／unlock-all」を使う項目を外す。`npm run artifact`・`probe-phase9`・`probe-s8` で回帰を確認し、`play.html` を再ビルド。
+  7. 要確認事項 CU・トラッカーの「テスト用デバッグ機能」の節に「削除済み」と記す。
+- **検証**：`scripts/probe-debug.cjs`（各操作がセーブとゲームの値に効くことを確認）、地形は `terrain-dump.ts` の前後比較で z ≥ -60 の 100,003 点が差分 0。
+- **注意**：章を下げても、条件を満たしていれば次の `advanceStory`（潜水後・ボート画面）でまた進む（図鑑・写真が条件を満たしているため）。章・評判を変えて確かめるときは、図鑑の割合などの条件もあわせて下げる。時間帯を夜にしてもライト（torch）がないと潜れない。評判・食堂は手銛（spear）を持っていないと出ない。
+
 ## Phase 11 の仕上げ（`claude/phase11-final`、`main` 1f06a73 から）— Phase 11 完了
 - **チェック**：トラッカーの Phase 11 の 57 項目のうち 51 項目を確認してチェック。**未チェックの 6 項目は Phase 12 に依存**（サンゴ・ヤギの図鑑、サンゴ礁への種の偏り、照合・重複登録・幼魚成魚・生息環境）。Phase 10 (3)(4)・Phase 9 の項目は `probe-phase10` 12/12・`probe-phase9` 84/84 の再実行で回帰なし。根拠は各項目の注記（トラッカー）。
 - **新規プローブ** `scripts/probe-phase11-final.cjs`（33 項目。Phase 1〜3 に専用プローブがなかったため）：新規開始・チュートリアルのコーチ（8 ステップ × 5 画面サイズ）・チュートリアル 3・順序・女将さんの段階的な話・夜／朝／ライトのボタン・編集長の報酬とコツ・掲示板・ショップ解放（45／60／30 種）・「？？？」・点滅なし・エア表示・フロート・全部解禁・リセット・マップ端・アルバム・固有魚 10 種・撃退の対象判定。
