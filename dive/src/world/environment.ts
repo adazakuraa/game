@@ -137,12 +137,15 @@ export class Environment {
         uniform float uTime; uniform vec3 uSunDir; uniform float uBright; uniform float uK;
         varying vec3 vW;
         #include <fog_pars_fragment>
+        // (47) slope of the swell: waves travel in oblique, unrelated directions and the lookup is warped,
+        // so no row or column of bumps lines up with the x / z axes (the old axis-aligned cosines drew a grid)
         vec2 wav(vec2 p, float t){
+          p += 0.45 * vec2(sin(p.y*0.37 + t*0.31), cos(p.x*0.43 - t*0.27));
           vec2 g = vec2(0.0);
-          g += vec2(cos(p.x*0.9 + t*1.3), 0.0)*0.5;
-          g += vec2(0.0, cos(p.y*1.1 - t*1.1))*0.45;
-          g += vec2(cos((p.x+p.y)*1.7 + t*1.9))*0.25;
-          g += vec2(cos((p.x*2.9 - p.y*2.1) - t*2.3), sin(p.x*2.3 + p.y*3.1 + t*2.0))*0.15;
+          g += vec2( 0.83, 0.56) * (cos(dot(p, vec2( 0.83, 0.56))*0.95 + t*1.30) * 0.50);
+          g += vec2(-0.38, 0.92) * (cos(dot(p, vec2(-0.38, 0.92))*1.37 - t*1.10) * 0.40);
+          g += vec2( 0.97,-0.24) * (cos(dot(p, vec2( 0.97,-0.24))*2.11 + t*1.90) * 0.25);
+          g += vec2(-0.69,-0.72) * (cos(dot(p, vec2(-0.69,-0.72))*3.07 - t*2.30) * 0.15);
           return g;
         }
         void main(){

@@ -768,12 +768,16 @@ export class Game {
     $('dex-chip').addEventListener('click', () => this.openDex());
     $('open-dex').addEventListener('click', () => this.openDex());
     $('dex-close').addEventListener('click', () => this.closeDex());
-    $('discover').addEventListener('click', () => {
+    // (45) the card itself lets touches through (the stick works under it); only its buttons take taps
+    const openFromCard = () => {
       const id = $('discover').dataset.dex;
       if (!id) return;
       $('discover').classList.add('hidden');
       this.openDex(id);
-    });
+    };
+    $('discover').addEventListener('click', openFromCard);
+    $('disc-dex').addEventListener('click', (e) => { e.stopPropagation(); openFromCard(); });
+    $('disc-x').addEventListener('click', (e) => { e.stopPropagation(); $('discover').classList.add('hidden'); this.discoverTimer = 0; });
     // (12) opened straight from a photo → closing the page goes back to the dive / result; opened from the list → back to the list
     $('dd-close').addEventListener('click', () => {
       $('dex-detail').classList.add('hidden');
