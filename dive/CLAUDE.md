@@ -26,5 +26,6 @@
 | `src/world/environment.ts` | 水中の霧・深度による光・水面・光芒・マリンスノー |
 | `src/render/underwater.ts` / `textures.ts` / `baked.ts` | 水中シェーダの共通部分、手続きテクスチャ、焼いたテクスチャと PBR |
 | `src/ui/minimap.ts` | ミニマップと海図 |
+| `src/ui/transit.ts` | 夜明けの演出 `Dawn`・ボートで向かう演出 `BoatTravel`（海図の上を走る 2D。描画は `Minimap.drawRoute`）。数値は `DAWN`・`TRAVEL`・`PORT` |
 | `src/core/input.ts` / `audio.ts` | 入力、水中の音 |
 | `scripts/` | テクスチャや魚写真の前処理（Python）、`make-artifact.mjs` |

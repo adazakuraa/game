@@ -275,8 +275,8 @@
               <div id="k-buff" class="k-buff"></div>
             </div>
             <div class="k-pane" data-kpane="shop">
-              <h3 class="k-h">釣具の棚：餌</h3>
               <div id="k-bait" class="k-list k-board"></div>
+              <div id="k-shop-empty" class="k-empty hidden">餌は、しおさい亭の評判が上がると買えるようになる。</div>
             </div>
           </div>
         </div>
@@ -307,6 +307,10 @@
       </section>
 
       <div id="toast"></div>
+      <!-- F7 (10)：夜明けの演出（暗転 → 「◯日目の朝」と天気） -->
+      <div id="dawn" class="hidden" role="status" aria-live="polite"><div class="dw-card"><div id="dw-day" class="dw-day"></div><div id="dw-weather" class="dw-weather"></div></div></div>
+      <!-- F7 (17)(29)：ボートで向かう演出（海図の上をボートが走る） -->
+      <div id="travel" class="hidden" role="status" aria-live="polite"><canvas id="tv-canvas" aria-hidden="true"></canvas><div class="tv-dest"><div id="tv-name" class="tv-name"></div><div id="tv-depth" class="tv-depth"></div></div><div class="tv-skip">タップで飛ばす</div></div>
       <div id="map-found" class="hidden" role="status" aria-live="polite"><div class="mf-kick">新しいマップを発見！</div><div class="mf-name" id="mf-name"></div><div class="mf-sub" id="mf-sub"></div></div>
       <div id="loading" class="screen"><div class="spinner"></div><p>海を生成しています…</p></div>
     </main>

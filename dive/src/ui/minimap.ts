@@ -438,4 +438,84 @@ export class Minimap {
     g.fillText('▲ 沖', cw / 2, Math.max(12, oy + m0 * sc + 12));
     g.fillText('岸 ▼', cw / 2, Math.min(ch - 12, oy + (m0 + WH) * sc - 12));
   }
+
+  /**
+   * F7 (17)(29)：ボートで向かう演出。大きい地図（drawBig と同じ海図・ラベル）の上を、from から to へ航跡を引いてボートが走る。
+   * e は進み具合 0〜1（イーズ済み）。dark は 0〜1 の暗幕（出だしと終わりの暗転）。
+   */
+  drawRoute(c: HTMLCanvasElement, from: { x: number; z: number }, to: { x: number; z: number }, e: number, o: { dark: number; name: string; port: boolean }): void {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const cw = c.clientWidth, ch = c.clientHeight;
+    if (c.width !== Math.round(cw * dpr) || c.height !== Math.round(ch * dpr)) { c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr); }
+    const g = c.getContext('2d')!;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const WW = (WORLD.maxX - WORLD.minX) / RES, WH = (WORLD.maxZ - WORLD.minZ) / RES;
+    const a = this.px(from.x, from.z), b = this.px(to.x, to.z);
+    const PAD = 170 / RES;
+    const bw = Math.abs(a[0] - b[0]) + 2 * PAD, bh = Math.abs(a[1] - b[1]) + 2 * PAD;
+    // 上は行き先の札、下は「タップで飛ばす」の分をあけて、航路が札に隠れないように収める
+    const top = 80, uh = Math.max(60, ch - top - 26);
+    const sc = Math.min(1.6, Math.max(Math.min(cw / WW, uh / WH), Math.min(cw / bw, uh / bh)));
+    const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2;
+    const ox = cw / 2 - cx * sc, oy = top + uh / 2 - cy * sc;
+    const grad = g.createLinearGradient(0, 0, 0, ch);
+    grad.addColorStop(0, '#082c6a'); grad.addColorStop(0.85, '#0a3f86'); grad.addColorStop(1, '#5f8a4a');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, cw, ch);
+    const P = (wx: number, wz: number): [number, number] => { const [mx, my] = this.px(wx, wz); return [ox + mx * sc, oy + my * sc]; };
+    g.imageSmoothingEnabled = true;
+    g.drawImage(this.view, ox, oy, this.W * sc, this.H * sc);
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = `700 ${Math.max(11, Math.min(15, sc * 6))}px "Zen Kaku Gothic New", sans-serif`;
+    for (const l of ZONE_LABELS) {
+      if (!this.known.has(l.id)) continue;
+      const [sx, sy] = P(l.x, l.z);
+      g.fillStyle = 'rgba(0,0,0,0.45)'; g.fillText(l.label, sx + 1, sy + 1);
+      g.fillStyle = 'rgba(235,250,255,0.85)'; g.fillText(l.label, sx, sy);
+    }
+    const [fx, fy] = P(from.x, from.z), [tx, ty] = P(to.x, to.z);
+    // 予定の航路（点線）
+    g.setLineDash([6, 7]);
+    g.strokeStyle = 'rgba(255,255,255,0.35)';
+    g.lineWidth = 2;
+    g.beginPath(); g.moveTo(fx, fy); g.lineTo(tx, ty); g.stroke();
+    g.setLineDash([]);
+    // 行き先の印（脈打つ輪）
+    const pulse = (performance.now() / 700) % 1;
+    g.strokeStyle = `rgba(255,154,60,${0.9 - pulse * 0.7})`;
+    g.lineWidth = 2.5;
+    g.beginPath(); g.arc(tx, ty, 8 + pulse * 18, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = '#ff9a3c'; g.strokeStyle = '#fff'; g.lineWidth = 2;
+    g.beginPath(); g.arc(tx, ty, 6, 0, Math.PI * 2); g.fill(); g.stroke();
+    // 出発点（港は小さな桟橋の印）
+    g.fillStyle = 'rgba(255,255,255,0.9)';
+    g.beginPath(); g.arc(fx, fy, 4, 0, Math.PI * 2); g.fill();
+    if (o.port) { g.font = '700 12px "Zen Kaku Gothic New", sans-serif'; g.fillStyle = 'rgba(0,0,0,0.5)'; g.fillText('港', fx + 1, fy + 15); g.fillStyle = '#fff'; g.fillText('港', fx, fy + 14); }
+    // 航跡（ボートの後ろに白く伸びて細くなる）
+    const bx = fx + (tx - fx) * e, by = fy + (ty - fy) * e;
+    const ang = Math.atan2(ty - fy, tx - fx);
+    const wake = 18;
+    for (let i = 0; i < wake; i++) {
+      const u = Math.max(0, e - (i / wake) * Math.min(e, 0.5));
+      const px = fx + (tx - fx) * u, py = fy + (ty - fy) * u;
+      const al = (1 - i / wake) * 0.75;
+      const sp = 2 + i * 0.45;
+      g.fillStyle = `rgba(235,250,255,${al})`;
+      g.beginPath(); g.arc(px + Math.cos(i * 2.1 + e * 9) * sp * 0.5, py + Math.sin(i * 1.7 + e * 9) * sp * 0.5, 3.6 - i * 0.14, 0, Math.PI * 2); g.fill();
+    }
+    g.strokeStyle = 'rgba(255,255,255,0.9)';
+    g.lineWidth = 3;
+    g.beginPath(); g.moveTo(fx, fy); g.lineTo(bx, by); g.stroke();
+    // ボート（進む向きの小さな船）
+    g.save();
+    g.translate(bx, by);
+    g.rotate(ang);
+    g.fillStyle = '#fff'; g.strokeStyle = '#0a3f86'; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(13, 0); g.lineTo(-3, 7); g.lineTo(-9, 5); g.lineTo(-9, -5); g.lineTo(-3, -7); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#ff9a3c';
+    g.fillRect(-6, -3, 6, 6);
+    g.restore();
+    if (o.dark > 0) { g.fillStyle = `rgba(1,10,18,${o.dark})`; g.fillRect(0, 0, cw, ch); }
+  }
 }

@@ -22,7 +22,16 @@ export const MISSION = {
   checkEvery: 10,
   chance: 0.3,
   /** 【ウニ漁】points needed (ムラサキウニ 1, アカウニ 2), bonus yen per high-grade アカウニ */
-  urchin: { need: 8, time: 150, reward: 1500, coldReward: 2200, akaBonus: 400 },
+  urchin: {
+    need: 8, time: 150, reward: 1500, coldReward: 2200, akaBonus: 400,
+    /** 【夜の報酬】F7 (29)：夜に潜るウニ漁の報酬の倍率（昼 ¥1,500 → 夜 ¥2,250、冷たい海 ¥3,300）。掲示板のウニ漁も潜水中の達成時に同じ倍率 */
+    nightMult: 1.5,
+    /** 【群れ】F7 (35)：岩の割れ目に 3〜6 個ずつ。中心は依頼の場所（潜る位置の 6m 前）から radius m 以内、群れの広がり spread m（個体は潜る位置から 20m 以内に収まる）。
+        45 個を 1 群れ 6 個までで置くと 8 か所になる（7 か所では最大 42）。群れの中のガンガゼ・ラッパウニは maxSpiny 個まで */
+    cluster: { count: 8, min: 3, max: 6, radius: 10.5, spread: 1.5, gap: 5.5, maxSpiny: 2 },
+    /** 【見つけやすさ】近づいたウニの縁の光（昼 glow m・夜 glowNight m、最大の強さ glowMax）と、群れの周りの白い食み跡（半径 scarR m） */
+    glow: 6, glowNight: 4, glowMax: 0.55, scarR: 2.6,
+  },
   trash: { spawn: 8, need: 6, time: 80, reward: 1200 },
   photo: { time: 90, rewardMult: 4, minGrade: ['S', 'A', 'B'] },
   lost: { time: 100, reward: 2500, radius: 22 },
@@ -35,7 +44,7 @@ export const MISSION = {
   tag: { time: 100, dist: 4, hold: 2, reward: 3000, minSize: 0.8 },
   /** 【依頼の返事を待つ時間】s: ignoring an offer simply lets it lapse */
   offerTime: 15,
-  /** 【バールではがす】presses needed, reach (m) */
+  /** 【銛ではがす】F7 (36)：銛（持ち替えボタン）で突く回数と届く距離 (m) */
   pry: { hits: 3, reach: 1.8 },
   /** 【拾える距離】m */
   pickR: 1.15,
@@ -48,10 +57,10 @@ export const MISSION = {
  * prized grade and only a little shorter-spined and warmer in colour); two must not be touched.
  */
 export const URCHINS = [
-  { id: 'murasaki', name: 'ムラサキウニ', edible: true, pts: 1, n: 12, geo: { spine: 0.62, n: 90, thin: 0.03 }, color: 0x2a1832, emissive: 0x12061a, scale: 0.16, sting: 0, text: '' },
-  { id: 'aka', name: 'アカウニ', edible: true, pts: 2, n: 6, geo: { spine: 0.46, n: 110, thin: 0.03 }, color: 0x4e2422, emissive: 0x1a0806, scale: 0.17, sting: 0, text: '' },
-  { id: 'gangaze', name: 'ガンガゼ', edible: false, pts: 0, n: 5, geo: { spine: 1.7, n: 70, thin: 0.016 }, color: 0x141018, emissive: 0x06040a, scale: 0.15, sting: 10, text: 'ガンガゼの長いトゲが刺さった！ 痛い…（エア -10）' },
-  { id: 'rappa', name: 'ラッパウニ', edible: false, pts: 0, n: 4, geo: { spine: 0.2, n: 170, thin: 0.045 }, color: 0xc8a0ac, emissive: 0x2a1418, scale: 0.17, sting: 14, text: 'ラッパウニの毒でしびれる！（エア -14）' },
+  { id: 'murasaki', name: 'ムラサキウニ', edible: true, pts: 1, n: 24, geo: { spine: 0.62, n: 90, thin: 0.03 }, color: 0x2a1832, emissive: 0x12061a, scale: 0.16, sting: 0, text: '' },
+  { id: 'aka', name: 'アカウニ', edible: true, pts: 2, n: 10, geo: { spine: 0.46, n: 110, thin: 0.03 }, color: 0x4e2422, emissive: 0x1a0806, scale: 0.17, sting: 0, text: '' },
+  { id: 'gangaze', name: 'ガンガゼ', edible: false, pts: 0, n: 6, geo: { spine: 1.7, n: 70, thin: 0.016 }, color: 0x141018, emissive: 0x06040a, scale: 0.15, sting: 10, text: 'ガンガゼの長いトゲが刺さった！ 痛い…（エア -10）' },
+  { id: 'rappa', name: 'ラッパウニ', edible: false, pts: 0, n: 5, geo: { spine: 0.2, n: 170, thin: 0.045 }, color: 0xc8a0ac, emissive: 0x2a1418, scale: 0.17, sting: 14, text: 'ラッパウニの毒でしびれる！（エア -14）' },
 ] as const;
 
 export type Kind = 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag';
@@ -63,6 +72,8 @@ export type MissionCtx = {
   player: THREE.Vector3;
   forward: THREE.Vector3;
   zone: ZoneId;
+  /** F7 (29)：夜の海か（ウニ漁の報酬と見つけやすさが変わる） */
+  night?: boolean;
   /** F6：海図のないゲートの内側（依頼の置き場所にしてはいけない所） */
   blocked?: (x: number, z: number) => boolean;
   /** a species with an individual within ~25 m, for photo requests */
@@ -101,7 +112,7 @@ export class Missions {
     this.start(c, kind, sp, true);
     this.startAt = null;
     const act = this.active as Active | null;
-    if (act && reward) { act.reward = reward; this.renderHud(); }
+    if (act && reward) { act.reward = kind === 'urchin' && c.night ? Math.round(reward * MISSION.urchin.nightMult) : reward; this.renderHud(); }
   }
 
   /** called when a staged animal must be let go (mission ended) */
@@ -122,6 +133,14 @@ export class Missions {
   private items: THREE.Vector3[] = [];
   private taken: boolean[] = [];
   private urchinMeshes: THREE.InstancedMesh[] = [];
+  /** F7 (35)：近づいたウニの縁の光（裏面の少し大きい殻を加算合成。個体ごとの instanceColor が強さ）、群れの周りの白い食み跡、群れの中心 */
+  private rimMeshes: THREE.InstancedMesh[] = [];
+  private scarMesh: THREE.Mesh | null = null;
+  private scarTex: THREE.CanvasTexture | null = null;
+  private glowR: number = MISSION.urchin.glow;
+  private glowT = 0;
+  /** 群れの中心（テストと食み跡用） */
+  clusters: { x: number; z: number; n: number }[] = [];
   /** per collected item: urchin type, instance slot, sting cooldown */
   private itemType: number[] = [];
   private itemSlot: number[] = [];
@@ -135,6 +154,7 @@ export class Missions {
   private ropes = new THREE.Group();
   private ropeData: { a: THREE.Vector3; b: THREE.Vector3; m: THREE.Vector3; snapT: number; up: number; ra: THREE.Mesh; rb: THREE.Mesh }[] = [];
   private _m = new THREE.Matrix4();
+  private _col = new THREE.Color();
   private _q = new THREE.Quaternion();
   private el = {
     root: document.getElementById('mission')!,
@@ -153,6 +173,11 @@ export class Missions {
       ug.scale(u.scale, u.scale, u.scale);
       const m = new THREE.InstancedMesh(ug, new THREE.MeshStandardMaterial({ color: u.color, roughness: u.id === 'rappa' ? 0.8 : 0.5, emissive: u.emissive }), u.n);
       this.urchinMeshes.push(m);
+      const hg = buildUrchin({ ...u.geo });
+      hg.scale(u.scale * 1.28, u.scale * 1.28, u.scale * 1.28);
+      const rm = new THREE.InstancedMesh(hg, new THREE.MeshBasicMaterial({ color: 0x9fe8ff, side: THREE.BackSide, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), u.n);
+      for (let i = 0; i < u.n; i++) rm.setColorAt(i, new THREE.Color(0, 0, 0));
+      this.rimMeshes.push(rm);
     }
     // litter: a crumpled plastic bottle shape
     const tg = new THREE.CylinderGeometry(0.07, 0.08, 0.36, 8, 3);
@@ -177,7 +202,7 @@ export class Missions {
     const ng = new THREE.BufferGeometry();
     ng.setAttribute('position', new THREE.Float32BufferAttribute(np, 3));
     this.netMesh = new THREE.LineSegments(ng, new THREE.LineBasicMaterial({ color: 0x5a8a6a, transparent: true }));
-    for (const m of [this.netMesh, ...this.urchinMeshes, this.trashMesh, this.camMesh, this.chestMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
+    for (const m of [this.netMesh, ...this.urchinMeshes, ...this.rimMeshes, this.trashMesh, this.camMesh, this.chestMesh]) { m.visible = false; m.frustumCulled = false; this.group.add(m); }
     // ropes: thin tan cylinders (unit length along Y), two halves per strand so the cut can open the middle
     const rg = new THREE.CylinderGeometry(0.026, 0.026, 1, 6, 1, true);
     for (let i = 0; i < MISSION.rescue.strokes; i++) {
@@ -327,6 +352,7 @@ export class Missions {
       return;
     }
     const a = this.active;
+    if (a.kind === 'urchin') this.updateGlow(c);
     // Phase 3: the clock runs (and shows) only inside the circle; outside it the diver is just on the way
     a.inside = !a.area || Math.hypot(c.player.x - a.area.x, c.player.z - a.area.z) <= a.area.r;
     if (a.inside && a.cut === undefined) a.t -= c.dt;
@@ -339,7 +365,7 @@ export class Missions {
         if (a.kind === 'urchin') {
           this.stingT[i] = Math.max(0, (this.stingT[i] ?? 0) - c.dt);
           const u = URCHINS[this.itemType[i]];
-          // swimming into a spiny one hurts; edible ones are taken with the bar (see pry)
+          // swimming into a spiny one hurts; edible ones are taken with the spear (see pry)
           if (!u.edible && p.distanceTo(c.player) < 0.7 + u.geo.spine * u.scale && this.stingT[i] <= 0) { this.stingT[i] = 3; c.sting(u.sting, u.text); }
           continue;
         }
@@ -416,7 +442,7 @@ export class Missions {
     }
   }
 
-  /** The urchin in front of the diver within reach of the bar, if any. */
+  /** The urchin in front of the diver within reach of the spear, if any. */
   pryTarget(player: THREE.Vector3, fwd: THREE.Vector3): number | null {
     const a = this.active;
     if (a?.kind !== 'urchin') return null;
@@ -437,12 +463,12 @@ export class Missions {
     return MISSION.pry.hits - (this.pried[i] ?? 0);
   }
 
-  /** One push of the bar. Edible urchins come off after a few; the spiny ones fight back. */
+  /** One thrust of the spear. Edible urchins come off after a few; the spiny ones fight back. */
   pry(i: number, c: Pick<MissionCtx, 'chime' | 'toast' | 'sting'>): void {
     const a = this.active;
     if (a?.kind !== 'urchin' || this.taken[i]) return;
     const u = URCHINS[this.itemType[i]];
-    if (!u.edible) { c.sting(u.sting, `${u.name}はバールではがしても食べられない… ${u.text}`); return; }
+    if (!u.edible) { c.sting(u.sting, `${u.name}は銛ではがしても食べられない… ${u.text}`); return; }
     this.pried[i] = (this.pried[i] ?? 0) + 1;
     if (this.pried[i] < MISSION.pry.hits) { c.chime(false); return; }
     this.taken[i] = true;
@@ -451,6 +477,9 @@ export class Missions {
     const mesh = this.urchinMeshes[this.itemType[i]];
     mesh.setMatrixAt(this.itemSlot[i], this._m.makeScale(0, 0, 0));
     mesh.instanceMatrix.needsUpdate = true;
+    const rim = this.rimMeshes[this.itemType[i]];
+    rim.setMatrixAt(this.itemSlot[i], this._m.makeScale(0, 0, 0));
+    rim.instanceMatrix.needsUpdate = true;
     c.chime(u.id === 'aka');
     c.toast(u.id === 'aka' ? '高級なアカウニがとれた！（2点）' : 'ムラサキウニがとれた！（1点）', '', 1.4);
   }
@@ -527,36 +556,13 @@ export class Missions {
       c.toast(`【依頼】海洋雑誌から「${sp.name}の写真がほしい！」 ${MISSION.photo.time}秒以内にB評価以上で撮ろう`, 'warn', 4.5);
     } else if (kind === 'urchin') {
       const U = MISSION.urchin;
-      this.itemType = [];
-      this.itemSlot = [];
-      this.stingT = [];
-      this.pried = [];
-      URCHINS.forEach((u, ti) => {
-        for (let k = 0; k < u.n; k++) {
-          // scattered over the rocks, a few metres apart
-          let x = ahead.x, z = ahead.z, a = 0;
-          for (let tr = 0; tr < 40; tr++) {
-            a = Math.random() * Math.PI * 2;
-            const d = 3 + Math.sqrt(Math.random()) * 32;
-            x = ahead.x + Math.cos(a) * d; z = ahead.z + Math.sin(a) * d;
-            if (this.items.every((q) => Math.hypot(q.x - x, q.z - z) > 3.2) && !c.blocked?.(x, z)) break;
-          }
-          if (c.blocked?.(x, z)) { x = near.x; z = near.z; }
-          const pos = new THREE.Vector3(x, surfaceFootAt(x, z) + 0.05, z);
-          this.pried.push(0);
-          this.items.push(pos);
-          this.taken.push(false);
-          this.itemType.push(ti);
-          this.itemSlot.push(k);
-          this.stingT.push(0);
-          this.urchinMeshes[ti].setMatrixAt(k, this._m.compose(pos, this._q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a), new THREE.Vector3(1, 1, 1)));
-        }
-        this.urchinMeshes[ti].instanceMatrix.needsUpdate = true;
-        this.urchinMeshes[ti].visible = true;
-      });
-      const reward = c.zone === 'cold' ? U.coldReward : U.reward;
+      this.layUrchins(c, ahead, near);
+      const night = !!c.night;
+      this.glowR = night ? U.glowNight : U.glow;
+      const base = c.zone === 'cold' ? U.coldReward : U.reward;
+      const reward = Math.round(base * (night ? U.nightMult : 1));
       this.active = { kind, t: U.time, time: U.time, need: U.need, got: 0, reward, aka: 0, title: 'ウニ漁（磯焼け対策）', area: this.areaOver(this.items) };
-      c.toast(`ウニ漁の場所に着いた。ウニに近づいてバールで3回突いてはがそう。ムラサキウニ（黒紫・トゲ長め）は1点、アカウニ（赤茶色・トゲ少し短め・高級）は2点。トゲがとても長いガンガゼと、花のような桃色のラッパウニは触ると痛い！ ${U.time}秒で${U.need}点`, 'warn', 8);
+      c.toast(`ウニ漁の場所に着いた。持ち替えボタンで銛に替えて、ウニに近づいて${MISSION.pry.hits}回突いてはがそう。白い岩の上に群れがいる。ムラサキウニ（黒紫）1点・アカウニ（赤茶）2点。トゲの長いガンガゼと桃色のラッパウニは触ると痛い！ ${U.time}秒で${U.need}点${night ? '（夜は報酬×' + U.nightMult + '）' : ''}`, 'warn', 8);
     } else if (kind === 'trash') {
       const T = MISSION.trash;
       for (let i = 0; i < T.spawn; i++) {
@@ -636,6 +642,164 @@ export class Missions {
     this.renderHud();
   }
 
+  /** F7 (35)：ウニを群れで置く。開始地点から radius m 以内の 8 か所に 3〜6 個ずつ（合計は URCHINS の数どおり）、群れの中のとげ付きは maxSpiny 個まで */
+  private layUrchins(c: MissionCtx, ahead: THREE.Vector3, near: THREE.Vector3): void {
+    const K = MISSION.urchin.cluster;
+    this.itemType = []; this.itemSlot = []; this.stingT = []; this.pried = [];
+    const centres: THREE.Vector3[] = [];
+    for (let tr = 0; tr < 600 && centres.length < K.count; tr++) {
+      const a = Math.random() * Math.PI * 2, d = 3 + Math.sqrt(Math.random()) * (K.radius - 3);
+      const x = ahead.x + Math.cos(a) * d, z = ahead.z + Math.sin(a) * d;
+      if (this.gateNear(c, x, z, K.spread + 0.3)) continue;
+      const gy = surfaceFootAt(x, z);
+      if (gy > -1.5 && tr < 400) continue;
+      const gap = tr < 300 ? K.gap : K.gap * 0.6;
+      if (centres.some((q) => Math.hypot(q.x - x, q.z - z) < gap)) continue;
+      centres.push(new THREE.Vector3(x, gy, z));
+    }
+    // 置き場所が足りないとき（海図のないゲートの縁など）は、依頼を受けた場所の近くに詰める
+    for (let k = 0; centres.length < K.count; k++) {
+      const a = k * 2.4, d = k < 20 ? 1 + k * 0.7 : 0;
+      const x = near.x + Math.cos(a) * d, z = near.z + Math.sin(a) * d;
+      const ok = d === 0 || !this.gateNear(c, x, z, K.spread + 0.3);
+      centres.push(new THREE.Vector3(ok ? x : near.x, surfaceFootAt(ok ? x : near.x, ok ? z : near.z), ok ? z : near.z));
+    }
+    // sizes: max each, shaved down (min 3) until the total is the number of urchins
+    const total = URCHINS.reduce((s, u) => s + u.n, 0);
+    const size = centres.map(() => K.max);
+    let extra = size.reduce((s, v) => s + v, 0) - total;
+    for (let guard = 0; extra > 0 && guard < 500; guard++) { const i = Math.floor(Math.random() * size.length); if (size[i] > K.min) { size[i]--; extra--; } }
+    // which urchin goes in which slot: the spiny ones first, at most maxSpiny to a cluster
+    const slots: number[][] = centres.map(() => []);
+    const spiny: number[] = [], edible: number[] = [];
+    URCHINS.forEach((u, ti) => { for (let k = 0; k < u.n; k++) (u.edible ? edible : spiny).push(ti); });
+    const shuffle = (arr: number[]) => { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; };
+    const spinyIn = (i: number) => slots[i].filter((t) => !URCHINS[t].edible).length;
+    for (const ti of shuffle(spiny)) {
+      let open = slots.map((_, i) => i).filter((i) => slots[i].length < size[i] && spinyIn(i) < K.maxSpiny);
+      if (!open.length) open = slots.map((_, i) => i).filter((i) => slots[i].length < size[i]);
+      slots[open[Math.floor(Math.random() * open.length)]].push(ti);
+    }
+    shuffle(edible);
+    slots.forEach((sl, i) => { while (sl.length < size[i] && edible.length) sl.push(edible.pop()!); });
+    const slotOf: number[] = URCHINS.map(() => 0);
+    this.clusters = centres.map((q, i) => ({ x: q.x, z: q.z, n: slots[i].length }));
+    centres.forEach((q, ci) => {
+      const here: THREE.Vector3[] = [];
+      for (const ti of slots[ci]) {
+        let x = q.x, z = q.z, a = 0;
+        for (let tr = 0; tr < 30; tr++) {
+          a = Math.random() * Math.PI * 2;
+          const d = Math.sqrt(Math.random()) * K.spread;
+          x = q.x + Math.cos(a) * d; z = q.z + Math.sin(a) * d;
+          if (here.every((h) => Math.hypot(h.x - x, h.z - z) > 0.5) && !c.blocked?.(x, z)) break;
+          if (tr === 29) { x = q.x; z = q.z; }
+        }
+        const pos = new THREE.Vector3(x, surfaceFootAt(x, z) + 0.05, z);
+        here.push(pos);
+        const k = slotOf[ti]++;
+        this.pried.push(0); this.items.push(pos); this.taken.push(false); this.itemType.push(ti); this.itemSlot.push(k); this.stingT.push(0);
+        const m = this._m.compose(pos, this._q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a), new THREE.Vector3(1, 1, 1));
+        this.urchinMeshes[ti].setMatrixAt(k, m);
+        this.rimMeshes[ti].setMatrixAt(k, m);
+      }
+    });
+    for (let ti = 0; ti < URCHINS.length; ti++) {
+      this.urchinMeshes[ti].instanceMatrix.needsUpdate = true;
+      this.urchinMeshes[ti].visible = true;
+      this.rimMeshes[ti].instanceMatrix.needsUpdate = true;
+      this.rimMeshes[ti].visible = true;
+    }
+    this.layScars(centres);
+  }
+
+  /** (x, z) とそのまわり（半径 r m の 8 点）に、海図のないゲートの内側が含まれるか（群れを縁にまたがせない） */
+  private gateNear(c: MissionCtx, x: number, z: number, r: number): boolean {
+    if (!c.blocked) return false;
+    if (c.blocked(x, z)) return true;
+    for (let i = 0; i < 8; i++) if (c.blocked(x + Math.cos(i * 0.785) * r, z + Math.sin(i * 0.785) * r)) return true;
+    return false;
+  }
+
+  /** F7 (35)：群れの周りの岩の白い食み跡（磯焼けの白い岩肌）。地面の高さに沿わせた薄い斑 */
+  private layScars(centres: THREE.Vector3[]): void {
+    this.clearScars();
+    if (!this.scarTex) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 128;
+      const g = cv.getContext('2d')!;
+      let seed = 7;
+      const r = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+      for (let i = 0; i < 26; i++) {
+        const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 42;
+        const x = 64 + Math.cos(a) * d, y = 64 + Math.sin(a) * d, rad = 7 + r() * 17 * (1 - d / 70);
+        const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+        gr.addColorStop(0, 'rgba(238,234,222,0.92)');
+        gr.addColorStop(0.7, 'rgba(226,222,208,0.6)');
+        gr.addColorStop(1, 'rgba(220,216,200,0)');
+        g.fillStyle = gr;
+        g.beginPath(); g.arc(x, y, rad, 0, Math.PI * 2); g.fill();
+      }
+      this.scarTex = new THREE.CanvasTexture(cv);
+    }
+    const R = MISSION.urchin.scarR, N = 9;
+    const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+    centres.forEach((q, ci) => {
+      const rot = (ci * 1.7) % (Math.PI * 2), cs = Math.cos(rot), sn = Math.sin(rot);
+      const base = pos.length / 3;
+      for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
+        const u = (i / N) * 2 - 1, v = (j / N) * 2 - 1;
+        const x = q.x + u * R, z = q.z + v * R;
+        pos.push(x, surfaceFootAt(x, z) + 0.04, z);
+        uv.push(0.5 + (u * cs - v * sn) * 0.5, 0.5 + (u * sn + v * cs) * 0.5);
+      }
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+        const a = base + j * (N + 1) + i, b = a + 1, c2 = a + N + 1, d = c2 + 1;
+        idx.push(a, c2, b, b, c2, d);
+      }
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    this.scarMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: this.scarTex, color: 0xf2eee0, roughness: 1, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    this.scarMesh.frustumCulled = false;
+    this.scarMesh.renderOrder = 1;
+    this.group.add(this.scarMesh);
+  }
+
+  private clearScars(): void {
+    if (!this.scarMesh) return;
+    this.group.remove(this.scarMesh);
+    this.scarMesh.geometry.dispose();
+    (this.scarMesh.material as THREE.Material).dispose();
+    this.scarMesh = null;
+  }
+
+  /** テスト用：縁の光の今の最大の強さ（0〜glowMax） */
+  glowNow(): number {
+    let mx = 0;
+    for (const m of this.rimMeshes) if (m.instanceColor) for (let i = 0; i < m.count; i++) mx = Math.max(mx, m.instanceColor.getX(i));
+    return mx;
+  }
+
+  /** F7 (35)：glowR m 以内に近づいたウニ（取れるものもとげのあるものも）に薄い縁の光。遠いほど弱く、夜は縮む */
+  private updateGlow(c: MissionCtx): void {
+    this.glowT -= c.dt;
+    if (this.glowT > 0) return;
+    this.glowT = 0.08;
+    const R = this.glowR, mx = MISSION.urchin.glowMax;
+    for (let i = 0; i < this.items.length; i++) {
+      const rim = this.rimMeshes[this.itemType[i]];
+      const d = this.taken[i] ? 1e9 : this.items[i].distanceTo(c.player);
+      const k = d < R ? mx * Math.min(1, (1 - d / R) * 1.6 + 0.12) : 0;
+      this._col.setRGB(k, k, k);
+      rim.setColorAt(this.itemSlot[i], this._col);
+      if (rim.instanceColor) rim.instanceColor.needsUpdate = true;
+    }
+  }
+
   private writeTrash(time: number): void {
     for (let i = 0; i < this.items.length; i++) {
       if (this.taken[i]) continue;
@@ -667,7 +831,9 @@ export class Missions {
     this.active = null;
     this.items = [];
     this.taken = [];
-    for (const m of this.urchinMeshes) m.visible = false;
+    for (const m of [...this.urchinMeshes, ...this.rimMeshes]) m.visible = false;
+    this.clearScars();
+    this.clusters = [];
     if (this.netMesh.visible) { this.netMesh.visible = false; this.ropes.visible = false; this.onRelease?.(); }
     this.trashMesh.visible = false;
     this.camMesh.visible = false;
