@@ -4,7 +4,7 @@ import { PROP_VIEW } from './render';
 import { buildUrchin } from '../life/models';
 import type { SpeciesDef } from '../life/species';
 import type { ZoneId } from '../world/layout';
-import { surfaceAt } from '../world/surface';
+import { surfaceAt, surfaceFootAt } from '../world/surface';
 
 /**
  * Occasional in-dive requests (mini-games). At most a couple per dive, never a penalty for ignoring or
@@ -539,7 +539,7 @@ export class Missions {
             x = ahead.x + Math.cos(a) * d; z = ahead.z + Math.sin(a) * d;
             if (this.items.every((q) => Math.hypot(q.x - x, q.z - z) > 3.2)) break;
           }
-          const pos = new THREE.Vector3(x, surfaceAt(x, z) + 0.05, z);
+          const pos = new THREE.Vector3(x, surfaceFootAt(x, z) + 0.05, z);
           this.pried.push(0);
           this.items.push(pos);
           this.taken.push(false);

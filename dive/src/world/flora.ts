@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { BoatAnchor } from './anchor';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ARCH, bommieAt, BLUEHOLE, KELP, kelpWeight, CAVE_PATH, caveDist, caveRoofAt, caveTopAt, CENOTE, heightAt, reefEdgeZ, rockyWeight, RUINS, VENT, WRECK, WRECKS_WEST, zoneAt, DIVE_POINTS } from './layout';
 import { ScatterSet, type ScatterItem } from './scatter';
@@ -27,15 +28,29 @@ const _n = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const _p = new THREE.Vector3();
 
-function placeMatrix(x: number, z: number, scale: number | THREE.Vector3, r: Rng, alignToNormal = 0, sink = 0): THREE.Matrix4 {
-  const fr = (typeof scale === 'number' ? scale : Math.max(scale.x, scale.z)) * 0.45;
+/** 修正バッチ2 F2 (11): 置き物を地面に着ける調整値（足元は置き物の半径 ≒ scale × 0.75 とみなす） */
+export const PLACE = {
+  /** 足元の 4 隅（中心と合わせて 5 点）の、中心からの片側の距離 = scale × この値 */
+  corner: 0.6,
+  /** 斜面で足元の高い側が浮かないよう、傾き（勾配）× 半径 × この値だけ埋める */
+  tilt: 1.0,
+  /** 追加で埋める量 = scale × この値 */
+  sink: 0.04,
+};
+
+/** 足元の 5 点（中心＋四隅、中心から ±c）の heightAt の最小値 */
+function footMin(x: number, z: number, c: number): number {
   let y = heightAt(x, z);
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2;
-    y = Math.min(y, heightAt(x + Math.cos(a) * fr, z + Math.sin(a) * fr));
-  }
-  y -= sink + fr * 0.08;
-  normalAt(x, z, _n);
+  for (const [dx, dz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) y = Math.min(y, heightAt(x + dx * c, z + dz * c));
+  return y;
+}
+
+function placeMatrix(x: number, z: number, scale: number | THREE.Vector3, r: Rng, alignToNormal = 0, sink = 0): THREE.Matrix4 {
+  const sc = typeof scale === 'number' ? scale : Math.max(scale.x, scale.z);
+  let y = footMin(x, z, sc * PLACE.corner);
+  const nrm = normalAt(x, z, _n);
+  const grade = Math.hypot(nrm.x, nrm.z) / Math.max(0.2, nrm.y);
+  y -= sink + sc * PLACE.sink + grade * sc * 0.75 * PLACE.tilt * (1 - alignToNormal * 0.5);
   _q.setFromUnitVectors(_up, _n.lerp(_up, 1 - alignToNormal).normalize());
   _q2.setFromAxisAngle(_up, r() * Math.PI * 2);
   _q.multiply(_q2);
@@ -560,6 +575,8 @@ export class Flora {
   ledges: { x: number; z: number; bottom: number }[] = [];
   readonly homes: Homes = { anemones: [], crevices: [], creviceR: [], reefSpots: [], rockSpots: [], coralTops: [], coralAll: [], underTables: [], wallSpots: [], sandSpots: [], grassSpots: [], bommieSpots: [], coldSpots: [], caveSpots: [], caveTopSpots: [], kelpSpots: [], estChannel: [], estFlat: [], mangrove: [], reed: [], riverLow: [], riverRiffle: [], riverPool: [], riverUp: [], riverStones: [], riverSand: [] };
   boat: THREE.Group;
+  /** 修正バッチ2 F2 (14): ボートの錨と錨綱 */
+  anchor = new BoatAnchor();
   /** Phase 9 S3: where the estuary / river scenery stands (for tests) */
   south!: ReturnType<typeof planSouth>;
   carpetCount = 0;
@@ -988,7 +1005,7 @@ export class Flora {
       const giantMat = plantMat('giantkelp', makeBlade('#4a4214', '#b09a36'), 0.9);
       const giant: ScatterItem[] = [];
       for (const [x, z] of sample(2600, [232, 425, 45, 395], (x, z) => kelpWeight(x, z) > 0.6 && fbm2(x * 0.03 + 9, z * 0.03, 2) > -0.35, 3)) {
-        const g = heightAt(x, z);
+        const g = footMin(x, z, 0.7); // 修正バッチ2 F2 (11): 根元は足元の最小値に（冠は水面のまま）
         const H = -g - 0.25;
         giant.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, g - 0.1, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * 6.28), new THREE.Vector3(1 + r() * 0.4, H, 1 + r() * 0.4)), c: color(0.11 + r() * 0.03, 0.55, 0.42 + r() * 0.12) });
         if (r() < 0.18) this.homes.kelpSpots.push(new THREE.Vector3(x + 0.08, g + H * (0.25 + r() * 0.5), z));
@@ -1353,7 +1370,8 @@ export class Flora {
     }
 
     this.boat = boatGroup();
-    this.group.add(this.boat);
+    this.boat.rotation.order = 'YXZ'; // 揺れ（x・z）は船の向き（y）の後ろに掛ける
+    this.group.add(this.boat, this.anchor.group);
     const lineMat = new THREE.MeshStandardMaterial({ color: 0xd8cfa8, roughness: 0.9 });
     const buoyMat = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.5 });
     for (const dp of DIVE_POINTS) {
@@ -1393,9 +1411,18 @@ export class Flora {
     this.boat.position.set(x, 0, z);
     this.boat.rotation.y = yaw;
     this.boat.updateMatrixWorld(true);
+    this.anchor.place(this.boat);
   }
 
   update(cam: THREE.Vector3, time: number): void {
+    if (this.boat.visible) {
+      // 穏やかなボートの揺れ。錨綱の上端だけがこれに合わせて動く（錨は海底に動かない）
+      this.boat.position.y = Math.sin(time * 0.9) * 0.05;
+      this.boat.rotation.x = Math.sin(time * 0.7) * 0.012;
+      this.boat.rotation.z = Math.sin(time * 0.55 + 1) * 0.016;
+      this.boat.updateMatrixWorld(true);
+    }
+    this.anchor.follow(this.boat);
     for (const s of this.sets) s.update(cam.x, cam.y, cam.z);
     for (const l of this.landmarks) l.visible = l.position.distanceTo(cam) < 110;
     const nearVent = Math.hypot(cam.x - VENT.x, cam.z - VENT.z) < 120;

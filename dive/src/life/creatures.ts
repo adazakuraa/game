@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SPECIES, type SpeciesDef } from './species';
 import { loadPhotoTex, photoFor } from './photoFish';
-import { surfaceAt } from '../world/surface';
+import { surfaceAt, surfaceFootAt } from '../world/surface';
 import { buildCrustacean, buildFish, buildPhotoFish, buildJelly, buildNudibranch, buildOctopus, buildRay, buildSquid, buildTurtle, setAttr, type FishLayout } from './models';
 import { Paint } from './paint';
 import { underwaterMaterial } from '../render/underwater';
@@ -785,7 +785,8 @@ export class Creatures {
 
   /** Height at which a benthic animal rests on the real surface (terrain or rock / coral top). */
   private restY(def: SpeciesDef, x: number, z: number, s: number): number {
-    const base = def.region === 'caveTopSpots' ? (caveTopAt(x, z) ?? surfaceAt(x, z)) : surfaceAt(x, z);
+    // 修正バッチ2 F2 (11): ウニなどの無脊椎は足元の 5 点の最小値の側へ（斜面・岩の縁で片側が浮かない）
+    const base = def.region === 'caveTopSpots' ? (caveTopAt(x, z) ?? surfaceAt(x, z)) : def.kind === 'inv' ? surfaceFootAt(x, z, Math.min(0.4, s * 0.5)) : surfaceAt(x, z);
     return base + (def.kind === 'fish' ? s * 0.1 : def.kind === 'octopus' ? s * 0.08 : 0.005);
   }
 

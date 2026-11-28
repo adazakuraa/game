@@ -47,3 +47,9 @@ export function surfaceAt(x: number, z: number): number {
   }
   return y;
 }
+
+/** 修正バッチ2 F2 (11): 小さな底生生物（ウニなど）の足元。中心と四隅（半径 r の 0.7 倍）の surfaceAt の最小値 */
+export function surfaceFootAt(x: number, z: number, r = 0.25): number {
+  const d = r * 0.7;
+  return Math.min(surfaceAt(x, z), surfaceAt(x + d, z + d), surfaceAt(x - d, z + d), surfaceAt(x + d, z - d), surfaceAt(x - d, z - d));
+}
