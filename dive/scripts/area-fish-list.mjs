@@ -89,6 +89,14 @@ try {
       out.push(`| ${s.name} | ${pct(expDay(s), td)} | ${pct(expNight(s), tn)} | ${timeOf(s)} | ${RARITY[s.rarity]} | ${s.count} | ${s.groups} | ${s.depth[0]}〜${s.depth[1]} | \`${regionOf(s)}\` |`);
     out.push('');
   }
+  // 修正バッチ2 F11 (32)：天気限定の種（魚以外も含む。上の出現率の表は天気を考えていない）
+  const WN = { sunny: '晴れ', cloudy: '曇り', rain: '雨', storm: '荒天' };
+  const wo = SPECIES.filter((s) => s.weather);
+  out.push(`## 天気限定の種（${wo.length} 種）`, '');
+  out.push('`SpeciesDef.weather` を持つ種は、その天気の日だけ現れる（ほかの天気では出現 0）。★2 以下だけで、章・撮影依頼・標識の依頼・食堂の注文の対象にならない。雨と荒天は `weatherOf` が 7 日以内に必ず 1 回来るようにしてある（曇りは約 30% で、まず途切れない）。上の各エリアの表の出現率は天気を考えていない（その天気の日の出現率として読む）。', '');
+  out.push('| 魚・生き物 | 天気 | エリア | レア度 | 個体数 | 群れ数 | 深度(m) |', '| --- | --- | --- | --- | ---: | ---: | --- |');
+  for (const s of wo) out.push(`| ${s.name} | ${s.weather.map((w) => WN[w]).join('・')} | ${ZONE_NAMES[s.zone]} | ${RARITY[s.rarity]} | ${s.count} | ${s.groups} | ${s.depth[0]}〜${s.depth[1]} |`);
+  out.push('');
   out.push('## 対象外にした種（魚類以外で kind が fish / ray の種定義）', '');
   out.push(excluded.map((s) => `${s.name}（${NOT_FISH_GENERA[s.sci.split(' ')[0]]}）`).join('、'), '');
   await writeFile(join(root, 'docs/AREA-FISH-LIST.md'), out.join('\n'));
