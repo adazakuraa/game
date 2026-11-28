@@ -2093,26 +2093,41 @@ export class Game {
    * Phase 11: a thrust at a charging aggro animal. Returns true when the thrust was resolved here (repelled,
    * or a miss with a hint); the animal is never taken. Window and tiers: FISHING.repel / repelTier.
    */
+  /** The repel window for a charging aggro animal: tier, whether it is inside the window, already reached, or in the "just" band. */
+  private repelInfo(t: NonNullable<Game['spearT']>): { tierOk: boolean; reached: boolean; inReach: boolean; just: boolean } {
+    const T = this.spearTool;
+    const R = FISHING.repel;
+    const def = t.rt.def;
+    const hitD = def.size * 0.45 + R.hitBase;
+    const d = t.agent.p.distanceTo(this.camera.position);
+    const band = Math.min(R.justBand, (def.aggro?.speed ?? 3) * R.justSec);
+    return { tierOk: T.tier >= repelTier(def), reached: d < hitD, inReach: d - def.size * 0.45 <= T.repelReach, just: d <= hitD + band };
+  }
+
+  /** Can this target be repelled right now? (a territory animal still posturing, modeT > 0, is not charging yet) */
+  private repelling(t: NonNullable<Game['spearT']>): boolean {
+    const ag = t.rt.def.aggro;
+    return !!ag && !!t.agent.aggro && t.agent.mode === 2 && !(ag.kind === 'territory' && (t.agent.modeT ?? 0) > 0);
+  }
+
   private tryRepel(t: NonNullable<Game['spearT']>): boolean {
     const T = this.spearTool;
     const R = FISHING.repel;
     const def = t.rt.def;
     const a = t.agent;
-    const hitD = def.size * 0.45 + R.hitBase;
-    const d = a.p.distanceTo(this.camera.position);
-    const surf = d - def.size * 0.45;
-    if (T.tier < repelTier(def)) {
+    const w = this.repelInfo(t);
+    if (!w.tierOk) {
       this.spearTo.copy(a.p);
       this.toast(T.tier === 0 ? `${T.name}ではサメに効かない！` : `${T.name}では${def.name}を退けられない！ 大物用水中銃が要る`, 'warn', 2.2);
       return true;
     }
-    if (d < hitD || surf > T.range) {
+    if (w.reached || !w.inReach) {
       // out of the window (too far / already reached): an ordinary miss, the reload stays spent
       this.spearTo.copy(a.p);
-      this.toast(d < hitD ? '間に合わなかった…' : '突きが届かない… もっと引きつけてから突こう', 'warn', 1.8);
+      this.toast(w.reached ? '間に合わなかった…' : '突きが届かない… もっと引きつけてから突こう', 'warn', 1.8);
       return true;
     }
-    const just = d <= hitD + R.justBand;
+    const just = w.just;
     this.spearTo.copy(a.p);
     this.creatures.repel(a, just ? R.justCooldown : R.cooldown);
     this.toast(just ? `ジャスト！ 突きが届いた！ ${def.name}が退いた` : `突きが届いた！ ${def.name}が退いた`, '', 2.4);
@@ -2134,7 +2149,7 @@ export class Game {
     this.reload = T.reload;
     this.audio.shutter();
     if (!t) return;
-    if (t.agent.aggro && t.agent.mode === 2 && t.rt.def.aggro && this.tryRepel(t)) return;
+    if (this.repelling(t) && this.tryRepel(t)) return;
     const block = this.spearBlock(t);
     if (block) { this.toast(block, 'warn'); this.reload = 0.4; this.spearAnim = -1; return; }
     this.spearTo.copy(t.agent.p);
@@ -2491,7 +2506,9 @@ export class Game {
     }
     if (this.tool === 'spear') {
       const st = this.spearT;
-      const block = st ? this.spearBlock(st) : null;
+      // Phase 11: a charging aggro animal is judged by the repel window, not by the catch rules
+      const rep = st && this.repelling(st) ? this.repelInfo(st) : null;
+      const block = rep ? (!rep.tierOk ? `${this.spearTool.name}では退けられない` : rep.reached ? '間に合わない…' : !rep.inReach ? '引きつけてから突く（撃退）' : null) : st ? this.spearBlock(st) : null;
       ret.classList.toggle('lock', !!st && !block);
       ret.classList.toggle('far', !!st && !!block);
       $('btn-shutter').classList.toggle('ready', !!st && !block && this.reload <= 0);
@@ -2499,7 +2516,7 @@ export class Game {
         const def = st.rt.def;
         const known = this.save.found[def.id] || this.pending.has(def.id);
         const kg = weightOf(def, st.agent.s);
-        const sub = (block ?? `<span class="gA">命中 ${Math.round(this.hitChance(st) * 100)}%</span>　約${fmtKg(kg)}${st.speed > 0.6 ? '　動きが速い' : st.ang > 0.12 ? '　中心で狙う↑' : ''}`) + this.spearWarn(st);
+        const sub = rep ? (block ?? `<span class="gA">${rep.just ? 'ジャスト！ 今だ（撃退）' : '突け！（撃退）'}</span>`) : (block ?? `<span class="gA">命中 ${Math.round(this.hitChance(st) * 100)}%</span>　約${fmtKg(kg)}${st.speed > 0.6 ? '　動きが速い' : st.ang > 0.12 ? '　中心で狙う↑' : ''}`) + this.spearWarn(st);
         lab.innerHTML = `${known ? def.name : '？？？'}<small>${sub}</small>`;
       } else lab.innerHTML = `<small>${this.spearTool.name}（射程${this.spearTool.range}m）— 魚に近づいて中央で狙う</small>`;
       return this.updateToasts(dt);

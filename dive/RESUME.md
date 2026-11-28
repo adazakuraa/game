@@ -1,6 +1,17 @@
 # RESUME — dive（BLUE DEPTHS）引き継ぎメモ
 
-最終更新: 2026-11-27（Phase 11 の攻撃・撃退を実装＝`claude/phase11-attack`。Phase 10 完了＝(3)(4) を `claude/phase10-34` で実装。Phase 9 完了。S0〜S7 は PR #34〜#41、S8（仕上げ）は `claude/phase9-s8` で PR・マージ。次は Phase 10 の残り・Phase 11・Phase 12）
+最終更新: 2026-11-28（**Phase 11 完了**＝仕上げを `claude/phase11-final` で実施。攻撃・撃退は `claude/phase11-attack`（PR #44）、Phase 10・Phase 9 も完了。次は Phase 12（既存生物との照合・生物追加）。Phase 12 の手前で止めてユーザーの確認を待つ）
+
+## Phase 11 の仕上げ（`claude/phase11-final`、`main` 1f06a73 から）— Phase 11 完了
+- **チェック**：トラッカーの Phase 11 の 57 項目のうち 51 項目を確認してチェック。**未チェックの 6 項目は Phase 12 に依存**（サンゴ・ヤギの図鑑、サンゴ礁への種の偏り、照合・重複登録・幼魚成魚・生息環境）。Phase 10 (3)(4)・Phase 9 の項目は `probe-phase10` 12/12・`probe-phase9` 84/84 の再実行で回帰なし。根拠は各項目の注記（トラッカー）。
+- **新規プローブ** `scripts/probe-phase11-final.cjs`（33 項目。Phase 1〜3 に専用プローブがなかったため）：新規開始・チュートリアルのコーチ（8 ステップ × 5 画面サイズ）・チュートリアル 3・順序・女将さんの段階的な話・夜／朝／ライトのボタン・編集長の報酬とコツ・掲示板・ショップ解放（45／60／30 種）・「？？？」・点滅なし・エア表示・フロート・全部解禁・リセット・マップ端・アルバム・固有魚 10 種・撃退の対象判定。
+- **既存プローブの結果**（この環境で実行、`PROBE_CHROME=/opt/pw-browsers/chromium-1243/chrome-linux64/chrome NODE_PATH=/opt/node-tools/node_modules`）：phase9 84/84、phase11 44/44、phase10 12/12、phase6 16/16、phase7 11/11、fixes 20/20、phase5d・5e 全 PASS、phase4-dark 全 PASS、s8 エラー 0（呼び出し 103／三角形 309k、テクスチャ 37.6／18.5 MB）。**変更前から落ちるもの（プローブ側の古さ）**：phase4 の暗所 2 件（専用の phase4-dark が通る）、phase5 の「マップ端のトースト」（テレポート直後にコールドトーストが上書き。実際の壁は新プローブで確認）・「アルバムの行数」（別のマップを先に訪れて増える）・「金のフィンの速さ」、phase5b／5c のトースト競合と浜（z=-58 は Phase 9 で浜の手前）。いずれもゲーム側の不具合ではない。
+- **レビュー（reviewer＝Opus、読み取り専用）の判断**（詳細は要確認事項 CP〜CT）：bite・lethal は据え置き。撃退の窓に欠陥（水中銃×サメ・大物用×ダンクルオステウスは突進の開始時にもう窓の内側＝早押しでも成功）→ `FISHING.tools.*.repelReach`（手銛 2.2／水中銃 3／大物用 4m）に分離、ジャストを速さ×0.3 秒（上限 1.2m）に。威嚇中の撃退を禁止、HUD を撃退用の表示に、オキザヨリのライト消灯の同フレーム突進（`else` 抜け）を修正。シャークシールドはジャスト帯を全部含むのでジャストが取れない（CS、現行のまま）。残した点（CT）：タコ拘束中の lethal、撃退対象の優先、オキザヨリの窓。
+- **コード変更**：`game/fishing.ts`（`repelReach`・`justSec`）、`game/Game.ts`（`repelInfo`・`repelling`・`tryRepel`・HUD）、`life/creatures.ts`（`else if` 1 か所）。`probe-phase11.cjs` の窓の距離を新しい値に合わせた。
+- **地形は不変**：`scripts/terrain-dump.ts` の変更前後を `cmp` で比べ、z ≥ -60 の 100,003 点で `heightAt`・`surfaceTopAt`・`chartHeightAt` の差分 0（一致）。
+- **play.html**：`npm run artifact` → `node scripts/make-artifact.mjs dist dist/play.html --page`（`--page` 必須）で再ビルドして置き換え。GitHub Pages の反映は md5 で確認（PR 本文に記載）。
+- **未確認**：実機の手触り（撃退の窓・ジャスト・メガロドンの一撃・綱切りモーション・イルカの追従）はユーザ確認リストの Phase 11 の節。
+- 次の一手：Phase 12。Phase 12 の手前で止めてユーザーの確認を待つ。
 
 ## Phase 11 の「攻撃・撃退」（`claude/phase11-attack`、`main` 0059fa8 から）
 - **bite の差別化・lethal・エアの床**：モンガラ 6／ゴマモンガラ 10／オキザヨリ 8／ツマジロ 25／ヨゴレ 35／オオメジロ 40／ダンクルオステウス 80（chance・range・speed は不変）。`SpeciesDef.aggro.lethal` をメガロドンに付け、ヒットで `air = 0` → 既存の `endDive('blackout')`（専用文案なし）。`Game.ts` の `handleEncounters` の aggro ヒットだけ床を 1 → 0 に。タコの grab・銛の haul の床 1 は維持。

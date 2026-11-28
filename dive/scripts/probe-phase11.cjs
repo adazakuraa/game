@@ -132,22 +132,22 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
   const hint2 = await thrust({ owned: GEAR.gun, id: 'megalodon', surfAbs: 1.9 });
   check('水中銃でメガロドン：ヒント（大物用水中銃が要る）', hint2.toast.includes('大物用水中銃'), hint2.toast);
 
-  // window (gun vs silvertip, range 6)
-  const inside = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 5.9 });
-  const outside = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 6.4 });
+  // window (gun vs silvertip, repelReach 3 — the catch range stays 6)
+  const inside = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 2.9 });
+  const outside = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 3.4 });
   const reached = await thrust({ owned: GEAR.gun, id: 'silvertip', beyond: -0.1 });
   check('窓の内（射程の内側）：撃退成功', inside.mode === 3 && inside.repelT === 30, JSON.stringify(inside));
-  check('窓の外（射程より遠い）：空振り・リロード消費・状態は変わらない', outside.mode === 2 && outside.repelT === 0 && outside.reload > 0 && !outside.taken && outside.caught === 0, JSON.stringify(outside));
+  check('窓の外（撃退の届く距離 3m より遠い）：空振り・リロード消費・状態は変わらない', outside.mode === 2 && outside.repelT === 0 && outside.reload > 0 && !outside.taken && outside.caught === 0, JSON.stringify(outside));
   check('ヒット判定距離に到達済みの入力は撃退にならない', reached.mode === 2 && reached.repelT === 0 && !reached.taken, JSON.stringify(reached));
   // the hand spear window is its own range
   const handIn = await thrust({ owned: GEAR.hand, id: 'monngara', surfAbs: 2.1 });
   const handOut = await thrust({ owned: GEAR.hand, id: 'monngara', surfAbs: 2.4 });
   check('手銛の窓は 2.2m（2.1m 成功／2.4m 失敗）', handIn.mode === 3 && handOut.mode === 2, `in=${handIn.mode} out=${handOut.mode}`);
-  // just band: hitD + 1.2 (surf = 0.55 + 1.2 = 1.75)
-  const jIn = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 0.55 + 1.15 });
-  const jOut = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 0.55 + 1.3 });
+  // just band: min(1.2, speed × 0.3) = 1.02 m for the silvertip (speed 3.4)
+  const jIn = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 0.55 + 0.95 });
+  const jOut = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 0.55 + 1.15 });
   const jEdge = await thrust({ owned: GEAR.gun, id: 'silvertip', surfAbs: 0.6 });
-  check('ジャスト（ヒット判定距離＋1.2m 以内）：クールダウン 90 秒', jIn.repelT === 90 && jEdge.repelT === 90, `${jIn.repelT}/${jEdge.repelT}`);
+  check('ジャスト（ヒット判定距離＋min(1.2m, 速さ×0.3s) 以内）：クールダウン 90 秒', jIn.repelT === 90 && jEdge.repelT === 90, `${jIn.repelT}/${jEdge.repelT}`);
   check('ジャスト帯の外：クールダウン 30 秒', jOut.repelT === 30, String(jOut.repelT));
   check('撃退のトースト（通常／ジャスト）', /突きが届いた！ ツマジロが退いた/.test(jOut.toast) && /ジャスト/.test(jIn.toast), `${jOut.toast} | ${jIn.toast}`);
   check('撃退は非殺傷（獲物にならない・エア消費なし）', jIn.caught === 0 && !jIn.taken && jIn.airDelta === 0, `caught=${jIn.caught} airΔ=${jIn.airDelta}`);
@@ -234,7 +234,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     return { shieldWorked, evs, windowOuter: spearRange, shieldDist: rt.def.size * 0.45 + 1.8 };
   });
   check('シャークシールド併用：作動距離（体表 1.8m 未満）は撃退窓（手銛 2.2m）の内側、従来どおり作動', S.shieldWorked, JSON.stringify(S.evs));
-  check('シールドの作動距離は手銛の窓の内側（体表 1.8m < 2.2m）', 1.8 < 2.2, '');
+  check('シールドの作動距離は手銛の窓の内側（体表 1.8m < 2.2m）', 1.8 < 2.2 && 1.8 < 3, '');
 
   // (last: it ends the dive)
   // lethal hit -> endDive('blackout') through the normal loop
