@@ -1,5 +1,5 @@
 import { buildCrustacean, buildCucumber, buildFeather, buildStar } from './models';
-import type { Paint } from './paint';
+import { MAM_LOOK, paintMammal, type Paint } from './paint';
 import type { SpeciesDef } from './species';
 
 /** Second batch of animals other than fish that divers see all the time. */
@@ -170,7 +170,7 @@ export const INVERTS_2: SpeciesDef[] = [
     count: 2, groups: 2, behavior: 'solo', region: [-170, 170, 140, 335], speed: 0.4, flee: 2, curious: true, flap: [0.6, 0.22, 0.5], photoRange: 14 },
   { id: 'jugon', name: 'ジュゴン', sci: 'Dugong dugon', zone: 'lagoon', depth: [1, 15], size: 2.8, rarity: 3, habLabel: '海草藻場で海草を食べ、ときどき息継ぎに浮上する',
     desc: '海草だけを食べるおとなしい海の哺乳類。人魚伝説のモデルともいわれる。日本では極めて希少。', hint: '浅瀬の海草藻場。めったに出会えない。',
-    kind: 'fish', fish: { H: 0.22, W: 0.26, peak: 0.55, nose: 0.95, ped: 0.1, belly: 0.1, tail: 'flukes', tailL: 0.16, tailH: 0.34, pect: { t: 0.74, len: 0.12, wid: 0.06, down: 0.6, out: 0.6 }, eyes: 0.03, eyeT: 0.9, bendY: true },
-    paint: (p) => { p.fill('#8a8478'); p.shade('#7a7468', '#948e82', '#b0aaa0'); p.noise(0.12); p.eye(0.03, '#222'); },
+    kind: 'fish', fish: { H: 0.23, W: 0.2, peak: 0.55, nose: 0.95, ped: 0.1, tail: 'flukes', eyes: 0.03, eyeT: 0.9, bendY: true, cet: { kind: 'dugong' } },
+    paint: (p) => paintMammal(p, MAM_LOOK.dugong),
     count: 1, groups: 1, behavior: 'solo', region: 'grassSpots', speed: 0.4, flee: 0, curious: false, swim: [0.4, 0.05, 1.6], photoRange: 22 },
 ];

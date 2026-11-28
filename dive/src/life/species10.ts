@@ -1,6 +1,6 @@
 import { buildCrustacean, buildStar, buildUrchin } from './models';
 import type { Paint } from './paint';
-import { paintLook } from './paint';
+import { MAM_LOOK, paintLook, paintMammal } from './paint';
 import type { Region, SpeciesDef } from './species';
 import { F, sh } from './species2';
 
@@ -41,8 +41,8 @@ export const KELP_SPECIES: SpeciesDef[] = [
   {
     id: 'calsealion', name: 'カリフォルニアアシカ', sci: 'Zalophus californianus', zone: 'kelp', depth: [0, 25], size: 2.0, rarity: 2,
     desc: '遊び好きで人なつこいアシカ。ケルプの森の中を宙返りしながら追いかけっこをする。', hint: '海藻の森。向こうから遊びに来る。', habLabel: 'ケルプの間を宙返りしながら泳ぐ',
-    kind: 'fish', fish: { H: 0.22, W: 0.24, peak: 0.5, nose: 0.5, ped: 0.08, tail: 'flukes', tailL: 0.1, tailH: 0.22, pect: { t: 0.68, len: 0.2, wid: 0.08, down: 0.5, out: 0.7 }, eyes: 0.1, eyeT: 0.9, bendY: true },
-    paint: (p) => paintLook(p, { c: ['#4a3624', '#5a4430', '#7a6448'], fin: '#3a2a1c', iris: '#111' }), tex: [512, 256],
+    kind: 'fish', fish: { H: 0.2, W: 0.19, peak: 0.5, nose: 0.5, ped: 0.08, tail: 'flukes', eyes: 0.1, eyeT: 0.9, bendY: true, pin: { kind: 'sealion' } },
+    paint: (p) => paintMammal(p, MAM_LOOK.sealion), tex: [512, 256],
     count: 3, groups: 1, behavior: 'solo', region: KF, speed: 2.2, flee: 0, curious: true, swim: [1.6, 0.06, 2], photoRange: 22,
   },
   // ------------------------------------------------------------ invertebrates

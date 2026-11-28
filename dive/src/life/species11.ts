@@ -1,6 +1,7 @@
 import { buildClam, buildCrustacean, buildCucumber, buildSpindle, buildStar, buildTreeWorm, buildUrchin, type FishShape } from './models';
 import type { Paint } from './paint';
-import { paintLook, type Look } from './paint';
+import { MAM_LOOK, paintLook, paintMammal, type Look } from './paint';
+import type { CetSpec } from './mammals';
 import type { Habitat, Region, SpeciesDef } from './species';
 import { F, sh, type FishSpec } from './species2';
 import { BLUEHOLE, type ZoneId } from '../world/layout';
@@ -81,9 +82,10 @@ export function nf(tag: string, id: string, name: string, sci: string, zone: Zon
     case 'turtle': return def({ kind: 'turtle', tex: [256, 256], behavior: 'solo', region: ZR[zone], speed: 0.4, flee: 2, flap: [0.6, 0.22, 0.5] });
     case 'ray': return def({ kind: 'ray', ray: prm as SpeciesDef['ray'], tex: [256, 256], behavior: 'bottom', region: ZR[zone], speed: 0.6, flee: 4, flap: [0.9, 0.06, 4], swim: [0.8, 0.12, 2] });
     case 'cet': {
-      const o = prm as { nose?: number; H?: number };
-      return def({ kind: 'fish', fish: { H: o.H ?? 0.2, W: 0.21, peak: 0.55, nose: o.nose ?? 0.3, ped: 0.06, tail: 'flukes', tailL: 0.14, tailH: 0.3, dorsal: [{ a: 0.42, b: 0.52, h: 0.08, sweep: 0.6 }], pect: { t: 0.72, len: 0.13, wid: 0.06, down: 0.6, out: 0.6 }, eyes: 0.05, eyeT: 0.86, bendY: true },
-        paint: (p: Paint) => paintLook(p, { c: [pt[0], pt[1] ?? pt[0], pt[3] ?? pt[0]], fin: pt[0] }), tex: [512, 256], behavior: 'solo', region: ZR[zone], speed: 1.6, curious: true, swim: [Math.max(0.4, 2 - size * 0.06), 0.05, 2], photoRange: Math.min(40, size * 3 + 6) });
+      const o = prm as { cet: CetSpec; H?: number };
+      const kind = o.cet.kind;
+      return def({ kind: 'fish', fish: { H: o.H ?? 0.2, W: 0.18, peak: 0.55, nose: 0.3, ped: 0.06, tail: 'flukes', eyes: 0.05, eyeT: 0.86, bendY: true, cet: o.cet },
+        paint: (p: Paint) => paintMammal(p, { ...MAM_LOOK[kind], back: pt[0], flank: pt[1] ?? pt[0], belly: pt[3] ?? pt[0], limb: pt[0], fluke: pt[0], ...(kind === 'dolphin' ? { cape: pt[0], scars: o.cet.beak === 0 ? [90, 'rgba(240,240,240,0.55)'] as [number, string] : undefined, stripe: o.cet.beak === 0 ? undefined : MAM_LOOK.dolphin.stripe } : {}) }), tex: [512, 256], behavior: 'solo', region: ZR[zone], speed: 1.6, curious: true, swim: [Math.max(0.4, 2 - size * 0.06), 0.05, 2], photoRange: Math.min(40, size * 3 + 6) });
     }
   }
   throw new Error('unknown tag ' + tag);
@@ -226,10 +228,10 @@ export const MORE_600: SpeciesDef[] = [
   nf("ray", "madaraei", "マダラエイ", "Taeniura meyeni", "reef", [2, 50], 1.6, 2, {"span": 0.85, "len": 0.9, "thick": 0.07, "tail": 0.9}, ["#5a5a52", "#2a2a26", 120, null], 2, 2, "大型のアカエイの仲間。黒と灰色のまだら模様で、砂地でじっと休む。", {}),
   nf("ray", "ushibanatobiei", "ウシバナトビエイ", "Rhinoptera javanica", "offshore", [0, 40], 1.2, 2, {"span": 1.0, "len": 0.5, "thick": 0.05, "tail": 0.8}, ["#6a5a48", "#3a3428", 0, null], 6, 1, "牛の鼻のような頭をしたトビエイ。群れで羽ばたくように泳ぐ。", {"region": [-150, 150, 380, 700]}),
   nf("ray", "batray", "コウモリエイ", "Myliobatis californica", "kelp", [1, 40], 1.0, 1, {"span": 1.0, "len": 0.5, "thick": 0.05, "tail": 0.9}, ["#3a3a34", "#2a2a24", 0, null], 3, 2, "ケルプの森の砂地を羽ばたくように泳ぐトビエイの仲間。", {}),
-  nf("cet", "hashinaga", "ハシナガイルカ", "Stenella longirostris", "offshore", [0, 30], 2.0, 2, {"nose": 0.15}, ["#4a5260", "#6a7280", 0, "#e0e4e8"], 8, 1, "空中で何回転もするスピンジャンプが得意なイルカ。大きな群れで暮らす。", {}),
-  nf("cet", "hanagondou", "ハナゴンドウ", "Grampus griseus", "offshore", [0, 40], 3.0, 3, {"nose": 0.85}, ["#8a8e94", "#a8acb0", 0, "#d8dadc"], 3, 1, "丸い頭のイルカ。仲間とのけんかでできた白い傷跡が体中に残る。", {}),
-  nf("cet", "minkukujira", "ミンククジラ", "Balaenoptera acutorostrata", "offshore", [0, 40], 8.0, 3, {"nose": 0.3}, ["#2a2e34", "#3a3e44", 0, "#e0e2e4"], 1, 1, "ヒゲクジラの中では小型。胸ビレに白い帯がある。", {}),
-  nf("cet", "shironagasu", "シロナガスクジラ", "Balaenoptera musculus", "offshore", [0, 60], 24.0, 3, {"nose": 0.4, "H": 0.16}, ["#6a7a88", "#7a8a98", 0, "#a8b4c0"], 1, 1, "地球史上最大の動物。全長30mにもなるが、食べるのは小さなオキアミ。", {}),
+  nf("cet", "hashinaga", "ハシナガイルカ", "Stenella longirostris", "offshore", [0, 30], 2.0, 2, {"cet": {"kind": "dolphin", "beak": 1}}, ["#4a5260", "#6a7280", 0, "#e0e4e8"], 8, 1, "空中で何回転もするスピンジャンプが得意なイルカ。大きな群れで暮らす。", {}),
+  nf("cet", "hanagondou", "ハナゴンドウ", "Grampus griseus", "offshore", [0, 40], 3.0, 3, {"cet": {"kind": "dolphin", "beak": 0, "melon": 1.25}, "H": 0.21}, ["#8a8e94", "#a8acb0", 0, "#d8dadc"], 3, 1, "丸い頭のイルカ。仲間とのけんかでできた白い傷跡が体中に残る。", {}),
+  nf("cet", "minkukujira", "ミンククジラ", "Balaenoptera acutorostrata", "offshore", [0, 40], 8.0, 3, {"cet": {"kind": "minke"}}, ["#2a2e34", "#3a3e44", 0, "#e0e2e4"], 1, 1, "ヒゲクジラの中では小型。胸ビレに白い帯がある。", {}),
+  nf("cet", "shironagasu", "シロナガスクジラ", "Balaenoptera musculus", "offshore", [0, 60], 24.0, 3, {"cet": {"kind": "blue"}, "H": 0.17}, ["#6a7a88", "#7a8a98", 0, "#a8b4c0"], 1, 1, "地球史上最大の動物。全長30mにもなるが、食べるのは小さなオキアミ。", {}),
   nf("nudi", "hanagasaumiushi", "イボウミウシ", "Phyllidia varicosa", "reef", [5, 40], 0.1, 2, {}, ["#c86a3a", "#f0d0b0", 60, null], 0, 0, "平たい大型のウミウシ。オレンジの地に白い網目模様。", {}),
   nf("nudi", "sarasaumiushi", "サラサウミウシ", "Chromodoris annulata", "reef", [3, 30], 0.05, 2, {}, ["#f4f0f0", "#e08a40", 30, "#6a4ac0"], 0, 0, "白地にオレンジの点と紫の輪。浅いサンゴ礁の岩の上で見られる。", {}),
   nf("star", "akaumi", "コブヒトデ", "Protoreaster nodosus", "lagoon", [0, 20], 0.25, 1, {"arms": 5, "arm": 0.3, "core": 0.2, "thick": 0.12, "sharp": 0.9, "spines": 40}, ["#e08a40", "#2a2a2a", 40, null], 8, 8, "背中に黒い角のようなこぶが並ぶ大型のヒトデ。浅い砂地や藻場に多い。", {}),

@@ -15,6 +15,7 @@ import { clamp, mulberry32 } from '../utils/noise';
 import { KEEP, LOD, SHADOW, THIN } from '../game/render';
 import { Impostors, packColor, type ImpostorCell } from './impostors';
 import { resolveCapsule, resolveSphere, segmentBlocked } from '../world/colliders';
+import { buildCetacean, buildPinniped } from './mammals';
 import { SWIM, swimF0, swimFreq, swimModeOf, swimUniforms, type SwimMode } from './swim';
 
 type Group = { c: THREE.Vector3; t: THREE.Vector3; home: THREE.Vector3; v: THREE.Vector3; roam: number; timer: number; absent?: boolean;
@@ -92,6 +93,8 @@ export type SpeciesRuntime = {
   /** swim v2 wave number and tail amplitude (for the bend of the L2 card) */
   swimK?: number;
   swimTail?: number;
+  /** 尾の振りの下限（Hz）：海生哺乳類は小魚より遅くてよい */
+  swimFMin?: number;
 };
 
 /** kinds whose builder makes an L1 (generated fish and the coarser builds of buildGeometry) */
@@ -128,6 +131,12 @@ const triCount = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.attri
  */
 function fishGeometries(def: SpeciesDef): { geo: THREE.BufferGeometry; geo1: THREE.BufferGeometry; layout: FishLayout } {
   const f = def.fish!;
+  if (f.cet || f.pin) {
+    // 海生哺乳類（F12a）の専用の体：L1 は同じ作り方で細かさだけ落とす（画像の範囲は L0 に合わせる）
+    const mk = (d: 0 | 1, fixed?: FishLayout) => (f.cet ? buildCetacean(f.cet, f, d, fixed) : buildPinniped(f.pin!, f, d, fixed));
+    const a = mk(0);
+    return { geo: a.geo, geo1: mk(1, a.layout).geo, layout: a.layout };
+  }
   const v2 = fishV2(def);
   const small = def.size < FISH_TRIS.smallSize;
   const limit = small ? FISH_TRIS.small : FISH_TRIS.large;
@@ -219,7 +228,7 @@ function envSamples(lay: FishLayout): number[] {
  */
 function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo = false, lay?: FishLayout, lod1 = false): THREE.MeshStandardMaterial {
   const m = def.mat ?? {};
-  const v2 = !photo && (lay ? !!lay.v2 : fishV2(def));
+  const v2 = !photo && !(def.fish?.cet || def.fish?.pin) && (lay ? !!lay.v2 : fishV2(def));
   const mode: SwimMode | null = swimModeOf(def);
   const translucent = m.translucent !== undefined;
   const mat = new THREE.MeshStandardMaterial({
@@ -250,7 +259,13 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
   const sheenMap = !photo && v2 && !translucent;
   if (sheenMap) mat.defines = { ...(mat.defines ?? {}), SHEEN_MAP: '' };
   const su = mode ? swimUniforms(mode, def, photo) : { a: [0, 0, 0, 0] as [number, number, number, number], k: 0, tail: 0, flap: 0 };
-  const scaly = !photo && (def.kind === 'fish' || def.kind === 'gardenEel');
+  const mam = !!(def.fish?.cet || def.fish?.pin);
+  const scaly = !photo && !mam && (def.kind === 'fish' || def.kind === 'gardenEel');
+  if (mam) {
+    mat.defines = { ...(mat.defines ?? {}), MAMMAL: '' };
+    // 濡れた滑らかな肌（うろこの模様・ひれの透け感は使わない）
+    mat.roughness = Math.min(mat.roughness, 0.42);
+  }
   if (photo) {
     // photographed skin already carries scales / pattern; the outline comes from alpha
     mat.alphaTest = 0.5;
@@ -264,7 +279,7 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
     mat.roughness = Math.min(mat.roughness, (m.metal ?? 0) > 0.3 ? 0.28 : 0.38);
   }
   return underwaterMaterial(mat, {
-    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : '') + (mode ? '-sw' : '') + (v2 ? '-v2' : '') + (sheenMap ? '-sh' : '') + (lod1 ? '-l1' : ''),
+    key: 'cr-' + def.kind + (translucent ? '-t' : '') + (photo ? '-p' : '') + (blink ? '-blink' : '') + (mode ? '-sw' : '') + (mam ? '-mm' : '') + (v2 ? '-v2' : '') + (sheenMap ? '-sh' : '') + (lod1 ? '-l1' : ''),
     caustic: 0.9,
     noCaustic: lod1,
     uniforms: {
@@ -448,6 +463,8 @@ function makeMaterial(def: SpeciesDef, map: THREE.Texture, uvAspect = 0.3, photo
     fragRough: `
       #ifdef FISH_SCALES
         roughnessFactor = vFin > 1.5 ? 0.06 : vFin > 0.5 ? 0.55 : roughnessFactor;
+      #elif defined( MAMMAL )
+        roughnessFactor = vFin > 1.5 ? 0.06 : roughnessFactor;
       #endif`,
     fragEmissive: `
       {
@@ -966,6 +983,7 @@ export class Creatures {
       geo.setAttribute('aSwim', rt.swimAttr);
       rt.swimF0 = swimF0(def);
       rt.swimGlide = mode === 'labriform';
+      rt.swimFMin = mode === 'cetacean' || mode === 'pinniped' ? SWIM.fMinMam : undefined;
       const su = swimUniforms(mode, def, !!photo);
       rt.swimK = su.k;
       rt.swimTail = su.tail;
@@ -1134,7 +1152,7 @@ export class Creatures {
     for (const def of SPECIES) {
       if (def.kind === 'none') continue;
       const photo = def.kind === 'fish' && !!photoFor(def.id);
-      const sig = [def.kind, def.mat?.translucent !== undefined, photo, def.id.startsWith('hikarikinme'), def.id === 'atolla', !!def.rainbow, !!def.fish?.bendY, !!def.instColors, !!swimModeOf(def), !photo && fishV2(def)].join('|');
+      const sig = [def.kind, def.mat?.translucent !== undefined, photo, def.id.startsWith('hikarikinme'), def.id === 'atolla', !!def.rainbow, !!def.fish?.bendY, !!(def.fish?.cet || def.fish?.pin), !!def.instColors, !!swimModeOf(def), !photo && fishV2(def)].join('|');
       if (!seen.has(sig)) {
         seen.add(sig);
         // L0, and the L1 variant for the kinds that have one (§6.3-③)
@@ -1360,7 +1378,7 @@ export class Creatures {
     let gl = a.gl ?? 0, gs = a.gs ?? 0, tn = a.tn ?? 0, cst = a.cst ?? 0;
     if (dt > 0) {
       const U = a.v.length();
-      const f = swimFreq(rt.swimF0 ?? 1, U, a.s);
+      const f = swimFreq(rt.swimF0 ?? 1, U, a.s, rt.swimFMin);
       const cruise = Math.max(0.1, def.speed * 1.6);
       let target = SWIM.ampLo + (SWIM.ampHi - SWIM.ampLo) * clamp(U / cruise, 0, 1);
       const slow = U < Math.max(SWIM.slowMin, def.speed * SWIM.slowK);

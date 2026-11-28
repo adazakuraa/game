@@ -4,7 +4,7 @@ import type { SpeciesDef } from './species';
  * 泳ぎ v2（PHASE8-DESIGN §4.2）：背骨の線で曲げるうねりの型と調整値。
  * 振幅の分布 A(s) は s＝0 頭 … 1 尾（体長比）。シェーダには A(1)＝1 に正規化した係数と、尾の振幅を別に渡す。
  */
-export type SwimMode = 'anguilliform' | 'subcarangiform' | 'carangiform' | 'thunniform' | 'labriform';
+export type SwimMode = 'anguilliform' | 'subcarangiform' | 'carangiform' | 'thunniform' | 'labriform' | 'cetacean' | 'pinniped';
 
 type ModeDef = {
   /** A(q) = a0 + a1 q + a2 q²、q = max(0, (s − s0) / (1 − s0))（設計の表の係数そのまま） */
@@ -26,6 +26,10 @@ export const SWIM_MODES: Record<SwimMode, ModeDef> = {
   thunniform: { a: [0.05, 0, 0.95], s0: 0.75, lambda: 1.2, tail: 0.08, flap: 0.012 },
   // 体はほぼ止める（0.01）。胸びれの羽ばたきが主
   labriform: { a: [0.01, 0, 0.01], s0: 0, lambda: 1.0, tail: 0.02, flap: 0.04 },
+  // 海生哺乳類（F12a）：体を上下に（シェーダの BEND_Y）しならせる。前の 3 割はほぼ動かず、後ろ半分から尾びれへ振幅が増える
+  cetacean: { a: [0.03, 0.12, 0.85], s0: 0.3, lambda: 1.6, tail: 0.09, flap: 0.006 },
+  // アザラシ・アシカ：腰から後ろを上下に、前肢をかく（flap）
+  pinniped: { a: [0.04, 0.1, 0.86], s0: 0.45, lambda: 1.4, tail: 0.05, flap: 0.035 },
 };
 
 /** 個体ごとの泳ぎの調整値（目視で決めた最終値。§10.3） */
@@ -33,6 +37,8 @@ export const SWIM = {
   /** 尾の振りの周波数の範囲（Hz）。小魚の実際の 10Hz 超は震えに見えるため 4Hz で頭打ち（BH） */
   fMin: 0.6,
   fMax: 4,
+  /** 海生哺乳類（大きい体）の尾の振りの下限（Hz）。ゆっくり泳ぐクジラが小魚の速さで振らないように */
+  fMinMam: 0.12,
   /** 1 回の振りで進む距離（体長比）：f = f0 + U / (stride·L) */
   stride: 0.7,
   /** 速さによる振幅の倍率 ampK の範囲 */
@@ -81,6 +87,8 @@ const NOT_FISH = /ペンギン|ウミヘビ/;
 export function swimModeOf(def: SpeciesDef): SwimMode | null {
   if (def.kind !== 'fish' || !def.fish) return null;
   const f = def.fish;
+  if (f.cet) return 'cetacean';
+  if (f.pin) return 'pinniped';
   if (f.bendY || f.tail === 'flukes' || NOT_FISH.test(def.name)) return null;
   if (FIN_WAVE.test(def.name)) return 'labriform';
   if (f.swimMode) return f.swimMode;
@@ -116,6 +124,6 @@ export function swimF0(def: SpeciesDef): number {
 }
 
 /** 個体の速さ U（m/s）と体長 L（m）からの周波数（Hz） */
-export function swimFreq(f0: number, U: number, L: number): number {
-  return Math.min(SWIM.fMax, Math.max(SWIM.fMin, f0 + U / (SWIM.stride * Math.max(0.02, L))));
+export function swimFreq(f0: number, U: number, L: number, fMin: number = SWIM.fMin): number {
+  return Math.min(SWIM.fMax, Math.max(fMin, f0 + U / (SWIM.stride * Math.max(0.02, L))));
 }
