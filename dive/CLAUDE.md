@@ -21,6 +21,7 @@
 | `src/life/creatures.ts` | 生き物の行動（くらし・警戒・群れ・攻撃的な個体） |
 | `src/life/models.ts` / `paint.ts` | 手続きモデルと体の模様 |
 | `src/life/mammals.ts` | 海生哺乳類の専用の体 `buildCetacean`（クジラ・イルカ・シャチ・ジュゴン）・`buildPinniped`（アザラシ・アシカ・オットセイ・トド・ラッコ）。種の体は `FishShape.cet` / `.pin` で指定。塗りは `paint.ts` の `paintMammal`・`MAM_LOOK` |
+| `src/life/sharks.ts` | サメの専用の体 `buildShark`（20 種。写真テクスチャの種は対象外）。種の指定は `SHARK_SPEC`（id → `SharkSpec`：頭の型・尾の型・鰓孔の数・模様）を `species.ts` の `applySharkBodies()` が `FishShape.shark` に付ける。水平のひれの色は画像の下端の「ひれの帯」。塗りの仕上げは `paint.ts` の `paintSharkExtras` |
 | `src/life/photoFish.ts` / `photoProfiles.ts` | 写真テクスチャを使う 31 種（`scripts/photo_fish.py` で生成） |
 | `src/world/layout.ts` | 世界の座標とエリア配置（z が沖方向）、沈没船・噴出孔など |
 | `src/world/terrain.ts` / `flora.ts` / `scatter.ts` / `colliders.ts` / `surface.ts` | 地形チャンク、サンゴ・海藻、インスタンス配置、当たり判定、足元の高さ |

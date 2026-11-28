@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../utils/noise';
 import type { SwimMode } from './swim';
 import type { CetSpec, PinSpec, MamLayout } from './mammals';
+import type { SharkSpec, SharkLayout } from './sharks';
 
 /**
  * Procedural creature geometry. Every builder returns one merged, non-indexed geometry with:
@@ -114,6 +115,8 @@ export type FishShape = {
   /** 海生哺乳類の専用の体（mammals.ts）。指定があれば buildFish ではなく buildCetacean / buildPinniped で作る（F12a） */
   cet?: CetSpec;
   pin?: PinSpec;
+  /** サメの専用の体（sharks.ts）。指定があれば buildFish ではなく buildShark で作る（F12b） */
+  shark?: SharkSpec;
 };
 
 /** One fin's grid in the texture's side view (z, y), for painting its margin and soft rays (§3.4). */
@@ -131,6 +134,8 @@ export type FishLayout = {
   mouthY?: number;
   /** 海生哺乳類の専用の体：目・口・噴気孔の位置と、ひれ用の色見本の位置（mammals.ts） */
   mam?: MamLayout;
+  /** サメの専用の体：鰓孔・ひれの帯・背びれの位置（sharks.ts、paint.ts の paintSharkExtras が使う） */
+  shk?: SharkLayout;
 };
 
 /** Dorsal-profile multiplier for FishShape.hump (1 = symmetric). */

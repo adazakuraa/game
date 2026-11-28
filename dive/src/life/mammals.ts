@@ -39,13 +39,13 @@ const patchUV = (k: number): [number, number] => [MAM_PATCH.w * (k + 0.5), 1 - M
 
 // --------------------------------------------------------------------------- helpers
 
-type Part = THREE.BufferGeometry;
-type Pts = [number, number][];
-const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
-const sstep = (a: number, b: number, x: number) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+export type Part = THREE.BufferGeometry;
+export type Pts = [number, number][];
+export const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+export const sstep = (a: number, b: number, x: number) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
 
 /** 単調な 3 次補間（PCHIP）：制御点の間でふくらみすぎない */
-function pchip(pts: Pts): (x: number) => number {
+export function pchip(pts: Pts): (x: number) => number {
   const n = pts.length;
   const h: number[] = [], d: number[] = [], m: number[] = new Array(n).fill(0);
   for (let i = 0; i < n - 1; i++) { h[i] = pts[i + 1][0] - pts[i][0]; d[i] = (pts[i + 1][1] - pts[i][1]) / h[i]; }
@@ -64,13 +64,13 @@ function pchip(pts: Pts): (x: number) => number {
   };
 }
 
-type Prof = {
+export type Prof = {
   top: (t: number) => number; bot: (t: number) => number; w: (t: number) => number; cy: (t: number) => number;
   t0: number; t1: number; cap0: number; cap1: number; box: number;
 };
 
 /** 端の丸め（半楕円）：吻端と尾の付け根を閉じる */
-function capK(P: Prof, t: number): number {
+export function capK(P: Prof, t: number): number {
   let f = 1;
   if (P.cap1 > 0 && t > P.t1 - P.cap1) { const u = (t - (P.t1 - P.cap1)) / P.cap1; f = Math.min(f, Math.sqrt(Math.max(0, 1 - u * u))); }
   if (P.cap0 > 0 && t < P.t0 + P.cap0) { const u = (P.t0 + P.cap0 - t) / P.cap0; f = Math.min(f, Math.sqrt(Math.max(0, 1 - u * u))); }
@@ -78,7 +78,7 @@ function capK(P: Prof, t: number): number {
 }
 
 /** 高さ y（体の中心線からの上下）での体の半幅 */
-function surfX(P: Prof, t: number, y: number): number {
+export function surfX(P: Prof, t: number, y: number): number {
   const k = capK(P, t);
   const ym = y - P.cy(t);
   const h = Math.max(1e-4, (ym >= 0 ? P.top(t) : P.bot(t)) * k);
@@ -87,7 +87,7 @@ function surfX(P: Prof, t: number, y: number): number {
 }
 
 /** 周りの角度の並び：腹側（a = π のまわり）だけ細かくできる。最後は 2π（継ぎ目の重複） */
-function angles(R: number, vent?: { half: number; nv: number }): number[] {
+export function angles(R: number, vent?: { half: number; nv: number }): number[] {
   const out: number[] = [];
   if (!vent) { for (let j = 0; j <= R; j++) out.push((j / R) * Math.PI * 2); return out; }
   const nA = Math.max(3, Math.round((R - vent.nv) / 2));
@@ -99,10 +99,10 @@ function angles(R: number, vent?: { half: number; nv: number }): number[] {
   return out;
 }
 
-type TubeOpts = { S: number; ang: number[]; rm?: (t: number, a: number) => number };
+type TubeOpts = { S: number; ang: number[]; rm?: (t: number, a: number) => number; /** 輪切りの位置 t を直接指定（S は ts.length − 1） */ ts?: number[] };
 
 /** 断面がスーパー楕円の管。z = t − 0.5。aAO（腹側を暗く）を持つ */
-function tube(P: Prof, o: TubeOpts): Part {
+export function tube(P: Prof, o: TubeOpts): Part {
   const { S, ang } = o;
   const R = ang.length - 1;
   const ex = 2 / P.box;
@@ -110,7 +110,7 @@ function tube(P: Prof, o: TubeOpts): Part {
   const ao: number[] = [];
   const idx: number[] = [];
   for (let i = 0; i <= S; i++) {
-    const t = P.t0 + (P.t1 - P.t0) * (0.5 - 0.5 * Math.cos((Math.PI * i) / S));
+    const t = o.ts ? o.ts[i] : P.t0 + (P.t1 - P.t0) * (0.5 - 0.5 * Math.cos((Math.PI * i) / S));
     const k = capK(P, t);
     const cy = P.cy(t);
     const top = P.top(t) * k, bot = P.bot(t) * k, w = P.w(t) * k;
@@ -163,7 +163,7 @@ function fan(len: number, wid: number, toes: number): Pts {
   return out;
 }
 
-type V3 = [number, number, number];
+export type V3 = [number, number, number];
 const norm3 = (v: V3): V3 => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
 /** 肢の向き d（付け根から先）と、それに直交して前向き（+z）側の e */
 function frame(d: V3): { d: V3; e: V3 } {
@@ -173,7 +173,7 @@ function frame(d: V3): { d: V3; e: V3 } {
 }
 
 /** 付け根 origin から d 方向に伸びる板状の肢（ひれ）。flapSign = ±1 で胸びれの羽ばたき（aFlap）の向き */
-function limb(origin: V3, d: V3, outline: Pts, cols: number, rows: number, flapSign: number, thick = 0): Part {
+export function limb(origin: V3, d: V3, outline: Pts, cols: number, rows: number, flapSign: number, thick = 0, axis?: 'x' | 'y'): Part {
   const { d: dd, e } = frame(d);
   const e0 = resample(outline, cols);
   const rEnd = outline[outline.length - 1];
@@ -181,7 +181,7 @@ function limb(origin: V3, d: V3, outline: Pts, cols: number, rows: number, flapS
   return finGrid({
     root, edge: e0, rows, flap: flapSign,
     map: (a, b) => [origin[0] + dd[0] * a + e[0] * b, origin[1] + dd[1] * a + e[1] * b, origin[2] + dd[2] * a + e[2] * b],
-    half: thick > 0 ? () => thick : undefined,
+    half: thick > 0 ? () => thick : undefined, axis,
   });
 }
 
@@ -200,7 +200,7 @@ function strip(p0: V3, dir: V3, len: number, wd: number): Part {
   return g;
 }
 
-function setUV(g: Part, fn: (x: number, y: number, z: number) => [number, number]) {
+export function setUV(g: Part, fn: (x: number, y: number, z: number) => [number, number]) {
   const g2 = g;
   const p = g2.attributes.position as THREE.BufferAttribute;
   const uv = new Float32Array(p.count * 2);
@@ -208,7 +208,7 @@ function setUV(g: Part, fn: (x: number, y: number, z: number) => [number, number
   g2.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
 }
 
-function finishParts(parts: Part[]) {
+export function finishParts(parts: Part[]) {
   for (const g of parts) {
     const gg = g;
     if (!gg.attributes.aBend) setAttr(gg, 'aBend', (_x, _y, z) => Math.pow(Math.min(1, Math.max(0, (0.5 - z) / 1.0)), 1.6) * 0.95 + 0.05);
@@ -217,7 +217,7 @@ function finishParts(parts: Part[]) {
 }
 
 /** 目：球の外側だけ（70% 埋める）。極は +x。横から見た画像の目の位置に UV を合わせる */
-function eyeCap(P: Prof, t: number, y: number, r: number, side: number, detail: number): Part {
+export function eyeCap(P: Prof, t: number, y: number, r: number, side: number, detail: number): Part {
   const e = new THREE.SphereGeometry(r, detail ? 6 : 10, detail ? 3 : 5, 0, Math.PI * 2, 0, (117 * Math.PI) / 180);
   e.rotateZ(-Math.PI / 2);
   if (side < 0) e.rotateY(Math.PI);

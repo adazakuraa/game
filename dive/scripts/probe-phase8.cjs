@@ -416,7 +416,8 @@ const budget = (name, value, max, unit = '') => console.log(`${value <= max ? 'O
       if ('FISH_V2' in (m.defines || {})) out.v2++;
       const t = n(rt.mesh.geometry), big = rt.def.size >= 0.4;
       // F12a：海生哺乳類は専用の体（1 頭 3〜6k 以内、L1 は L0 の半分以下）
-      if (rt.def.fish?.cet || rt.def.fish?.pin) { if (t > 6000) out.over.push(`${rt.def.id}:${t}`); if (rt.geo1 && n(rt.geo1) > t / 2) out.over1.push(`${rt.def.id}:${n(rt.geo1)}`); continue; }
+      // F12b：サメも専用の体（同じ予算）
+      if (rt.def.fish?.cet || rt.def.fish?.pin || rt.def.fish?.shark) { if (t > 6000) out.over.push(`${rt.def.id}:${t}`); if (rt.geo1 && n(rt.geo1) > t / 2) out.over1.push(`${rt.def.id}:${n(rt.geo1)}`); continue; }
       out.max[big ? 1 : 0] = Math.max(out.max[big ? 1 : 0], t);
       if (t > (big ? 2500 : 1500)) out.over.push(`${rt.def.id}:${t}`);
       if (!rt.geo1) out.noL1.push(rt.def.id);

@@ -513,3 +513,129 @@ export const MAM_LOOK: Record<string, MammalLook> = {
   steller: { back: '#7a5a34', flank: '#8e6a40', belly: '#a88458', mid: 0.55, limb: '#5a4024', fluke: '#7a5a34', noise: 0.07 },
   otter: { back: '#4a3626', flank: '#5a4430', belly: '#6a5238', mid: 0.7, limb: '#3a2a1c', fluke: '#4a3626', head: [0.82, '#cdbca2'], pale: '#e0d6c4', noise: 0.08 },
 };
+
+// --------------------------------------------------------------------------- サメ（F12b、sharks.ts の体用）
+
+/**
+ * サメの仕上げ：種の塗りのあとに重ねる。鰓孔の線、ひれの帯（胸びれ・腹びれの色 → 先の色）、背びれ・しりびれ・尾びれの先の色、
+ * 種ごとの模様（ジンベエの斑点の格子、イタチザメの縞）。ひれの帯は画像の下端にあり、sharks.ts が水平のひれの UV を向けてある。
+ */
+export function paintSharkExtras(p: Paint): void {
+  const f = p.fish;
+  const k = f?.shk;
+  if (!f || !k) return;
+  const g = p.g;
+  const sp = k.spec;
+  const H = f.shape.H;
+  const lw = Math.max(1, p.W / 256);
+  const px = (x: number, y: number) => {
+    const d = g.getImageData(Math.min(p.W - 1, Math.max(0, Math.floor(x))), Math.min(p.H - 1, Math.max(0, Math.floor(y))), 1, 1).data;
+    return `rgb(${d[0]},${d[1]},${d[2]})`;
+  };
+  const sy = (s: number) => k.strip.y0 + (k.strip.y1 - k.strip.y0) * s;
+  const base = px(p.U(-0.2), p.V(sy(0.5)));
+
+  // ひれの帯：付け根は体と同じひれの色、先に向けて tip の色
+  const yA = p.V(sy(-0.12)), yB = p.V(sy(1.12));
+  if (sp.tip) {
+    const tk = sp.tipK ?? 0.4;
+    const gr = g.createLinearGradient(0, p.V(sy(0)), 0, p.V(sy(1)));
+    gr.addColorStop(0, base);
+    gr.addColorStop(Math.max(0, 1 - tk - 0.1), base);
+    gr.addColorStop(Math.min(1, 1 - tk + 0.05), sp.tip);
+    gr.addColorStop(1, sp.tip);
+    g.fillStyle = base;
+    g.fillRect(0, Math.min(yA, yB), p.W, Math.abs(yB - yA));
+    g.fillStyle = gr;
+    g.fillRect(0, Math.min(yA, yB), p.W, Math.abs(yB - yA));
+  } else {
+    g.fillStyle = base;
+    g.fillRect(0, Math.min(yA, yB), p.W, Math.abs(yB - yA));
+  }
+  // 背びれ・しりびれ・尾びれの先
+  if (sp.tip) {
+    const tk = sp.tipK ?? 0.4;
+    g.fillStyle = sp.tip;
+    for (const d of k.dorsals) {
+      const dir = d.y >= 0 ? 1 : -1;
+      const yEdge = d.y + dir * d.h * (1 - tk);
+      const yEnd = d.y + dir * d.h * 1.1;
+      const z0 = d.a - 0.5 - 0.7 * d.h, z1 = d.b - 0.5 + 0.01;
+      g.fillRect(p.U(z0), Math.min(p.V(yEdge), p.V(yEnd)), p.U(z1) - p.U(z0), Math.abs(p.V(yEnd) - p.V(yEdge)));
+    }
+    const { tl, upper, lower } = k.tail;
+    const uy = upper[1] * (1 - tk * 0.5);
+    g.fillRect(p.U(upper[0] - 0.01), p.V(upper[1] + 0.01), p.U(upper[0] + tl * 0.3) - p.U(upper[0] - 0.01), p.V(uy) - p.V(upper[1] + 0.01));
+    const ly = lower[1] * (1 - tk * 0.5);
+    g.fillRect(p.U(lower[0] - 0.01), p.V(ly), p.U(lower[0] + tl * 0.22) - p.U(lower[0] - 0.01), p.V(lower[1] - 0.01) - p.V(ly));
+  }
+
+  // 鰓孔（5 本）：体の溝に合わせた暗い線
+  const gl = Math.min(0.95, 0.6 * (sp.gillLen ?? 1));
+  g.strokeStyle = 'rgba(8,10,12,0.5)';
+  g.lineWidth = lw * 1.4;
+  for (const t of k.gills) {
+    const h = (H / 2) * f.env(t) * gl;
+    const x = p.U(t - 0.5);
+    g.beginPath();
+    g.moveTo(x, p.V(h));
+    g.quadraticCurveTo(x - lw * 2.5, p.V(0), x, p.V(-h));
+    g.stroke();
+  }
+  // 口の線
+  if (sp.head !== 'hammer') p.mouth('rgba(25,12,12,0.55)', 0.045);
+  if (sp.drawEye) p.eye(f.shape.eyes ?? 0.05, '#c8a030');
+
+  // 模様
+  const top = (t: number) => (H / 2) * f.env(t) * f.top(t);
+  if (sp.pat === 'whale') {
+    // ジンベエザメ：背から体側にかけて、淡い線の格子と白い斑点
+    p.clipBody(() => {
+      g.strokeStyle = 'rgba(236,240,230,0.5)';
+      g.lineWidth = lw;
+      for (let z = -0.42; z <= 0.34; z += 0.05) {
+        g.beginPath(); g.moveTo(p.U(z), p.V(top(z + 0.5))); g.lineTo(p.U(z), p.V(-H * 0.12)); g.stroke();
+      }
+      for (let i = 0; i < 6; i++) {
+        const y = H * (0.4 - i * 0.1);
+        g.beginPath(); g.moveTo(p.U(-0.46), p.V(y)); g.lineTo(p.U(0.36), p.V(y)); g.stroke();
+      }
+      g.fillStyle = 'rgba(246,248,240,0.92)';
+      for (let i = 0; i < 6; i++) {
+        const y = H * (0.34 - i * 0.1);
+        for (let z = -0.4 + (i % 2) * 0.025; z <= 0.4; z += 0.05) {
+          const fade = z > 0.36 ? 0.5 : 1;
+          g.beginPath();
+          g.arc(p.U(z + (p.rnd() - 0.5) * 0.008), p.V(y + (p.rnd() - 0.5) * H * 0.03), (1.0 + p.rnd() * 0.9) * lw * fade, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      // 腹は白っぽく
+      g.fillStyle = 'rgba(232,236,232,0.35)';
+      g.fillRect(0, p.V(-H * 0.28), p.W, p.H);
+    });
+  } else if (sp.pat === 'tiger') {
+    // イタチザメ：背から体側に濃い縦縞（尾に向かって細かく、頭のほうは斑）
+    p.clipBody(() => {
+      for (let i = 0; i < 22; i++) {
+        const z = -0.42 + i * 0.039 + (p.rnd() - 0.5) * 0.012;
+        const w = (0.008 + p.rnd() * 0.009) * p.W;
+        const yTop = H * 0.62, yBot = H * (0.12 - p.rnd() * 0.3) - (z < -0.1 ? H * 0.05 : 0);
+        g.fillStyle = `rgba(28,30,26,${(0.34 + p.rnd() * 0.14).toFixed(2)})`;
+        g.beginPath();
+        const xa = p.U(z), wob = (p.rnd() - 0.5) * 6 * lw;
+        g.moveTo(xa - w / 2, p.V(yTop));
+        g.quadraticCurveTo(xa + wob, p.V((yTop + yBot) / 2), xa - w / 3, p.V(yBot));
+        g.lineTo(xa + w / 3, p.V(yBot));
+        g.quadraticCurveTo(xa + wob + w / 2, p.V((yTop + yBot) / 2), xa + w / 2, p.V(yTop));
+        g.fill();
+      }
+      g.fillStyle = 'rgba(30,32,28,0.3)';
+      for (let i = 0; i < 18; i++) {
+        g.beginPath();
+        g.arc(p.U(0.28 + p.rnd() * 0.16), p.V(H * (0.35 - p.rnd() * 0.4)), (1.1 + p.rnd() * 1.2) * lw, 0, Math.PI * 2);
+        g.fill();
+      }
+    });
+  }
+}

@@ -123,7 +123,7 @@ export const MORE_FISH: SpeciesDef[] = [
   F({ id: 'shirogisu', name: 'シロギス', sci: 'Sillago japonica', zone: 'lagoon', d: [1, 20], size: 0.2, body: sh('mullet', { H: 0.17 }), hab: 'sandForage', region: LAG, n: 20, g: 3,
     look: { c: ['#c8c0a8', '#e0dccc', '#f4f2ec'], fin: '#e0dccc' }, desc: '砂浜の浅瀬にすむ上品な白身魚。砂に潜って身を隠すこともある。', metal: 0.4 }),
   F({ id: 'tsumaguro', name: 'ツマグロ', sci: 'Carcharhinus melanopterus', zone: 'lagoon', d: [0.5, 20], size: 1.4, r: 2, body: sh('shark'), hab: 'reefRoam', region: [-180, 180, 0, 200], n: 2, g: 2, speed: 0.8, flee: 4, photoRange: 18,
-    look: { c: ['#8a8070', '#a09888', '#ecece8'], mid: 0.55, fin: '#8a8070', tail: '#2a2a2a', dorsal: '#2a2a2a' }, desc: 'ヒレの先が黒いサンゴ礁のサメ。浅いラグーンを群れで回遊する。おとなしい。' }),
+    look: { c: ['#8a8070', '#a09888', '#ecece8'], mid: 0.55, fin: '#8a8070' }, desc: 'ヒレの先が黒いサンゴ礁のサメ。浅いラグーンを群れで回遊する。おとなしい。' }),
   F({ id: 'torafuzame', name: 'トラフザメ', sci: 'Stegostoma tigrinum', zone: 'lagoon', d: [2, 60], size: 2.0, r: 3, body: sh('nurse', { tailL: 0.5, tailH: 0.14 }), hab: 'perch', region: 'sandSpots', n: 1, flee: 0, photoRange: 18,
     look: { c: ['#c8b890', '#d8ccaa', '#ece4cc'], fin: '#c8b890', spots: [[160, 0.005, 0.01, '#3a2a1a']] }, desc: '「ゼブラシャーク」。成魚は茶色の斑点、とても長い尾をもつ。砂地で休む。' }),
   // ============================== 沖・ドロップオフ
@@ -138,7 +138,7 @@ export const MORE_FISH: SpeciesDef[] = [
   F({ id: 'nitari', name: 'ニタリ', sci: 'Alopias pelagicus', zone: 'dropoff', d: [10, 150], size: 3.0, r: 3, body: sh('shark', { tailL: 0.7, tailH: 0.6 }), hab: 'midwater', region: DROP, n: 1, g: 1, speed: 0.9, flee: 0, photoRange: 30,
     look: { c: ['#3a4a6a', '#6a7a9a', '#e8ecf0'], mid: 0.55, fin: '#3a4a6a' }, desc: '体と同じくらい長い尾ビレをもつオナガザメ。尾をむちのように振って小魚を気絶させる。' }),
   F({ id: 'ubazame', name: 'ウバザメ', sci: 'Cetorhinus maximus', zone: 'offshore', d: [2, 40], size: 8, r: 3, body: sh('shark', { H: 0.16, W: 0.17, nose: 0.4 }), hab: 'midwater', region: OFF, n: 1, g: 1, speed: 0.7, flee: 0, photoRange: 45,
-    look: { c: ['#3a3e44', '#50565c', '#9aa0a4'], mid: 0.6, fin: '#3a3e44', bars: [[0.32, 0.01, '#2a2e34'], [0.3, 0.01, '#2a2e34'], [0.28, 0.01, '#2a2e34'], [0.26, 0.01, '#2a2e34']] }, desc: 'ジンベエザメに次ぐ巨大なサメ。大きな口を開けてプランクトンをこしとる。' }),
+    look: { c: ['#3a3e44', '#50565c', '#9aa0a4'], mid: 0.6, fin: '#3a3e44' }, desc: 'ジンベエザメに次ぐ巨大なサメ。大きな口を開けてプランクトンをこしとる。' }),
   // ============================== 深海
   F({ id: 'kinmedai', name: 'キンメダイ', sci: 'Beryx splendens', zone: 'deep', d: [150, 430], size: 0.4, body: sh('soldier', { H: 0.4 }), hab: 'midwater', region: DEEP, n: 12, g: 2, speed: 0.4, flee: 0,
     look: { c: ['#c82a1a', '#e04a30', '#f07a5a'], fin: '#e04a30', iris: '#f0e060' }, desc: '大きな金色の目をもつ真っ赤な深海魚。目の奥の反射層が光を跳ね返して金色に光る。' }),
