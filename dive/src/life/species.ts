@@ -1,6 +1,6 @@
 import { BLUEHOLE, RUINS, type ZoneId } from '../world/layout';
 import type { FishShape, RayShape } from './models';
-import type { Paint } from './paint';
+import { MAM_LOOK, paintMammal, type Paint } from './paint';
 import type { WeatherId } from '../game/weather';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
@@ -356,20 +356,16 @@ export const SPECIES: SpeciesDef[] = [
     id: 'dolphin', name: 'ミナミハンドウイルカ', sci: 'Tursiops aduncus', zone: 'offshore', depth: [0, 25], size: 2.3, rarity: 2,
     desc: '高い知能と好奇心をもつ海の哺乳類。群れで暮らし、ダイバーに近づいて遊ぶこともある。息継ぎのため水面へ。',
     hint: '沖の水面近く。好奇心旺盛でこちらに寄ってくる。',
-    kind: 'fish', fish: { H: 0.2, W: 0.2, peak: 0.55, nose: 0.2, ped: 0.06, tail: 'flukes', tailL: 0.14, tailH: 0.32, dorsal: [{ a: 0.42, b: 0.56, h: 0.13, sweep: 0.8 }], pect: { t: 0.72, len: 0.14, wid: 0.06, down: 0.6, out: 0.6 }, eyes: 0.06, eyeT: 0.85, bendY: true },
-    paint: (p) => { fins(p, '#5a646e'); p.shade('#4a545e', '#7a8690', '#e2e6e8', 0.55); p.clipBody(() => { p.g.fillStyle = '#3a4048'; p.g.fillRect(p.U(0.42), p.V(0.06), p.U(0.5) - p.U(0.42), p.V(-0.02) - p.V(0.06)); }); p.eye(0.06, '#222'); },
+    kind: 'fish', fish: { H: 0.2, W: 0.16, peak: 0.55, nose: 0.2, ped: 0.06, tail: 'flukes', eyes: 0.06, eyeT: 0.85, bendY: true, cet: { kind: 'dolphin', beak: 0.6 } },
+    paint: (p) => paintMammal(p, MAM_LOOK.dolphin),
     count: 5, groups: 1, behavior: 'pelagic', region: [-150, 150, 380, 700], speed: 2.6, flee: 0, curious: true, swim: [1.5, 0.08, 2], spread: 4, mat: { rough: 0.3 }, photoRange: 26,
   },
   {
     id: 'humpback', name: 'ザトウクジラ', sci: 'Megaptera novaeangliae', zone: 'offshore', depth: [5, 45], size: 13, rarity: 3,
     desc: '長い胸ビレと複雑な「歌」で知られる大型のクジラ。冬になると暖かい海へ子育てにやってくる。',
     hint: '沖の深い青の中。遠くから歌声が聞こえたら近い。',
-    kind: 'fish', fish: { H: 0.2, W: 0.22, peak: 0.58, nose: 0.85, ped: 0.06, belly: 0.12, tail: 'flukes', tailL: 0.14, tailH: 0.3, dorsal: [{ a: 0.32, b: 0.38, h: 0.03 }], pect: { t: 0.66, len: 0.33, wid: 0.05, down: 0.6, out: 0.6 }, eyes: 0.04, eyeT: 0.8, bendY: true },
-    paint: (p) => {
-      fins(p, '#e8eaea'); p.shade('#14181c', '#1e2428', '#2e3236', 0.7); p.noise(0.15, false);
-      p.clipBody(() => { p.g.strokeStyle = 'rgba(220,220,220,0.5)'; p.g.lineWidth = 1; for (let i = 0; i < 12; i++) { p.g.beginPath(); p.g.moveTo(p.U(0.48), p.V(-0.03 - i * 0.006)); p.g.lineTo(p.U(0.02), p.V(-0.06 - i * 0.004)); p.g.stroke(); } p.g.fillStyle = 'rgba(30,30,30,0.8)'; for (let i = 0; i < 18; i++) { p.g.beginPath(); p.g.arc(p.U(0.38 + p.rnd() * 0.11), p.V(0.04 + p.rnd() * 0.05), 1.6, 0, Math.PI * 2); p.g.fill(); } });
-      p.blotch(30, 2, 5, ['rgba(200,200,200,0.4)'], true); p.eye(0.04, '#111');
-    },
+    kind: 'fish', fish: { H: 0.23, W: 0.2, peak: 0.58, nose: 0.85, ped: 0.06, tail: 'flukes', eyes: 0.04, eyeT: 0.8, bendY: true, cet: { kind: 'humpback' } },
+    paint: (p) => paintMammal(p, MAM_LOOK.humpback),
     count: 2, groups: 1, behavior: 'pelagic', region: [-120, 120, 520, 715], speed: 1.3, flee: 0, curious: true, swim: [0.3, 0.05, 1.6], photoRange: 70,
   },
   {

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../utils/noise';
 import type { SwimMode } from './swim';
+import type { CetSpec, PinSpec, MamLayout } from './mammals';
 
 /**
  * Procedural creature geometry. Every builder returns one merged, non-indexed geometry with:
@@ -24,7 +25,7 @@ export function setAttr(g: Part, name: string, fn: (x: number, y: number, z: num
   return g;
 }
 
-function finalize(parts: Part[], uvFn?: (x: number, y: number, z: number) => [number, number]): THREE.BufferGeometry {
+export function finalize(parts: Part[], uvFn?: (x: number, y: number, z: number) => [number, number]): THREE.BufferGeometry {
   const list = parts.map((g0) => {
     let g = g0.index ? g0.toNonIndexed() : g0;
     if (!g.attributes.normal) g.computeVertexNormals();
@@ -110,6 +111,9 @@ export type FishShape = {
   scaleN?: number;
   /** ひげの対の数（コイ・ナマズなど、Phase 9 S5）。口の両わきの細い板。L1 では省く */
   barbels?: number;
+  /** 海生哺乳類の専用の体（mammals.ts）。指定があれば buildFish ではなく buildCetacean / buildPinniped で作る（F12a） */
+  cet?: CetSpec;
+  pin?: PinSpec;
 };
 
 /** One fin's grid in the texture's side view (z, y), for painting its margin and soft rays (§3.4). */
@@ -125,6 +129,8 @@ export type FishLayout = {
   /** gill cover edge (t) and mouth line height at the snout (model y) */
   gillT?: number;
   mouthY?: number;
+  /** 海生哺乳類の専用の体：目・口・噴気孔の位置と、ひれ用の色見本の位置（mammals.ts） */
+  mam?: MamLayout;
 };
 
 /** Dorsal-profile multiplier for FishShape.hump (1 = symmetric). */
@@ -173,10 +179,10 @@ export function fishMid(s: FishShape): (t: number) => number {
   };
 }
 
-const spow = (v: number, e: number) => Math.sign(v) * Math.pow(Math.abs(v), e);
+export const spow = (v: number, e: number) => Math.sign(v) * Math.pow(Math.abs(v), e);
 
 /** Polyline resampled by arc length to n + 1 points. */
-function resample(pts: [number, number][], n: number): [number, number][] {
+export function resample(pts: [number, number][], n: number): [number, number][] {
   const L = [0];
   for (let i = 1; i < pts.length; i++) L.push(L[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
   const tot = L[L.length - 1] || 1;
@@ -192,7 +198,7 @@ function resample(pts: [number, number][], n: number): [number, number][] {
 }
 
 /** Quadratic Bézier from p0 to p2 through control c, as n segments (p0 excluded). */
-function bez(p0: [number, number], c: [number, number], p2: [number, number], n = 6): [number, number][] {
+export function bez(p0: [number, number], c: [number, number], p2: [number, number], n = 6): [number, number][] {
   const out: [number, number][] = [];
   for (let k = 1; k <= n; k++) {
     const t = k / n, a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, d = t * t;
@@ -201,7 +207,7 @@ function bez(p0: [number, number], c: [number, number], p2: [number, number], n 
   return out;
 }
 
-type FinSpec = {
+export type FinSpec = {
   root: [number, number][]; // cols + 1 points on the attached line, in the fin plane (a, b)
   edge: [number, number][]; // cols + 1 points on the outer edge
   rows: number;
@@ -218,7 +224,7 @@ type FinSpec = {
  * edge point), so it bends smoothly with the swim wave and turns paler towards the margin. With a root thickness the
  * fin is two sheets pushed apart (thick at the root, paper-thin at the margin), as the old flat fins were.
  */
-function finGrid(f: FinSpec): Part {
+export function finGrid(f: FinSpec): Part {
   const cols = f.root.length - 1, rows = f.rows;
   const sheets = f.half ? 2 : 1;
   const nv = (rows + 1) * (cols + 1);

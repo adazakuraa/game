@@ -1,4 +1,5 @@
 import type { FishLayout } from './models';
+
 import { mulberry32 } from '../utils/noise';
 
 /** Painting context for a creature texture. U/V map model space to canvas pixels. */
@@ -360,3 +361,155 @@ export function paintLook(p: Paint, L: Look): void {
   p.eye(f.shape.eyes ?? 0.1, L.iris ?? '#2a2a20');
   if (L.sheen !== undefined) p.sheen = L.sheen;
 }
+
+// --------------------------------------------------------------------------- 海生哺乳類（F12a、mammals.ts の体用）
+
+/**
+ * 海生哺乳類の塗り。横から見た投影の画像に、背→脇→腹のグラデーション（カウンターシェーディング）と種ごとの模様を描く。
+ * ひれ・肢・ひげは画像の左上隅の「色見本」（MAM_PATCH）に UV を向けてあるので、その色もここで塗る。
+ */
+export type MammalLook = {
+  back: string; flank?: string; belly: string; mid?: number;
+  /** 胸びれ・肢・耳・ひげの色見本：limb、尾びれ：fluke、ひげ：pale */
+  limb: string; fluke?: string; pale?: string; iris?: string;
+  noise?: number;
+  /** 背の濃い色の帯（イルカのケープ）：色。脇の下がりは背びれの後ろで深くなる */
+  cape?: string;
+  /** 目から胸びれへの濃い筋（イルカ） */
+  stripe?: string;
+  /** 腹の白（シャチ・ザトウ・ミンク）：境界線の高さ（体の中心線から、上は top × k、下は bot × k）と尾側のこぶ */
+  white?: { color: string; k: number; lobe?: number; t0?: number; soft?: boolean };
+  /** シャチの目の白い斑とサドルパッチ */
+  eyePatch?: string;
+  saddle?: string;
+  /** 小さな点・傷・しわ：n, 半径（画像の幅比）、色 */
+  spots?: [number, number, string][];
+  scars?: [number, string];
+  wrinkles?: string;
+  /** ヒゲクジラの腹の畝（色） */
+  pleats?: string;
+  /** 頭だけの色（ラッコの白っぽい頭）：t 以降 */
+  head?: [number, string];
+  mouthColor?: string;
+};
+
+export function paintMammal(p: Paint, L: MammalLook): void {
+  const f = p.fish!;
+  const m = f.mam!;
+  const g = p.g;
+  const B = m.body;
+  const yAt = (t: number, k: number) => B.cy(t) + (k >= 0 ? k * B.top(t) : k * B.bot(t));
+  p.fill(L.back);
+  p.shade(L.back, L.flank ?? L.back, L.belly, L.mid ?? 0.55);
+  const zOf = (t: number) => p.U(t - 0.5);
+  const poly = (pts: [number, number][]) => { g.beginPath(); pts.forEach(([t, y], i) => (i ? g.lineTo(zOf(t), p.V(y)) : g.moveTo(zOf(t), p.V(y)))); g.closePath(); g.fill(); };
+  const tt = (a: number, b: number, n = 24) => Array.from({ length: n + 1 }, (_, i) => a + ((b - a) * i) / n);
+  p.clipBody(() => {
+    if (L.head) { g.fillStyle = L.head[1]; g.fillRect(zOf(L.head[0]), 0, p.W, p.H); }
+    if (L.cape) {
+      for (const [w, al] of [[0.08, 0.35], [0.0, 0.55]] as const) {
+        g.fillStyle = L.cape; g.globalAlpha = al;
+        const kb = (t: number) => 0.3 - 0.5 * Math.exp(-(((t - 0.32) / 0.15) ** 2)) - w;
+        poly([...tt(B.t0, 1).map((t) => [t, yAt(t, 1.2)] as [number, number]), ...tt(1, B.t0).map((t) => [t, yAt(t, kb(t))] as [number, number])]);
+        g.globalAlpha = 1;
+      }
+    }
+    if (L.white) {
+      const w = L.white;
+      const kb = (t: number) => w.k + (w.lobe ?? 0) * Math.exp(-(((t - 0.28) / 0.09) ** 2));
+      const ts = tt(w.t0 ?? B.t0, 1);
+      const draw = (dk: number, al: number) => {
+        g.fillStyle = w.color; g.globalAlpha = al;
+        poly([...ts.map((t) => [t, yAt(t, kb(t) + dk)] as [number, number]), [1, yAt(1, -2)], [w.t0 ?? B.t0, yAt(w.t0 ?? B.t0, -2)]]);
+        g.globalAlpha = 1;
+      };
+      if (w.soft) { draw(0.12, 0.3); draw(0.05, 0.5); }
+      draw(0, 1);
+    }
+    if (L.saddle) { g.fillStyle = L.saddle; g.beginPath(); g.ellipse(zOf(0.34), p.V(yAt(0.34, 0.75)), p.U(0.04) - p.U(0), p.V(0) - p.V(B.top(0.34) * 0.5), 0, 0, Math.PI * 2); g.fill(); }
+    if (L.eyePatch) { g.fillStyle = L.eyePatch; g.beginPath(); g.ellipse(zOf(m.eye.t - 0.045), p.V(m.eye.y + 0.012), p.U(0.04) - p.U(0), p.V(0) - p.V(0.011), -0.25, 0, Math.PI * 2); g.fill(); }
+    if (L.stripe) {
+      g.strokeStyle = L.stripe; g.lineWidth = Math.max(2, p.H * 0.02); g.lineCap = 'round';
+      g.beginPath(); g.moveTo(zOf(m.eye.t), p.V(m.eye.y - 0.004));
+      g.quadraticCurveTo(zOf(m.eye.t - 0.12), p.V(m.eye.y - 0.025), zOf(0.72), p.V(yAt(0.72, -0.3)));
+      g.stroke();
+    }
+    for (const [n, r, col] of L.spots ?? []) {
+      g.fillStyle = col;
+      for (let i = 0; i < n; i++) {
+        const t = B.t0 + p.rnd() * (1 - B.t0);
+        const y = yAt(t, (p.rnd() * 2 - 1) * 0.95);
+        g.beginPath(); g.ellipse(zOf(t), p.V(y), r * p.W * (0.6 + p.rnd() * 0.8), r * p.W * (0.5 + p.rnd() * 0.7), p.rnd() * 3, 0, Math.PI * 2); g.fill();
+      }
+    }
+    if (L.scars) {
+      g.strokeStyle = L.scars[1]; g.lineWidth = Math.max(1, p.W / 400);
+      for (let i = 0; i < L.scars[0]; i++) {
+        const t = 0.25 + p.rnd() * 0.7, k = (p.rnd() * 2 - 1) * 0.7, a = p.rnd() * Math.PI;
+        const x = zOf(t), y = p.V(yAt(t, k)), l = p.W * (0.012 + p.rnd() * 0.03);
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l * 0.5); g.stroke();
+      }
+    }
+    if (L.wrinkles) {
+      g.strokeStyle = L.wrinkles; g.lineWidth = Math.max(1, p.W / 500);
+      for (let i = 0; i < 70; i++) {
+        const t = 0.1 + p.rnd() * 0.88, k = (p.rnd() * 2 - 1) * 0.9;
+        const x = zOf(t), y = p.V(yAt(t, k)), l = p.W * (0.015 + p.rnd() * 0.04);
+        g.beginPath(); g.moveTo(x, y); g.bezierCurveTo(x + l * 0.3, y - 3, x + l * 0.6, y + 3, x + l, y); g.stroke();
+      }
+    }
+    if (L.pleats && m.groove) {
+      g.strokeStyle = L.pleats; g.lineWidth = Math.max(1, p.H / 180); g.globalAlpha = 0.55;
+      for (let i = 0; i < 9; i++) {
+        const k = -0.25 - i * 0.085;
+        g.beginPath();
+        tt(m.groove[0], m.groove[1], 20).forEach((t, j) => (j ? g.lineTo(zOf(t), p.V(yAt(t, k))) : g.moveTo(zOf(t), p.V(yAt(t, k)))));
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+  });
+  p.noise(L.noise ?? 0.08);
+  // 目：描いた位置に球の見える面が合う（mammals.ts の eyeCap の UV）
+  {
+    const e = m.eye;
+    const rx = e.r * 1.25 * (p.W / (f.zMax - f.zMin)), ry = e.r * 1.25 * (p.H / (2 * f.yMax));
+    const ex = p.U(e.t - 0.5), ey = p.V(e.y);
+    g.fillStyle = L.iris ?? '#2a1c14';
+    g.beginPath(); g.ellipse(ex, ey, rx, ry, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#050505';
+    g.beginPath(); g.ellipse(ex, ey, rx * 0.68, ry * 0.68, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.85)';
+    g.beginPath(); g.ellipse(ex + rx * 0.25, ey - ry * 0.25, rx * 0.18, ry * 0.18, 0, 0, Math.PI * 2); g.fill();
+  }
+  // 口の線と噴気孔・鼻
+  p.clipBody(() => {
+    g.strokeStyle = L.mouthColor ?? 'rgba(25,15,15,0.7)'; g.lineWidth = Math.max(1.4, p.H / 150); g.lineCap = 'round';
+    g.beginPath();
+    tt(m.mouth.t1, 1, 12).forEach((t, i) => (i ? g.lineTo(zOf(t), p.V(m.mouth.y(t))) : g.moveTo(zOf(t), p.V(m.mouth.y(t)))));
+    g.stroke();
+    if (m.blow) { g.fillStyle = 'rgba(10,10,12,0.8)'; g.beginPath(); g.ellipse(zOf(m.blow.t), p.V(m.blow.y - 0.003), p.W * 0.012, p.H * 0.014, 0, 0, Math.PI * 2); g.fill(); }
+    if (m.nose) { g.fillStyle = '#16120f'; g.beginPath(); g.ellipse(zOf(0.992), p.V(m.nose.y), p.W * 0.014, p.H * 0.04, 0, 0, Math.PI * 2); g.fill(); }
+  });
+  // 色見本：ひれ・肢・尾びれ・ひげ（左上隅）
+  const cols = [L.limb, L.fluke ?? L.back, L.pale ?? '#d8d4c8'];
+  cols.forEach((c, k) => { g.fillStyle = c; g.fillRect(Math.floor(p.W * MAM_PATCH_W * k), 0, Math.ceil(p.W * MAM_PATCH_W), Math.ceil(p.H * MAM_PATCH_H)); });
+}
+const MAM_PATCH_W = 0.03;
+const MAM_PATCH_H = 0.07;
+
+/** 種類ごとの標準の塗り。species 側は kind と、色などの上書きだけ渡す */
+export const MAM_LOOK: Record<string, MammalLook> = {
+  dolphin: { back: '#4a545e', flank: '#7a8690', belly: '#e2e6e8', mid: 0.55, limb: '#5a646e', fluke: '#4a545e', cape: '#3a4248', stripe: 'rgba(40,46,52,0.75)', noise: 0.05 },
+  orca: { back: '#0e0e10', flank: '#121214', belly: '#161618', mid: 0.6, limb: '#101012', fluke: '#101012', white: { color: '#f2f2ee', k: -0.42, lobe: 0.7, t0: 0.12 }, eyePatch: '#f2f2ee', saddle: 'rgba(160,160,160,0.6)', noise: 0.04 },
+  humpback: { back: '#14181c', flank: '#1e2428', belly: '#2e3236', mid: 0.7, limb: '#e4e8e8', fluke: '#2a2e32', white: { color: '#dadede', k: -0.5, soft: true, t0: 0.4 }, spots: [[40, 0.004, 'rgba(210,210,210,0.55)']], pleats: 'rgba(40,44,48,0.8)', noise: 0.12 },
+  minke: { back: '#2a2e34', flank: '#3a3e44', belly: '#e0e2e4', mid: 0.62, limb: '#4a4e54', fluke: '#2a2e34', pleats: 'rgba(120,124,130,0.6)', noise: 0.06 },
+  blue: { back: '#5e6e7c', flank: '#7a8a98', belly: '#a8b4c0', mid: 0.55, limb: '#7a8a98', fluke: '#5e6e7c', spots: [[160, 0.006, 'rgba(180,196,208,0.4)'], [90, 0.005, 'rgba(60,76,90,0.35)']], pleats: 'rgba(100,112,124,0.6)', noise: 0.06 },
+  sperm: { back: '#3a3634', flank: '#46423e', belly: '#5a5652', mid: 0.6, limb: '#3a3634', fluke: '#3a3634', wrinkles: 'rgba(20,18,16,0.35)', mouthColor: 'rgba(210,204,196,0.8)', noise: 0.12 },
+  dugong: { back: '#7a7468', flank: '#948e82', belly: '#b0aaa0', mid: 0.5, limb: '#7a7468', fluke: '#6e685c', spots: [[24, 0.003, 'rgba(60,54,46,0.4)']], noise: 0.1 },
+  seal: { back: '#8a8c86', flank: '#a8aaa4', belly: '#c8c8c0', mid: 0.55, limb: '#6a6c66', fluke: '#8a8c86', spots: [[150, 0.006, 'rgba(40,42,40,0.7)']], noise: 0.06 },
+  sealion: { back: '#4a3624', flank: '#5a4430', belly: '#7a6448', mid: 0.55, limb: '#3a2a1c', fluke: '#4a3624', noise: 0.07 },
+  furseal: { back: '#3a2e24', flank: '#4a3c2e', belly: '#6a5a46', mid: 0.55, limb: '#2a2018', fluke: '#3a2e24', noise: 0.07 },
+  steller: { back: '#7a5a34', flank: '#8e6a40', belly: '#a88458', mid: 0.55, limb: '#5a4024', fluke: '#7a5a34', noise: 0.07 },
+  otter: { back: '#4a3626', flank: '#5a4430', belly: '#6a5238', mid: 0.7, limb: '#3a2a1c', fluke: '#4a3626', head: [0.82, '#cdbca2'], pale: '#e0d6c4', noise: 0.08 },
+};

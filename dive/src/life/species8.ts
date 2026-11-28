@@ -1,6 +1,6 @@
 import { buildAmmonite, buildAnomalocaris, buildCrustacean, buildPlesiosaur, type FishShape } from './models';
 import type { Paint } from './paint';
-import { paintLook, type Look } from './paint';
+import { MAM_LOOK, paintLook, paintMammal, type Look, type MammalLook } from './paint';
 import type { Region, SpeciesDef } from './species';
 import { F, sh } from './species2';
 
@@ -24,40 +24,38 @@ const dots = (p: Paint, n: number, r0: number, r1: number, col: string, y0 = 0, 
 /** Air-breathing / non-fish swimmers drawn with the fish body model. */
 type Swimmer = {
   id: string; name: string; sci: string; zone: SpeciesDef['zone']; d: [number, number]; size: number; r: 1 | 2 | 3 | 4;
-  body: FishShape; look: Look; desc: string; hint: string; habLabel: string; region: Region; n: number; g: number;
+  body: FishShape; look?: Look; mam?: Partial<MammalLook>; desc: string; hint: string; habLabel: string; region: Region; n: number; g: number;
   speed: number; curious?: boolean; swim?: [number, number, number]; behavior?: SpeciesDef['behavior']; aggro?: SpeciesDef['aggro'];
 };
 const swimmer = (s: Swimmer): SpeciesDef => ({
   id: s.id, name: s.name, sci: s.sci, zone: s.zone, depth: s.d, size: s.size, rarity: s.r, desc: s.desc, hint: s.hint, habLabel: s.habLabel,
-  kind: 'fish', fish: s.body, paint: (p) => paintLook(p, s.look), tex: [512, 256],
+  kind: 'fish', fish: s.body, paint: (p) => (s.body.cet || s.body.pin ? paintMammal(p, { ...MAM_LOOK[(s.body.cet ?? s.body.pin)!.kind], ...s.mam }) : paintLook(p, s.look!)), tex: [512, 256],
   count: s.n, groups: s.g, behavior: s.behavior ?? 'solo', region: s.region, speed: s.speed, flee: s.curious ? 0 : 3, curious: s.curious,
   swim: s.swim ?? [Math.max(0.5, 2.4 - s.size * 0.3), 0.05, 2], photoRange: Math.min(30, s.size * 9 + 4), aggro: s.aggro,
 });
 
-const CETACEAN = (o: Partial<FishShape>): FishShape => ({ H: 0.2, W: 0.21, peak: 0.55, nose: 0.3, ped: 0.06, tail: 'flukes', tailL: 0.14, tailH: 0.3, pect: { t: 0.72, len: 0.13, wid: 0.06, down: 0.6, out: 0.6 }, eyes: 0.05, eyeT: 0.86, bendY: true, ...o });
-const PINNIPED = (o: Partial<FishShape>): FishShape => ({ H: 0.24, W: 0.26, peak: 0.5, nose: 0.55, ped: 0.08, belly: 0.06, tail: 'flukes', tailL: 0.1, tailH: 0.22, pect: { t: 0.68, len: 0.14, wid: 0.07, down: 0.5, out: 0.7 }, eyes: 0.1, eyeT: 0.9, bendY: true, ...o });
+const CETACEAN = (o: Partial<FishShape>): FishShape => ({ H: 0.2, W: 0.21, peak: 0.55, nose: 0.3, ped: 0.06, tail: 'flukes', tailL: 0.14, tailH: 0.3, eyes: 0.05, eyeT: 0.86, bendY: true, ...o });
+const PINNIPED = (o: Partial<FishShape>): FishShape => ({ H: 0.24, W: 0.26, peak: 0.5, nose: 0.55, ped: 0.08, belly: 0.06, tail: 'flukes', tailL: 0.1, tailH: 0.22, eyes: 0.1, eyeT: 0.9, bendY: true, ...o });
 
 export const WILD_SPECIES: SpeciesDef[] = [
   // ============================================================ marine mammals
   swimmer({ id: 'shachi', name: 'シャチ', sci: 'Orcinus orca', zone: 'offshore', d: [0, 40], size: 7, r: 3, region: OFF, n: 3, g: 1, speed: 2.2, curious: true,
-    body: CETACEAN({ H: 0.22, W: 0.22, nose: 0.55, dorsal: [{ a: 0.44, b: 0.56, h: 0.22, sweep: 0.15 }], pect: { t: 0.72, len: 0.16, wid: 0.09, down: 0.6, out: 0.6 } }),
-    look: { c: ['#101012', '#141416', '#f2f2ee'], mid: 0.6, fin: '#0e0e10', tail: '#101012', ocel: [[0.36, 0.22, 9, '#f2f2ee']], saddle: [[0.05, 0.12, 'rgba(150,150,150,0.55)']] },
+    body: CETACEAN({ H: 0.21, W: 0.18, cet: { kind: 'orca' } }),
     desc: '海の生態系の頂点に立つ大型のイルカの仲間。家族の群れで暮らし、群れごとに独自の「方言」で鳴き交わす。', hint: '沖の大海原。群れで回遊している。', habLabel: '家族の群れで沖を回遊する' }),
   swimmer({ id: 'makkou', name: 'マッコウクジラ', sci: 'Physeter macrocephalus', zone: 'deep', d: [150, 430], size: 15, r: 3, region: DEEP, n: 3, g: 1, speed: 1.0, swim: [0.4, 0.05, 1.5],
-    body: CETACEAN({ H: 0.2, W: 0.19, peak: 0.78, nose: 1.0, ped: 0.05, dorsal: [{ a: 0.3, b: 0.36, h: 0.03 }], pect: { t: 0.66, len: 0.07, wid: 0.04, down: 0.6, out: 0.6 }, eyes: 0.03, eyeT: 0.68 }),
-    look: { c: ['#3a3634', '#46423e', '#5a5652'], fin: '#3a3634', noise: 0.1, blotch: [40, ['rgba(90,86,80,0.4)', 'rgba(30,28,26,0.3)']] },
+    body: CETACEAN({ H: 0.23, W: 0.17, eyes: 0.03, cet: { kind: 'sperm' } }),
     desc: '巨大な四角い頭をもつ歯クジラ。1000m以上の深海まで潜り、ダイオウイカを捕らえて食べる。', hint: '深海。ダイオウイカを追って潜ってくる。', habLabel: '深海まで潜ってイカを狩る' }),
   swimmer({ id: 'todo', name: 'トド', sci: 'Eumetopias jubatus', zone: 'cold', d: [0, 30], size: 2.8, r: 3, region: COLD, n: 2, g: 1, speed: 1.4, curious: true,
-    body: PINNIPED({ H: 0.26, nose: 0.5 }), look: { c: ['#7a5a34', '#8e6a40', '#a88458'], fin: '#5a4024', iris: '#111' },
+    body: PINNIPED({ H: 0.25, W: 0.24, pin: { kind: 'steller' } }),
     desc: 'アシカの仲間で最大。雄は体重1トン近くになる。好奇心が強く、ダイバーの周りを泳ぎ回ることもある。', hint: '流氷の入り江。向こうから近づいてくる。', habLabel: '岩場を拠点に魚を追う' }),
   swimmer({ id: 'gomafuazarashi', name: 'ゴマフアザラシ', sci: 'Phoca largha', zone: 'cold', d: [0, 30], size: 1.6, r: 2, region: COLD, n: 3, g: 2, speed: 1.2, curious: true,
-    body: PINNIPED({}), look: { c: ['#8a8c86', '#a8aaa4', '#c8c8c0'], fin: '#7a7c76', spots: [[90, 0.01, 0.025, 'rgba(40,42,40,0.7)']], iris: '#111' },
+    body: PINNIPED({ H: 0.22, W: 0.21, pin: { kind: 'seal' } }),
     desc: '灰色の体にゴマのような黒い斑点。流氷の上で子育てをする。丸い目でじっとこちらを見つめてくる。', hint: '流氷の入り江の中層。好奇心旺盛。', habLabel: '流氷の周りで魚やタコを食べる' }),
   swimmer({ id: 'kitaottosei', name: 'キタオットセイ', sci: 'Callorhinus ursinus', zone: 'cold', d: [0, 40], size: 1.8, r: 2, region: COLD, n: 3, g: 1, speed: 2.2,
-    body: PINNIPED({ H: 0.22, nose: 0.45, pect: { t: 0.66, len: 0.22, wid: 0.08, down: 0.5, out: 0.7 } }), look: { c: ['#3a2e24', '#4a3c2e', '#6a5a46'], fin: '#2a2018', iris: '#111' },
+    body: PINNIPED({ H: 0.2, W: 0.19, pin: { kind: 'furseal' } }),
     desc: '密集した下毛で寒さをしのぐアシカの仲間。大きな前ビレで飛ぶように速く泳ぐ。', hint: '流氷の入り江の中層。動きが速い。', habLabel: '大きな前ビレで速く泳ぐ' }),
   swimmer({ id: 'rakko', name: 'ラッコ', sci: 'Enhydra lutris', zone: 'cold', d: [0, 5], size: 1.2, r: 3, region: COLD, n: 2, g: 2, speed: 0.4, behavior: 'school', swim: [1, 0.04, 2],
-    body: PINNIPED({ H: 0.24, nose: 0.7, tail: 'round', tailL: 0.12, tailH: 0.12, eyes: 0.08 }), look: { c: ['#4a3626', '#5a4430', '#c8b8a0'], mid: 0.7, fin: '#3a2a1c', front: [0.32, '#cdbca2'], iris: '#111' },
+    body: PINNIPED({ H: 0.17, W: 0.18, pin: { kind: 'otter' } }),
     desc: '海面に仰向けに浮かび、お腹の上で石を使って貝を割る。寝るときは海藻を体に巻いて流されないようにする。', hint: '流氷の入り江の海面近く。見上げて探そう。', habLabel: '海面に浮かんで暮らす' }),
   // ============================================================ penguins (for fun: wild ones live in the southern hemisphere)
   F({ id: 'kouteipengin', name: 'コウテイペンギン', sci: 'Aptenodytes forsteri', zone: 'cold', d: [0, 60], size: 1.1, r: 3, body: sh('tuna', { H: 0.3, W: 0.3, tail: 'none', nose: 0.35, peak: 0.5, pect: { t: 0.64, len: 0.38, wid: 0.06, down: 0.3, out: 0.8 }, dorsal: [], anal: [], eyes: 0.05, eyeT: 0.88 }), hab: 'midwater', region: COLD, n: 3, g: 1, speed: 1.6, swim: [2.4, 0.02, 3],
