@@ -1,6 +1,6 @@
 import { SPECIES, SPECIES_BY_ID, type SpeciesDef } from '../life/species';
 import { BAIT, type BaitId } from './bait';
-import { WEATHER, weatherOf } from './weather';
+import { WEATHER, weatherOf, weatherMorning } from './weather';
 import { runFuguExam } from './kitchenGames';
 import { CAT_NAME, DISH, FISHING, FUGU_EXAM, PENALTY, STORY, nightOf, dishFor, edibleInfo, fits, isFugu, isGoodCatch, poisonFor, fmtKg, makeOrders, marketPrice, repLevel, timeLabel, type Catch, type DishId, type Order } from './fishing';
 import { yen } from './photoScore';
@@ -116,7 +116,7 @@ export class Kitchen {
     if (ev === 'morning') {
       // Phase 4: the morning word is the day's weather (the island talk waits for the next visit);
       // on the morning the notice board is introduced, the two are told together
-      const w = WEATHER[weatherOf(s.day ?? 1)];
+      const w = { morning: weatherMorning(s.day ?? 1) };
       if (!s.boardOn && (s.day ?? 1) >= BOARD_DAY) {
         s.boardOn = true;
         this.line = w.morning + LINES.board[0].replace(/^おはよう。/, ' ');
@@ -155,7 +155,7 @@ export class Kitchen {
 
   /** Species that can turn up in an order: edible and found in waters a scuba diver can reach. */
   private pool(level: number): SpeciesDef[] {
-    return SPECIES.filter((d) => isGoodCatch(d) && d.zone !== 'deep' && d.zone !== 'river' && d.depth[0] < 40 && (level >= FISHING.nightFreeLevel || d.when !== 'night'));
+    return SPECIES.filter((d) => isGoodCatch(d) && !d.weather && d.zone !== 'deep' && d.zone !== 'river' && d.depth[0] < 40 && (level >= FISHING.nightFreeLevel || d.when !== 'night'));
   }
 
   get licensed(): boolean {
@@ -472,7 +472,7 @@ export class Kitchen {
     this.say('morning');
     this.leaveOnTimeChange = false;
     // 掲示板の紹介の朝は、その話を台本 board（F5）が言うので、ひとことは天気だけ
-    const head = boardNew ? WEATHER[weatherOf(s.day)].morning : this.line;
+    const head = boardNew ? weatherMorning(s.day) : this.line;
     return { day: s.day, line: head + (left.length ? `　クーラーに残っていた魚は、市場に卸しておいたよ（+${yen(v)}）。` : ''), left: left.length, v, boardNew };
   }
 }

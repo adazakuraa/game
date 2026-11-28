@@ -81,7 +81,7 @@ export function makeQuest(known: Set<string>, rnd: () => number = Math.random, t
       return { ...base('ruins'), giver: '骨董屋', title: '遺跡の宝探し', desc: '古い地図によると、遺跡のこのあたりに箱が沈んでいるらしい', reward: QUEST.reward.treasure };
     case 'tag': {
       const zone = pick(zones(['reef', 'dropoff']));
-      const big = SPECIES.filter((s) => (s.zone === zone || (zone === 'dropoff' && s.zone === 'offshore')) && s.size >= 0.8 && s.size < 8 && s.rarity <= 2 && s.kind !== 'none');
+      const big = SPECIES.filter((s) => (s.zone === zone || (zone === 'dropoff' && s.zone === 'offshore')) && s.size >= 0.8 && s.size < 8 && s.rarity <= 2 && s.kind !== 'none' && !s.weather);
       const sp = pick(big.length ? big : SPECIES.filter((s) => s.id === 'turtle'));
       return { ...base(zone), giver: '海洋研究所', title: `${sp.name}の標識読み取り`, desc: `このあたりにいる${sp.name}に研究用の標識をつけてある。近づいて番号を読み取ってきてほしい`, reward: QUEST.reward.tag, species: sp.id };
     }
@@ -92,7 +92,7 @@ export function makeQuest(known: Set<string>, rnd: () => number = Math.random, t
     }
     default: {
       const zone = pick(zones(['lagoon', 'reef', 'rocky', 'dropoff', 'kelp', 'cold', 'estuary', 'river']).concat('lagoon'));
-      const cand: SpeciesDef[] = SPECIES.filter((s) => (s.zone === zone || (zone === 'dropoff' && s.zone === 'offshore')) && s.rarity <= 2 && s.kind !== 'none' && s.when !== 'night');
+      const cand: SpeciesDef[] = SPECIES.filter((s) => (s.zone === zone || (zone === 'dropoff' && s.zone === 'offshore')) && s.rarity <= 2 && s.kind !== 'none' && s.when !== 'night' && !s.weather);
       const sp = pick(cand);
       const dp = pointOf(zone)!;
       return { id, kind: 'photo', zone, x: dp.x, z: dp.z, giver: '月刊うみなか 編集部', title: `${sp.name}の写真`, desc: `誌面で使う${sp.name}の写真がほしい。B評価以上で撮ってきてほしい`, reward: [0, 300, 900, 2400, 8000][sp.rarity] * QUEST.photoMult, species: sp.id };

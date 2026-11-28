@@ -21,7 +21,7 @@ import { Flora } from '../world/flora';
 import { Creatures, CURIOUS, OCTO, type PhotoTarget } from '../life/creatures';
 import { BAIT, dietOf, eatsBait, type BaitId } from './bait';
 import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
-import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
+import { WEATHER, weatherMult as weatherMultOf, weatherMorning, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
 import { surfaceAt } from '../world/surface';
 import { BLUEHOLE, caveRoofAt, DIVE_POINTS, flowAt, FLOW_MIN_DEPTH, GATE, gateWeight, heightAt, RUINS, riverDist, SHORE_BLOCK, VENT, WATERFALL, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
@@ -3610,6 +3610,8 @@ export class Game {
         return { grab: !!g, id: g?.rt.def.id ?? null, taps: g?.taps ?? 0, need: g?.need ?? 0, t: g ? Math.round(g.t * 10) / 10 : 0, air: Math.round(this.air) };
       },
       weather: () => this.weather,
+      weatherOfDay: (d: number) => weatherOf(d),
+      weatherMorning: (d: number) => weatherMorning(d),
       setWeather: (w: string) => {
         this.weather = w as WeatherId;
         this.creatures.weatherMult = (def) => weatherMultOf(def, this.weather);

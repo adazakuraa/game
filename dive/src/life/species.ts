@@ -1,6 +1,7 @@
 import { BLUEHOLE, RUINS, type ZoneId } from '../world/layout';
 import type { FishShape, RayShape } from './models';
 import type { Paint } from './paint';
+import type { WeatherId } from '../game/weather';
 
 export type Behavior = 'school' | 'solo' | 'anemone' | 'crevice' | 'bottom' | 'drift' | 'buried' | 'static' | 'pelagic';
 export type Kind = 'fish' | 'ray' | 'jelly' | 'squid' | 'octopus' | 'dumbo' | 'turtle' | 'lobster' | 'isopod' | 'nudi' | 'gardenEel' | 'inv' | 'none';
@@ -52,6 +53,8 @@ export type SpeciesDef = {
   rainbow?: boolean;
   /** only out on night dives */
   when?: 'night';
+  /** 修正バッチ2 F11 (32)：この天気の日だけ現れる（省略＝いつでも）。★2 以下・依頼や章の対象外。下の WEATHER_ONLY で足す */
+  weather?: WeatherId[];
   /** 修正バッチ2 F9 (30)：最初のこの数の群れは、ふだんの region ではなく鯨骨（whalefall.ts）に住む */
   whale?: number;
   /** lateral thickness / core height for photo-based models */
@@ -553,6 +556,33 @@ function applyWhaleFall() {
   }
 }
 applyWhaleFall();
+
+/**
+ * 修正バッチ2 F11 (32)：天気限定の種（既存種から 8 種。新種は足さない）。★2 以下だけ。
+ * 章・撮影依頼・標識の依頼・食堂の注文の対象にはならない（quests.ts / kitchen.ts が `weather` つきを除く）。
+ * その天気は `weatherOf` が 7 日以内に必ず 1 回は来るようにしてある。
+ */
+const WEATHER_LABEL: Record<WeatherId, string> = { sunny: '晴れ', cloudy: '曇り', rain: '雨', storm: '荒天' };
+export const WEATHER_ONLY: { id: string; weather: WeatherId[]; hint: string }[] = [
+  { id: 'himetsubameuo', weather: ['rain'], hint: '雨で川の水が増えた日、河口の濁りに群れて現れる。' },
+  { id: 'nokogirigazami', weather: ['rain'], hint: '雨の日、マングローブの河口の底を歩き回る。' },
+  { id: 'namazu', weather: ['rain'], hint: '雨で水かさが増した日、川の岩陰からのそりと出てくる。' },
+  { id: 'unagi', weather: ['rain'], hint: '雨の日、川を下って海へ向かう。' },
+  { id: 'yoshikiri', weather: ['storm'], hint: '海が荒れた日、沖の浅いところまで上がってくる。' },
+  { id: 'sodeika', weather: ['storm'], hint: '海が荒れた日、沖の表層に浮かび上がる。' },
+  { id: 'yureikurage', weather: ['cloudy'], hint: '曇りの日、沖の中層をゆらゆら漂う。' },
+  { id: 'ushibanatobiei', weather: ['cloudy'], hint: '曇りの日、沖で群れて泳ぐ。' },
+];
+function applyWeatherOnly() {
+  const byId = new Map(SPECIES.map((d) => [d.id, d]));
+  for (const w of WEATHER_ONLY) {
+    const d = byId.get(w.id);
+    if (!d) continue;
+    d.weather = w.weather;
+    d.hint = `${w.hint}${w.weather.map((x) => WEATHER_LABEL[x]).join('・')}の日だけ現れる。`;
+  }
+}
+applyWeatherOnly();
 balanceZones();
 
 export const SPECIES_BY_ID = new Map(SPECIES.map((s) => [s.id, s]));
