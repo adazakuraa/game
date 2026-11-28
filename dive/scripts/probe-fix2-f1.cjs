@@ -43,7 +43,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
   await setV('set-shutter', 130);
   await setV('set-ctl', 70);
   const k = await ev(() => ({ s: getComputedStyle(document.documentElement).getPropertyValue('--shutter-k').trim(), c: getComputedStyle(document.documentElement).getPropertyValue('--ctl-k').trim(), shown: !document.getElementById('settings').classList.contains('hidden'), saved: JSON.parse(localStorage.getItem('blue-depths-save-v1')).ui, pv: document.querySelector('.pv-shutter').getBoundingClientRect().width, pc: document.querySelector('.pv-ctl').getBoundingClientRect().width }));
-  check('(1) sliders set --shutter-k / --ctl-k and the sample buttons follow; saved in save.ui', k.s === '1.3' && k.c === '0.7' && k.shown && k.saved && Math.abs(k.saved.shutter - 1.3) < 1e-6 && Math.abs(k.saved.ctl - 0.7) < 1e-6 && Math.abs(k.pv - 124.8) < 1 && k.pc >= 44, JSON.stringify(k));
+  check('(1) sliders set --shutter-k / --ctl-k and the sample buttons follow; saved in save.ui', k.s === '1.3' && k.c === '0.7' && k.shown && k.saved && Math.abs(k.saved.shutter - 1.3) < 1e-6 && Math.abs(k.saved.ctl - 0.7) < 1e-6 && Math.abs(k.pv - 99.84) < 1 && k.pc >= 36, JSON.stringify(k));
   await ev(() => document.getElementById('set-close').click());
   await page.reload();
   await page.waitForFunction(() => window.__THREE_GAME_TEST_HOOKS__, null, { timeout: 120000 });
@@ -82,11 +82,11 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     const r = (id) => document.getElementById(id).getBoundingClientRect();
     return { sh: r('btn-shutter').width, up: r('btn-up').width, state: window.__THREE_GAME_TEST_HOOKS__.game.state };
   });
-  check('(1) in the dive the shutter is 96 x 1.3 and the ▲▼ buttons stay >= 44 px at 70%', sizes.state === 'diving' && Math.abs(sizes.sh - 124.8) < 1 && sizes.up >= 44 && sizes.up <= 46, JSON.stringify(sizes));
+  check('(1) in the dive the shutter is 76.8 x 1.3 and the ▲▼ buttons stay >= 36 px at 70% (F1b)', sizes.state === 'diving' && Math.abs(sizes.sh - 99.84) < 1 && sizes.up >= 36 && sizes.up <= 38, JSON.stringify(sizes));
   await ev(() => { const g = window.__THREE_GAME_TEST_HOOKS__.game; g.paused = true; g.save.ui = { shutter: 1, ctl: 1 }; });
   await ev(() => { document.documentElement.style.setProperty('--shutter-k', '1'); document.documentElement.style.setProperty('--ctl-k', '1'); });
   const dflt = await ev(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(); return { sh: r('btn-shutter').width, up: r('btn-up').width, air: r('air').width, map: r('minimap-btn').width }; });
-  check('(1) default sizes: shutter 96, ctl 58, air 100, minimap 100 (390 wide)', Math.abs(dflt.sh - 96) < 1 && Math.abs(dflt.up - 58) < 1 && Math.abs(dflt.air - 100) < 1 && Math.abs(dflt.map - 100) < 1, JSON.stringify(dflt));
+  check('(1) default sizes: shutter 76.8, ctl 43.5, air (F1b) 100, minimap 100 (390 wide)', Math.abs(dflt.sh - 76.8) < 1 && Math.abs(dflt.up - 43.5) < 1 && Math.abs(dflt.air - 100) < 1 && Math.abs(dflt.map - 100) < 1, JSON.stringify(dflt));
 
   // ---- (6) air number centred, two viewports
   for (const [w, h] of [[390, 844], [844, 390]]) {
