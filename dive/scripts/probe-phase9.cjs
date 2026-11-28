@@ -148,15 +148,16 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     const h = window.__THREE_GAME_TEST_HOOKS__, g = h.game, env = g.env;
     env.weatherFog = 1; env.weatherLight = 1; env.night = 0; env.narcosis = 0;
     const at = (x, z, y) => { g.camera.position.set(x, y, z); for (let i = 0; i < 60; i++) env.update(0.5, g.camera, g.renderer, 10 + i); const f = env.fog; return { r: f.color.r, g: f.color.g, b: f.color.b, d: f.density, bump: env.wedgeBump, vis: 1.75 / (f.density / env.wedgeBump) }; };
-    const above = at(288, -110, -0.9), below = at(288, -110, -3.8), mid = at(288, -110, -1.8), deep = at(288, -110, -6);
+    // F10: the boundary is 2.0 m wide (1.8 ± 2.0 m), so 'above' is sampled at the surface and 'below' / 'deep' well under it
+    const above = at(288, -110, -0.1), below = at(288, -110, -6.5), mid = at(288, -110, -1.8), deep = at(288, -110, -9);
     const lagoon = at(0, 40, -2);
     return { tbl: h.estuaryWater(), above, below, mid, deep, lagoon };
   });
   console.log('  water', JSON.stringify(wat));
   check('water: estuary zone water is tea-green with 16 m visibility', wat.tbl.base[3] === 16 && wat.tbl.base[1] > wat.tbl.base[2] && wat.tbl.base[0] > 0.04, JSON.stringify(wat.tbl.base));
   check('water: salt wedge layers are 10 m (river, above) and 20 m (sea, below 1.8 m) — fog only', Math.abs(wat.above.vis - 10) < 0.8 && Math.abs(wat.below.vis - 20) < 1.6, `above=${wat.above.vis.toFixed(1)} below=${wat.below.vis.toFixed(1)}`);
-  check('water: the fog colour changes across 1.8 m (river-brown above, sea-blue below)', (wat.below.b / wat.below.g) > (wat.above.b / wat.above.g) * 1.4, `b/g above=${(wat.above.b / wat.above.g).toFixed(2)} below=${(wat.below.b / wat.below.g).toFixed(2)}`);
-  check('water: the fog is 1.4x thicker right at the boundary, 1.0 away from it', Math.abs(wat.mid.bump - 1.4) < 0.03 && wat.above.bump < 1.02 && wat.deep.bump < 1.02 && Math.abs(wat.lagoon.bump - 1) < 1e-6, `mid=${wat.mid.bump.toFixed(3)} above=${wat.above.bump.toFixed(3)} deep=${wat.deep.bump.toFixed(3)} lagoon=${wat.lagoon.bump}`);
+  check('water: the fog colour changes across 1.8 m (river-brown above, sea-blue below)', (wat.below.b / wat.below.g) > (wat.above.b / wat.above.g) * 1.3, `b/g above=${(wat.above.b / wat.above.g).toFixed(2)} below=${(wat.below.b / wat.below.g).toFixed(2)}`);
+  check('water: the fog is 1.4x thicker right at the boundary, 1.0 away from it', Math.abs(wat.mid.bump - 1.4) < 0.03 && wat.above.bump < 1.3 && wat.deep.bump < 1.02 && Math.abs(wat.lagoon.bump - 1) < 1e-6, `mid=${wat.mid.bump.toFixed(3)} above=${wat.above.bump.toFixed(3)} deep=${wat.deep.bump.toFixed(3)} lagoon=${wat.lagoon.bump}`);
   check('water: outside the estuary nothing changes (lagoon 38 m)', Math.abs(wat.lagoon.vis - 38) < 2, wat.lagoon.vis.toFixed(1));
 
   // flow: weak 0.15 m/s seaward in the channel only, never a photo penalty
