@@ -23,14 +23,14 @@ import { CHEST, CHEST_GEAR, CHESTS, Chests, type ChestGearId } from './chests';
 import { WEATHER, weatherMult as weatherMultOf, weatherOf, type WeatherId } from './weather';
 import { SPECIES, SPECIES_BY_ID, ZONE_ORDER } from '../life/species';
 import { surfaceAt } from '../world/surface';
-import { BLUEHOLE, caveRoofAt, DIVE_POINTS, flowAt, FLOW_MIN_DEPTH, heightAt, RUINS, riverDist, SHORE_BLOCK, VENT, WATERFALL, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
+import { BLUEHOLE, caveRoofAt, DIVE_POINTS, flowAt, FLOW_MIN_DEPTH, GATE, gateWeight, heightAt, RUINS, riverDist, SHORE_BLOCK, VENT, WATERFALL, WORLD, WRECK, zoneAt, ZONE_NAMES, type DivePoint } from '../world/layout';
 import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
 import { areaIconSvg } from '../ui/areaIcons';
 import { TalkUI, type TalkLine } from '../ui/talk';
-import { ITEM_ORDER, ITEM_TIPS, NIGHT_REST, NO_LIGHT, albumLines, baitLines, boardLines, claimLines, introLines, kitchenLines, praiseLines, replayLines, shopOpenLines, tankUpLines } from './talks';
+import { ITEM_ORDER, ITEM_TIPS, NIGHT_REST, NO_LIGHT, albumLines, baitLines, boardLines, claimLines, deepChartLines, introLines, kitchenLines, praiseLines, replayLines, shopOpenLines, tankUpLines } from './talks';
 import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
 // DEBUG-PANEL:BEGIN（テスト用。完成版で削除）
 import { installDebugPanel } from './debug';
@@ -71,6 +71,8 @@ type Shot = { photo: string; depth: number; score: number; grade: string; value:
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
 
 const SAVE_KEY = 'blue-depths-save-v1';
+/** F6：拾い物の箱の海図に出さないエリア：入手元がほかにある（流氷＝ショップ・ブルーホール＝ショップ・水中洞窟＝しおさい亭・深海＝大気圧潜水服） */
+const CHART_ONLY = new Set<string>([...GATE.areas, 'deep']);
 
 /** 修正バッチ2 (8): air warnings — each shows once per dive (half-tank, then the last stretch), no constant blinking */
 export const AIR_WARN = { halfFrac: 0.35, lastBar: 20, lastSec: 30 };
@@ -143,6 +145,9 @@ export class Game {
   private lastShoreWarn = -99;
   /** Phase 5: last time the world's edge said "no further" */
   private lastEdgeWarn = -100;
+  /** F6：海図のないエリアのゲート。この潜水の開始地点がもうエリアの中にあるとき（デバッグなど）は、その潜水だけゲートしない */
+  private gateFree = new Set<string>();
+  private lastGateWarn = -100;
   /** down-current cells for this dive (drop-off / blue water): centre, radius, sink speed m/s */
   private currents: { x: number; z: number; r: number; s: number }[] = [];
   private currentF = 0;
@@ -420,6 +425,16 @@ export class Game {
           sv.discovered = DIVE_POINTS.filter((dp) => dp.id === 'lagoon' || zones.has(dp.id as never) || (dp.id === 'dropoff' && zones.has('offshore'))).map((dp) => dp.id);
           sv.tutorial = sv.dives > 0;
           if (sv.owned?.length || Object.keys(sv.found).length) (sv.owned ??= []).push('spear');
+        }
+        // 修正バッチ2 F6：海図の入手元の整理。①ゲートの 3 つは、すでに泳いで入った（そこの生き物を撮った）人は海図を持っている扱い
+        //   ②しおさい亭の話 Lv2 は水中洞窟の海図に変わったので、もう読んだ人には洞窟を渡す ③大気圧潜水服を持っている人は深海を知っている
+        {
+          const d = new Set(sv.discovered ?? ['lagoon']);
+          const zones = new Set(Object.keys(sv.found).map((id) => SPECIES_BY_ID.get(id)?.zone as string | undefined));
+          for (const a of GATE.areas) if (zones.has(a)) d.add(a);
+          if ((sv.story ?? 0) >= 2) d.add('cave');
+          if (sv.owned?.includes('ads')) { d.add('deep'); sv.talked = [...new Set([...(sv.talked ?? []), 'deepChart'])]; }
+          if (d.size > (sv.discovered ?? ['lagoon']).length) sv.discovered = [...d];
         }
         // (41) HUD ボタン基準の改定：見た目の大きさを変えずに倍率を換算（ui.base が付いたら移行済み）
         if (sv.ui && (sv.ui.base ?? 1) < UI_REBASE.ver) {
@@ -741,7 +756,9 @@ export class Game {
         // F5：女将さんの第 1 話を吹き出しで読んだので既読に（海図つきの話ならここで渡す）
         readStory: () => { const n = this.save.story ?? 0; if (n < 1) { const ch = STORY[n]; if (ch?.map) this.grantMap(ch.map); this.save.story = n + 1; this.writeSave(); this.kitchen.render(); } },
         // F5：掲示板の使い方カードは吹き出しで済んだので畳む
-        boardSeen: () => { this.save.boardIntro = true; this.writeSave(); this.renderQuests(); } });
+        boardSeen: () => { this.save.boardIntro = true; this.writeSave(); this.renderQuests(); },
+        // F6：大気圧潜水服を買ったとき、編集長が深海の場所を教える（ここで深海を発見済みにしてダイブポイントに出す）
+        grantDeep: () => { this.grantMap('deep'); this.renderTitle(); } });
       if (r.choice === 'claim' && claimIdx !== undefined) this.claimStory(claimIdx);
       if (id) { const t = (this.save.talked ??= []); if (!t.includes(id)) t.push(id); }
       after?.();
@@ -792,6 +809,7 @@ export class Game {
     if (!seen('noLight') && torchGap && !this.hasTorch() && (night || i >= 3) && seen('nightRest') && !this.visitRest) return { id: 'noLight', lines: NO_LIGHT };
     // F5 ③機能の解放（夜の休み方と同じ訪問では重ねない）。④新アイテム（item:<id>）は潜水開始時の小型吹き出し（itemTips）
     if (this.visitRest) return null;
+    if (!seen('deepChart') && this.has('ads')) return { id: 'deepChart', lines: deepChartLines() };
     const money = this.save.money ?? 0;
     const fins = SHOP.find((x) => x.id === 'fins')!;
     if (!seen('shopOpen') && this.stockGap(fins) === 0 && !this.owns(fins)) return { id: 'shopOpen', lines: shopOpenLines(money >= fins.price, yen(fins.price)) };
@@ -813,6 +831,8 @@ export class Game {
   private stockGap(g: (typeof SHOP)[number]): number {
     if (g.rep) return repLevel(this.save.rep ?? 0) >= g.rep ? 0 : 1;
     if (this.save.stocked?.includes(g.id)) return 0;
+    // F6：解放順の改定で入荷の種数が増えても、すでに入荷を知らせた物は引っ込めない
+    if (this.save.announced?.includes(g.id)) return 0;
     return Math.max(0, g.need - this.foundCount);
   }
 
@@ -831,7 +851,7 @@ export class Game {
     if (g.map) this.grantMap(g.map);
     this.writeSave();
     this.audio.chime(true);
-    this.toast(id === 'spear' ? '「手銛」を購入！ 港の食堂「しおさい亭」の女将さんが話があるらしい（ボートの「しおさい亭」へ）' : g.map ? `「${g.name}」を購入！ ボートから直接行けるようになった` : `「${g.name}」を購入！ ${g.desc}`, '', 4);
+    this.toast(id === 'light' ? '「水中ライト」を強化した！ 強力ライトで、もっと遠くまで明るく照らせる' : id === 'spear' ? '「手銛」を購入！ 港の食堂「しおさい亭」の女将さんが話があるらしい（ボートの「しおさい亭」へ）' : g.map ? `「${g.name}」を購入！ ボートから直接行けるようになった` : `「${g.name}」を購入！ ${g.desc}`, '', 4);
     this.renderTitle();
   }
 
@@ -999,6 +1019,7 @@ export class Game {
       const b = document.createElement('button');
       b.className = 'pt' + (dark && !locked ? ' dim' : '') + (locked ? ' lockd' : '');
       b.type = 'button';
+      b.dataset.dp = dp.id;
       b.disabled = locked;
       b.innerHTML = `<span class="ico" style="--ico-bg:${colors[dp.id]};background:${colors[dp.id]}">${areaIconSvg(dp.id)}</span>
         <span class="pt-tx"><span class="nm">${dp.name}</span><span class="sb">${locked ? '大気圧潜水服が必要' : dp.sub}</span></span>`;
@@ -1102,7 +1123,8 @@ export class Game {
     const money = this.save.money ?? 0;
     $('shop-status').innerHTML = `<span>所持金 <b>${yen(money)}</b></span><span>図鑑 <b>${this.foundCount}種</b></span>${this.has('spear') ? `<span>しおさい亭の評判 Lv<b>${repLevel(this.save.rep ?? 0)}</b></span>` : ''}`;
     this.renderTank();
-    gear.innerHTML = SHOP.filter((u) => !u.rep || this.has('spear')).map((u) => {
+    const upgrades = new Set(SHOP.filter((x) => x.upgrade).map((x) => x.upgrade));
+    gear.innerHTML = SHOP.filter((u) => (!u.rep || this.has('spear')) && !upgrades.has(u.id)).map((u) => {
       const on = this.owns(u);
       const gap = this.stockGap(u);
       const stocked = gap === 0;
@@ -1110,7 +1132,16 @@ export class Game {
       const can = !on && stocked && money >= u.price && !needReq;
       const req = on ? (u.map ? '場所は分かっている' : '入手済み') : !stocked ? (u.rep ? `食堂の評判Lv${u.rep}で入荷` : `図鑑${u.need}種で入荷<br>（あと${gap}種）`) : needReq ? `先に${SHOP.find((x) => x.id === u.req)!.name}` : can ? `購入 ${yen(u.price)}` : yen(u.price);
       const show = stocked || on || !!u.rep;
-      return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24"${show ? '' : ' class="sil" aria-hidden="true"'}>${u.icon}</svg></div>${show ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${show ? u.desc : ''}</span></button>`;
+      const up = u.upgrade ? SHOP.find((x) => x.id === u.upgrade) : undefined;
+      const upOn = !!up && this.has(up.id);
+      const icon = upOn && u.iconUp ? u.iconUp : u.icon;
+      const main = `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}${upOn ? ' upgraded' : ''}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24"${show ? '' : ' class="sil" aria-hidden="true"'}>${icon}</svg></div>${show ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${show ? u.desc : ''}</span></button>`;
+      if (!up || !show) return main;
+      // F6：強化（強力ライト）は水中ライトの枠の中に出す。買うと水中ライトのアイコンが強化済みの印に変わる
+      const upGap = this.stockGap(up);
+      const upCan = !upOn && upGap === 0 && on && money >= up.price;
+      const upText = upOn ? '強化済み：強力ライト' : upGap > 0 ? `強化：${up.name}（図鑑${up.need}種で入荷・${yen(up.price)}・あと${upGap}種）` : !on ? `強化：${up.name}（${yen(up.price)}・水中ライトを買うと強化できる）` : upCan ? `強化する：${up.name} ${yen(up.price)}` : `強化：${up.name}（${yen(up.price)}）`;
+      return `<div class="gear-cell${upOn ? ' upgraded' : ''}">${main}<button type="button" class="gear-upg ${upOn ? 'on' : ''} ${upCan ? 'can' : ''}" data-buy="${up.id}" ${upOn || !upCan ? 'aria-disabled="true"' : ''}>${upText}</button></div>`;
     }).join('');
     const tg = $('treasure-gear');
     const mine = (Object.keys(CHEST_GEAR) as ChestGearId[]).filter((id) => this.has(id));
@@ -1319,6 +1350,7 @@ export class Game {
       // a few metres down after the giant-stride entry, clear of the boat's keel (~1.8 m draft)
       const startY = this.ads ? -175 : -3.2;
       this.camera.position.set(dp.x, startY, dp.z);
+      this.gateFree = new Set(GATE.areas.filter((a) => gateWeight(a, dp.x, dp.z) >= GATE.edge));
       this.yaw = dp.yaw ?? Math.PI; // face offshore (+z); the estuary / river face upstream (-z)
       this.pitch = this.ads ? -0.5 : -0.35;
       // moored ~12 m up-current behind the diver, stern (ladder) facing the diver
@@ -1922,6 +1954,8 @@ export class Game {
       if (p.z - WORLD.minZ < 12 && this.vel.z < 0) { this.vel.z *= k; edgePushed = true; if (p.z - WORLD.minZ < best) { best = p.z - WORLD.minZ; edgeShore = true; } }
       if (WORLD.maxZ - p.z < 12 && this.vel.z > 0) { this.vel.z *= k; edgePushed = true; if (WORLD.maxZ - p.z < best) { edgeShore = false; } }
     }
+    // F6：海図のないエリア（流氷・ブルーホール・水中洞窟）は、縁の「流れが押し返す壁」で入れない。ゾーン判定（0.5）の手前（0.2）で止まる
+    this.gateStep(p);
     const preX = p.x, preZ = p.z;
     p.x = clamp(p.x, WORLD.minX, WORLD.maxX);
     p.z = clamp(p.z, WORLD.minZ, WORLD.maxZ);
@@ -2133,6 +2167,7 @@ export class Game {
     return {
       dt: this.lastDt, time: this.time, diveTime: this.diveTime, player: p, forward: this.tmpDir.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).clone(),
       zone: zoneAt(p.x, p.z),
+      blocked: (x, z) => this.gateBlocked(x, z),
       nearbySpecies: () => this.creatures.randomNear(p, 25),
       toast: (t, k, d) => this.toast(t, k ?? '', d),
       chime: (big) => this.audio.chime(big),
@@ -2155,6 +2190,42 @@ export class Game {
    * actually in a map (even one known only from a chart, and the deep sea) always gets its own banner (never a toast,
    * which the next toast would overwrite).
    */
+  /** F6：その地点が、海図のないゲートの内側か（依頼の置き場所の確認用） */
+  private gateBlocked(x: number, z: number): boolean {
+    const known = this.discovered;
+    return GATE.areas.some((a) => !known.has(a) && !this.gateFree.has(a) && gateWeight(a, x, z) >= GATE.edge);
+  }
+
+  /** F6：海図がない（discovered にない）ゲート対象のエリアに近づくと、壁に向かう速度を弱め、壁に触れたらトースト。壁の内側に入っていたら押し戻す */
+  private gateStep(p: THREE.Vector3): void {
+    const known = this.discovered;
+    for (const a of GATE.areas) {
+      if (known.has(a) || this.gateFree.has(a)) continue;
+      const w = gateWeight(a, p.x, p.z);
+      if (w < GATE.soft) continue;
+      let gx = gateWeight(a, p.x + 1, p.z) - gateWeight(a, p.x - 1, p.z);
+      let gz = gateWeight(a, p.x, p.z + 1) - gateWeight(a, p.x, p.z - 1);
+      const gl = Math.hypot(gx, gz);
+      if (gl < 1e-6) continue;
+      gx /= gl; gz /= gl; // 壁の内側（重みが増える向き）
+      const inward = this.vel.x * gx + this.vel.z * gz;
+      let touched = false;
+      if (w >= GATE.edge) {
+        for (let i = 0; i < 80 && gateWeight(a, p.x, p.z) >= GATE.edge; i++) { p.x -= gx * 0.5; p.z -= gz * 0.5; }
+        touched = true;
+        if (inward > 0) { this.vel.x -= gx * inward; this.vel.z -= gz * inward; }
+      } else if (inward > 0) {
+        const k = clamp((GATE.edge - w) / (GATE.edge - GATE.soft), 0.03, 1);
+        this.vel.x -= gx * inward * (1 - k); this.vel.z -= gz * inward * (1 - k);
+        touched = w > GATE.edge * 0.75;
+      }
+      if (touched && this.time - this.lastGateWarn > GATE.toastEvery) {
+        this.lastGateWarn = this.time;
+        this.toast(GATE.text, 'warn', 3);
+      }
+    }
+  }
+
   private exploreCheck(p: THREE.Vector3): void {
     const z = zoneAt(p.x, p.z);
     const id = z === 'offshore' ? 'dropoff' : z;
@@ -2560,8 +2631,9 @@ export class Game {
   }
 
   /** Phase 9 S6: charts a found box can hold — maps not yet known, and only maps where creatures live. */
+  /** F6：拾い物の海図は、入手元がほかにあるエリア（ゲートの 3 つと深海）からは出さない（海図の入手元は 1 つだけ） */
   private chartCandidates(): { id: string; name: string }[] {
-    return DIVE_POINTS.filter((d) => !this.discovered.has(d.id) && d.id !== 'lagoon' && SPECIES.some((sp) => sp.zone === d.id || (d.id === 'dropoff' && sp.zone === 'offshore'))).map((d) => ({ id: d.id, name: d.name }));
+    return DIVE_POINTS.filter((d) => !this.discovered.has(d.id) && d.id !== 'lagoon' && !CHART_ONLY.has(d.id) && SPECIES.some((sp) => sp.zone === d.id || (d.id === 'dropoff' && sp.zone === 'offshore'))).map((d) => ({ id: d.id, name: d.name }));
   }
 
   /** Phase 5: open a permanent treasure chest. Saved at once, like sights and the dex. */
@@ -2887,6 +2959,9 @@ export class Game {
       /** 修正バッチ2 F2: 足元の高さ（岩・サンゴ頭の上面を含む） */
       surfaceAt: (x: number, z: number) => surfaceAt(x, z),
       zoneAt: (x: number, z: number) => zoneAt(x, z),
+      /** F6：ゲートの重み（'cold' | 'bluehole' | 'cave'）と、その地点が海図のないゲートの内側か */
+      gateWeight: (a: 'cold' | 'bluehole' | 'cave', x: number, z: number) => gateWeight(a, x, z),
+      gateBlocked: (x: number, z: number) => this.gateBlocked(x, z),
       riverDist: (x: number, z: number) => { const r = riverDist(x, z); return { d: r.d, w: r.w }; },
       /** Phase 9 S1: the estuary's water table (zone base + salt-wedge layers) */
       estuaryWater: () => ({ base: ZONE_WATER.estuary, wedge: ESTUARY_WEDGE }),

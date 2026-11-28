@@ -95,8 +95,8 @@ export const CHAPTERS: Chapter[] = [
   {
     title: '夜の海', title2: '夜を知る写真家',
     intro: '編集長「夜の海は別の世界だよ。ライトを頼りに、夜にしか会えない魚を撮ってきて」',
-    goal: '夜の魚を撮る（夜の海で）', done: (s) => s.nightFound >= 1, reward: 6000, map: 'cave', needsLight: true,
-    praise: '編集長「夜の海でも落ち着いて撮れている。さすがだ。お礼に、漁師さんから聞いた洞窟の場所を教えるよ」',
+    goal: '夜の魚を撮る（夜の海で）', done: (s) => s.nightFound >= 1, reward: 9000, needsLight: true,
+    praise: '編集長「夜の海でも落ち着いて撮れている。さすがだ。これは取材の報酬だよ」',
   },
   {
     title: '眠る巨人', title2: '巨人を撮った写真家', scene: 'whalesleep',

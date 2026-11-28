@@ -198,8 +198,9 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     g.save.stocked = []; g.save.owned = []; g.save.money = 999999;
     const mk = (n) => { for (const k of Object.keys(g.save.found)) delete g.save.found[k]; for (let i = 0; i < n; i++) g.save.found['probe_sp' + i] = { photo: '', depth: 0, t: 0 }; };
     const stockedAt = (id, n) => { mk(n); g.renderShop(); const el = document.querySelector(`[data-buy="${id}"]`); return !!el && !el.classList.contains('locked'); };
-    out.torch44 = stockedAt('torch', 44); out.torch45 = stockedAt('torch', 45);
-    out.spear59 = stockedAt('spear', 59); out.spear60 = stockedAt('spear', 60);
+    // F6：解放順の改定で水中ライト 45→20・手銛 60→50（変数名は据え置き：torch44＝1 つ手前、torch45＝ちょうど）
+    out.torch44 = stockedAt('torch', 19); out.torch45 = stockedAt('torch', 20);
+    out.spear59 = stockedAt('spear', 49); out.spear60 = stockedAt('spear', 50);
     out.float29 = stockedAt('float', 29); out.float30 = stockedAt('float', 30);
     // locked items do not name themselves
     mk(5); g.renderShop();
@@ -214,7 +215,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     out.canFound = !!can;
     return out;
   });
-  check('shop: unlock is by species count (torch 45, spear 60, float 30), not a share', !shop.torch44 && shop.torch45 && !shop.spear59 && shop.spear60 && !shop.float29 && shop.float30 && !shop.hasPctText, JSON.stringify(shop));
+  check('shop: unlock is by species count (torch 20, spear 50, float 30; F6), not a share', !shop.torch44 && shop.torch45 && !shop.spear59 && shop.spear60 && !shop.float29 && shop.float30 && !shop.hasPctText, JSON.stringify(shop));
   check('shop: locked items are shown as ？？？ (no names)', shop.lockedN > 0 && shop.lockedNames === 0, `locked=${shop.lockedN} named=${shop.lockedNames}`);
   check('shop: buyable items are bright and do not blink (no animation)', shop.canFound && (shop.canAnim === 'none' || shop.canAnim === ''), shop.canAnim);
 

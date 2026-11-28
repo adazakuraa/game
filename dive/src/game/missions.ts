@@ -63,6 +63,8 @@ export type MissionCtx = {
   player: THREE.Vector3;
   forward: THREE.Vector3;
   zone: ZoneId;
+  /** F6：海図のないゲートの内側（依頼の置き場所にしてはいけない所） */
+  blocked?: (x: number, z: number) => boolean;
   /** a species with an individual within ~25 m, for photo requests */
   nearbySpecies: () => SpeciesDef | null;
   toast: (text: string, kind?: '' | 'warn' | 'danger', dur?: number) => void;
@@ -537,8 +539,9 @@ export class Missions {
             a = Math.random() * Math.PI * 2;
             const d = 3 + Math.sqrt(Math.random()) * 32;
             x = ahead.x + Math.cos(a) * d; z = ahead.z + Math.sin(a) * d;
-            if (this.items.every((q) => Math.hypot(q.x - x, q.z - z) > 3.2)) break;
+            if (this.items.every((q) => Math.hypot(q.x - x, q.z - z) > 3.2) && !c.blocked?.(x, z)) break;
           }
+          if (c.blocked?.(x, z)) { x = near.x; z = near.z; }
           const pos = new THREE.Vector3(x, surfaceFootAt(x, z) + 0.05, z);
           this.pried.push(0);
           this.items.push(pos);
@@ -562,8 +565,9 @@ export class Missions {
         for (let tr = 0; tr < 30; tr++) {
           const a = Math.random() * Math.PI * 2, d = 2 + Math.random() * 12;
           x = ahead.x + Math.cos(a) * d; z = ahead.z + Math.sin(a) * d; g = surfaceAt(x, z);
-          if (c.zone !== 'estuary' && c.zone !== 'river' || g < -1.2) break;
+          if ((c.zone !== 'estuary' && c.zone !== 'river' || g < -1.2) && !c.blocked?.(x, z)) break;
         }
+        if (c.blocked?.(x, z)) { x = near.x; z = near.z; g = surfaceAt(x, z); }
         this.items.push(new THREE.Vector3(x, Math.min(-0.8, g + 0.3 + Math.random() * Math.max(0, -g - 1.5)), z));
         this.taken.push(false);
       }
@@ -578,7 +582,7 @@ export class Missions {
         const a = Math.random() * Math.PI * 2, d = 12 + Math.random() * T.radius;
         const x = c.player.x + Math.cos(a) * d, z = c.player.z + Math.sin(a) * d;
         const g = surfaceAt(x, z);
-        if (g < -30 || g > -2) continue;
+        if (g < -30 || g > -2 || c.blocked?.(x, z)) continue;
         spot = new THREE.Vector3(x, g + 0.55, z);
       }
       if (!spot) { this.end(false, true); return; }
@@ -606,7 +610,8 @@ export class Missions {
     } else if (kind === 'treasure') {
       const T = MISSION.treasure;
       const a = Math.random() * Math.PI * 2, d = 4 + Math.random() * 12;
-      const x = near.x + Math.cos(a) * d, z = near.z + Math.sin(a) * d;
+      let x = near.x + Math.cos(a) * d, z = near.z + Math.sin(a) * d;
+      if (c.blocked?.(x, z)) { x = near.x; z = near.z; }
       const spot = new THREE.Vector3(x, surfaceAt(x, z) + 0.2, z);
       this.chestMesh.position.copy(spot);
       this.chestMesh.rotation.set(0.15, a, 0.1);
@@ -616,7 +621,8 @@ export class Missions {
     } else {
       const L = MISSION.lost;
       const a = Math.random() * Math.PI * 2, d = 4 + Math.random() * 12;
-      const x = near.x + Math.cos(a) * d, z = near.z + Math.sin(a) * d;
+      let x = near.x + Math.cos(a) * d, z = near.z + Math.sin(a) * d;
+      if (c.blocked?.(x, z)) { x = near.x; z = near.z; }
       const spot = new THREE.Vector3(x, surfaceAt(x, z) + 0.06, z);
       this.camMesh.position.copy(spot);
       this.camMesh.rotation.set(0.3, a, 0.2);
