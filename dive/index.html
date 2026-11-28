@@ -307,6 +307,18 @@
       </section>
 
       <div id="toast"></div>
+      <!-- F8 (20)：光景の主役が視界に入ったときの帯（画面上部・金色の縁・3 秒） -->
+      <div id="scene-banner" role="status" aria-live="polite"><small>特別な光景</small><b id="sb-name"></b></div>
+      <!-- F8 (3)：手記（浮上後の結果画面の後・実績画面の「手記」から開く。紙の質感の 1 枚） -->
+      <section id="journal" class="screen hidden" role="dialog" aria-modal="true" aria-label="手記">
+        <div class="jr-paper">
+          <div class="jr-kicker" id="jr-kicker">古い手記の切れはし</div>
+          <div class="jr-body" id="jr-body"></div>
+          <p class="jr-end" id="jr-end"></p>
+          <p class="jr-met hidden" id="jr-met"></p>
+          <button id="jr-ok" type="button" class="btn pri">閉じる</button>
+        </div>
+      </section>
       <!-- F7 (10)：夜明けの演出（暗転 → 「◯日目の朝」と天気） -->
       <div id="dawn" class="hidden" role="status" aria-live="polite"><div class="dw-card"><div id="dw-day" class="dw-day"></div><div id="dw-weather" class="dw-weather"></div></div></div>
       <!-- F7 (17)(29)：ボートで向かう演出（海図の上をボートが走る） -->

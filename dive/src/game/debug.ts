@@ -100,7 +100,7 @@ const ACTIONS: Record<string, Action> = {
   'gear-none': { armed: '本当に装備を手放す？', run: (sv) => { sv.owned = []; sv.airLv = 0; } },
   'maps-all': { armed: '本当に全マップを発見済みにする？', run: (sv) => { const ids = DIVE_POINTS.map((d) => d.id); sv.discovered = ids; sv.visited = [...ids]; } },
   'maps-none': { armed: '本当に発見を戻す？', run: (sv) => { sv.discovered = ['lagoon']; sv.visited = ['lagoon']; } },
-  'chests-reset': { armed: '本当に宝箱を戻す？', run: (sv) => { sv.chests = []; sv.sceneHints = []; } },
+  'chests-reset': { armed: '本当に宝箱を戻す？', run: (sv) => { sv.chests = []; sv.sceneHints = []; sv.journals = []; } },
   'scenes-reset': { armed: '本当に光景を戻す？', run: (sv) => { sv.scenes = {}; } },
   'spots-reset': { armed: '本当にスポットを戻す？', run: (sv) => { sv.spots = []; } },
   'day-set': { armed: '本当に日数を変える？', run: (sv) => { sv.day = Math.max(1, Math.round(num('dbg-day', sv.day ?? 1))); } },

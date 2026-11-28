@@ -14,6 +14,12 @@ export const SCENE_AT: Partial<Record<SceneId, { x: number; z: number; r: number
   ayurun: { x: 258, z: -420, r: 25 },
 };
 
+/** F8 (4)：章の光景の場所の手がかり（潜り始めの小型吹き出し）。円は出さず、近づいて気配が出てから円を出す */
+export const SCENE_CLUE: Partial<Record<SceneId, string>> = {
+  whalesleep: '沖の大海原で、マッコウクジラが縦になって眠っているらしい。ドロップオフの先、水深15mあたりだ。',
+  spawning: '夜のサンゴ礁だ。サンゴの上の、礁の真ん中あたりを探してみて。',
+};
+
 type Pose = { p: THREE.Vector3; yaw: number; pitch: number; s?: number; still?: boolean; k?: number[] };
 
 /** A soft round sprite for glowing particles. */
@@ -302,6 +308,11 @@ export class Scenes {
       }
     }
     return null;
+  }
+
+  /** F8 (20)：主役の個体（star）が今いる位置。粒子の光景は空 */
+  starPositions(id: SceneId): THREE.Vector3[] {
+    return (this.poses.get(id) ?? []).map((q) => q.p);
   }
 
   /** Is a particle sight (coral spawn / glowing plankton) filling this camera's view? */

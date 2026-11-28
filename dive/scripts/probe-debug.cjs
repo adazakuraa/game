@@ -14,7 +14,7 @@ const KEY = 'blue-depths-save-v1';
 const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
 // セーブ形式の項目（Save 型）。デバッグ操作がこの外のキーを作っていないこと
-const KNOWN = new Set(['found', 'dives', 'maxDepth', 'muted', 'money', 'owned', 'earned', 'discovered', 'storyMain', 'storyRead', 'scenes', 'tutorial', 'talked', 'talkMig', 'nightHint', 'airLv', 'board', 'quests', 'boardOn', 'boardIntro', 'questsDone', 'stocked', 'announced', 'p1', 'p2', 'storyClaim', 'visited', 'spots', 'chests', 'sceneHints', 'rep', 'orders', 'cooler', 'day', 'clock', 'buff', 'story', 'uniDay', 'okami', 'bait']);
+const KNOWN = new Set(['found', 'dives', 'maxDepth', 'muted', 'money', 'owned', 'earned', 'discovered', 'storyMain', 'storyRead', 'scenes', 'tutorial', 'talked', 'talkMig', 'nightHint', 'airLv', 'board', 'quests', 'boardOn', 'boardIntro', 'questsDone', 'stocked', 'announced', 'p1', 'p2', 'storyClaim', 'visited', 'spots', 'chests', 'sceneHints', 'journals', 'rep', 'orders', 'cooler', 'day', 'clock', 'buff', 'story', 'uniDay', 'okami', 'bait']);
 
 (async () => {
   const html = fs.readFileSync(ARTIFACT);

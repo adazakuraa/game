@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { MISSION, Missions, type MissionCtx } from './missions';
 import { BOARD_DAY, Kitchen, type LandSave, type Morning } from './kitchen';
 import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } from './story';
-import { SCENE_AT, Scenes } from './scenes';
-import { SPOT, SPOTS, spotFocus, spotInView } from './spots';
+import { SCENE_AT, SCENE_CLUE, Scenes } from './scenes';
+import { JOURNALS, JOURNAL_END } from './journals';
+import { SPOT, SPOTS, spotFocus, spotHintDist, spotInView, spotOpen, type SpotDef } from './spots';
 import { RENDER } from './render';
 import { setUwMobile } from '../render/underwater';
 import { Diag } from '../ui/diag';
@@ -65,10 +66,15 @@ export type Save = LandSave & {
   storyClaim?: number[]; visited?: string[]; spots?: string[];
   /** Phase 5: treasure chests opened, and sights named by a chest's notebook page */
   chests?: string[]; sceneHints?: SceneId[];
+  /** 修正バッチ2 F8 (3)：拾った手記（拾った順）。sceneHints から読み込み時に作る（sceneHints も残す） */
+  journals?: { scene: SceneId; t: number }[];
   /** 修正バッチ2 (1): HUD button sizes (device preference; progress resets keep it) */
   ui?: { shutter: number; ctl: number; base?: number };
  found: Record<string, { photo: string; depth: number; t: number; score?: number }>; dives: number; maxDepth: number; muted?: boolean; money?: number; owned?: string[]; earned?: number };
 type Shot = { photo: string; depth: number; score: number; grade: string; value: number; isNew: boolean };
+/** F8 (20)：光景に出会えたときの表示。主役が画面内・dist m 以内に入った瞬間に帯を bannerSec 秒。編集長のひとこと（初回の光景だけ別の文） */
+const SCENE_SEE = { dist: 25, bannerSec: 3, lines: ['いい光景だ。落ち着いて、フレームに収めよう。', 'めったに見られない光景だよ。逃さずに撮ろう。', 'これは撮っておきたい。いい構図を探して。'] };
+
 type State = 'loading' | 'title' | 'diving' | 'paused' | 'result' | 'dex';
 
 const SAVE_KEY = 'blue-depths-save-v1';
@@ -186,6 +192,17 @@ export class Game {
   private stagedScene: SceneId | null = null;
   /** photo spots shot this dive (paid on surfacing, first time only) */
   private pendingSpots = new Set<string>();
+  /** F8 (4)：このダイブで「見どころが近い…」が出たスポット（円はそこから出す） */
+  private spotHinted = new Set<string>();
+  /** F8 (20)：このダイブで「特別な光景」の帯を出した光景。帯が出ている残り秒 */
+  private sceneAnnounced = new Set<SceneId>();
+  private bannerT = 0;
+  /** F8 (4)：章の光景の場所の手がかりを潜り始めに言ったか */
+  private clueSaid = false;
+  /** F8 (3)：浮上後に読む手記（拾った順）。結果画面を閉じたあとに 1 枚ずつ */
+  private journalQueue: SceneId[] = [];
+  /** F8 (22)：初めて助けるときの操作チュートリアルを出しているか */
+  private turtleTut = false;
   /** first-person gear in hand */
   private vmHand!: THREE.Group;
   private vmGun!: THREE.Group;
@@ -351,7 +368,8 @@ export class Game {
     $('album-close').addEventListener('click', () => $('album').classList.add('hidden'));
     $('open-shop').addEventListener('click', () => { this.audio.unlock(); $('shop').classList.remove('hidden'); this.renderShop(); });
     $('shop-close').addEventListener('click', () => { $('shop').classList.add('hidden'); this.renderTitle(); });
-    $('res-kitchen').addEventListener('click', () => { this.toTitle(); this.kitchen.open(); });
+    $('res-kitchen').addEventListener('click', () => { this.toTitle(); this.kitchen.open(); this.flushJournals(); });
+    $('jr-ok').addEventListener('click', () => this.closeJournal());
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.installHooks();
@@ -406,6 +424,8 @@ export class Game {
           const zones = new Set(Object.keys(sv.found).map((id) => SPECIES_BY_ID.get(id)?.zone as string | undefined));
           sv.visited = DIVE_POINTS.filter((dp) => dp.id === 'lagoon' || zones.has(dp.id) || (dp.id === 'dropoff' && zones.has('offshore'))).map((dp) => dp.id);
         }
+        // 修正バッチ2 F8 (3)：手記。sceneHints から作る（なければ空）
+        if (!sv.journals) sv.journals = (sv.sceneHints ?? []).map((scene, i) => ({ scene, t: i }));
         // 修正バッチ2 F4：吹き出しの既読。今までのプレイヤー（もう潜った人）は夜の休み方を見たことにする
         if (!sv.talked) sv.talked = sv.dives > 0 && sv.tutorial ? ['nightRest'] : [];
         if (sv.airLv === undefined) sv.airLv = sv.owned?.includes('tank') ? 4 : sv.dives > 0 ? 2 : 0;
@@ -659,18 +679,37 @@ export class Game {
   }
 
   /** Achievements: the special sights, on their own screen. */
+  private albumTab: 'scenes' | 'journals' = 'scenes';
+
   private renderAlbum(): void {
     const all = Object.keys(SCENES) as SceneId[];
+    const jr = this.save.journals ?? [];
+    const tabs = `<div class="al-tabs" role="tablist"><button type="button" class="al-tab${this.albumTab === 'scenes' ? ' on' : ''}" data-altab="scenes" role="tab">光景・スポット</button><button type="button" class="al-tab${this.albumTab === 'journals' ? ' on' : ''}" data-altab="journals" role="tab">手記（${jr.length}）</button></div>`;
+    if (this.albumTab === 'journals') {
+      // F8 (3)：拾った順に一覧。タップで本文。光景を撮った後は「◯◯に出会えた」の印
+      $('album-body').innerHTML = tabs + (jr.length
+        ? `<div class="al-journals">${jr.map((j, i) => `<button type="button" class="al-journal${this.save.scenes?.[j.scene] ? ' met' : ''}" data-jr="${j.scene}"><b>古い手記の切れはし　その${i + 1}</b><span>${this.save.scenes?.[j.scene] ? `◎ ${SCENES[j.scene].name}に出会えた` : 'タップで読む'}</span></button>`).join('')}</div>`
+        : '<p class="al-count">まだ手記を拾っていない。<small>海底の宝箱に、古い手記の切れはしが入っていることがある。</small></p>');
+      this.bindAlbumTabs();
+      return;
+    }
     const got = all.filter((id) => this.save.scenes?.[id]);
     $('album-body').innerHTML = `<div class="al-count">出会えた光景 <b>${got.length}</b> / ${all.length}</div><div class="sc-photos">${all.map((id) => this.save.scenes?.[id]
       ? `<figure><img src="${this.save.scenes[id]!.photo}" alt=""><figcaption><b>${SCENES[id].name}</b>${SCENES[id].desc}</figcaption></figure>`
       : (this.save.sceneHints ?? []).includes(id)
         ? `<figure class="locked"><div>？</div><figcaption><b>${SCENES[id].name}</b>手記のヒント：${SCENES[id].note}</figcaption></figure>`
-        : `<figure class="locked"><div>？</div><figcaption><b>？？？</b>${SCENES[id].hint}</figcaption></figure>`).join('')}</div>`
+        : `<figure class="locked"><div>？</div><figcaption><b>？？？</b>${SCENES[id].hint}<br>出会えるかは運しだい</figcaption></figure>`).join('')}</div>`
       // Phase 3: photo spots (pay once, the first time)
-      + `<div class="al-count">写真スポット <b>${SPOTS.filter((s) => this.save.spots?.includes(s.id)).length}</b> / ？<small>（マップの水色の円の中で、見どころに向けて撮る。報酬は各スポット最初の1回だけ）</small></div><div class="al-spots">${SPOTS.filter((s) => this.save.spots?.includes(s.id) || this.discovered.has(s.point)).map((s) => this.save.spots?.includes(s.id)
+      + `<div class="al-count">写真スポット <b>${SPOTS.filter((s) => this.save.spots?.includes(s.id)).length}</b> / ？<small>（見どころが近いと気配が出て、マップに水色の円が出る。円の中で見どころに向けて撮る。時間帯や天気で撮れない所もある。報酬は各スポット最初の1回だけ）</small></div><div class="al-spots">${SPOTS.filter((s) => this.save.spots?.includes(s.id) || this.discovered.has(s.point)).map((s) => this.save.spots?.includes(s.id)
         ? `<div class="al-spot done"><b>${s.name}</b><span>${DIVE_POINTS.find((d) => d.id === s.point)?.name ?? ''}・撮影済み</span></div>`
         : `<div class="al-spot"><b>？？？</b><span>${DIVE_POINTS.find((d) => d.id === s.point)?.name ?? ''}・${yen(s.pay)}</span></div>`).join('')}</div>`;
+    $('album-body').insertAdjacentHTML('afterbegin', tabs);
+    this.bindAlbumTabs();
+  }
+
+  private bindAlbumTabs(): void {
+    $('album-body').querySelectorAll<HTMLElement>('[data-altab]').forEach((b) => b.addEventListener('click', () => { this.albumTab = b.dataset.altab as 'scenes' | 'journals'; this.renderAlbum(); }));
+    $('album-body').querySelectorAll<HTMLElement>('[data-jr]').forEach((b) => b.addEventListener('click', () => this.openJournal(b.dataset.jr as SceneId)));
   }
 
   /** Receive the editor's reward for a cleared chapter (Phase 3). */
@@ -753,6 +792,7 @@ export class Game {
     if (!lines || talked.includes(key) || this.state !== 'diving' || this.talk.miniOpen) return;
     talked.push(key);
     this.writeSave();
+    this.tipUntil = this.time + 6 * lines.length;
     this.talk.showMiniSeq(lines, 6);
   }
 
@@ -1429,6 +1469,13 @@ export class Game {
       this.diveCatch = [];
       this.diveFinds = [];
       this.pendingScenes.clear();
+      this.spotHinted.clear();
+      this.sceneAnnounced.clear();
+      this.bannerT = 0;
+      $('scene-banner').classList.remove('show');
+      this.clueSaid = false;
+      this.sceneLine = null;
+      this.turtleTut = false;
       this.activeQuest = null;
       this.surveySeen.clear();
       this.spearFx.visible = false;
@@ -1722,6 +1769,11 @@ export class Game {
     this.creatures.clearBait();
     this.clearBaitVisual();
     this.clearMapFound();
+    // F8：光景の帯・小型吹き出しは潜水が終わったら消す（結果画面に残さない）
+    this.bannerT = 0;
+    this.sceneLine = null;
+    $('scene-banner').classList.remove('show');
+    this.talk.hideMini();
     // discoveries are never lost (being rescued costs money instead: the penalty fits the mistake)
     for (const [id, f] of shots) {
       const old = this.save.found[id];
@@ -1851,6 +1903,8 @@ export class Game {
 
   /** 浮上の結果画面を閉じる。夜に潜った後は、寝たのと同じ処理（朝にする）と夜明けの演出へ */
   private closeResult(): void {
+    // F8 (3)：拾った手記は、結果画面のあとに 1 枚ずつ読む
+    if (this.journalQueue.length) { this.flushJournals(() => this.closeResult()); return; }
     if (this.morningDue && !this.dawning) { this.playDawn(this.kitchen.nextMorning()); return; }
     this.toTitle();
   }
@@ -1878,6 +1932,38 @@ export class Game {
       }
       this.pumpTalks();
     });
+  }
+
+  private journalAfter: (() => void) | null = null;
+
+  /** F8 (3)：浮上後に読む手記（拾った順）を 1 枚ずつ出す。終わったら after */
+  private flushJournals(after?: () => void): void {
+    const id = this.journalQueue.shift();
+    if (!id) { after?.(); return; }
+    this.openJournal(id, this.journalQueue.length > 0, () => this.flushJournals(after));
+  }
+
+  /** F8 (3)：手記の画面（紙の質感の 1 枚）。本文（2〜3 行）＋最後に意味深な一文。光景を撮った後は「◯◯に出会えた」の印 */
+  private openJournal(scene: SceneId, more = false, onClose?: () => void): void {
+    const n = (this.save.journals ?? []).findIndex((j) => j.scene === scene) + 1;
+    $('jr-kicker').textContent = `古い手記の切れはし${n > 0 ? `　その${n}` : ''}`;
+    $('jr-body').innerHTML = JOURNALS[scene].map((l) => `<p>${l}</p>`).join('');
+    $('jr-end').textContent = JOURNAL_END;
+    const met = !!this.save.scenes?.[scene];
+    $('jr-met').classList.toggle('hidden', !met);
+    $('jr-met').textContent = `◎ ${SCENES[scene].name}に出会えた`;
+    $('jr-ok').textContent = more ? '次の手記へ' : '閉じる';
+    this.journalAfter = onClose ?? null;
+    $('journal').classList.remove('hidden');
+    $('journal').scrollTop = 0;
+    this.audio.chime(false);
+  }
+
+  private closeJournal(): void {
+    $('journal').classList.add('hidden');
+    const f = this.journalAfter;
+    this.journalAfter = null;
+    f?.();
   }
 
   private toTitle(): void {
@@ -2108,6 +2194,7 @@ export class Game {
     // F7 (40)：ウニ漁の間は光景の気配も出さない（掲示板のウニ漁も同じ）
     const sensed = this.frame % 15 === 0 && this.missions.active?.kind !== 'urchin' ? this.scenes.senseNear(p) : null;
     if (sensed && (!SCENES[sensed].night || this.env.night >= 0.5)) { this.audio.chime(false); this.toast(SCENES[sensed].sense, 'warn', 4); }
+    if (this.tut.step < 0) this.updateEvents(dt, p);
     if (this.tut.step >= 0) this.updateTutorial(dt);
     // the day goes on while diving: dusk, then night
     if (!this.ads) {
@@ -2277,6 +2364,8 @@ export class Game {
       nearbyBig: () => this.creatures.randomNear(p, 30, 0.8),
       aim: () => (this.target && this.target.inRange ? { id: this.target.rt.def.id, dist: this.target.dist } : null),
       stage: (id, pose) => { if (pose) this.creatures.stage.set(id, [pose]); else this.creatures.stage.delete(id); },
+      askRescue: () => this.askTurtle(),
+      rescueTip: (step) => this.rescueTip(step),
       companion: (id, from) => { this.creatures.stage.delete(id); this.creatures.companion = { id, p: from.clone(), v: new THREE.Vector3(), yaw: this.yaw }; },
       sting: (bar, text) => { this.air = Math.max(1, this.air - bar); this.shake = Math.max(this.shake, 0.7); this.audio.warn(); this.toast(text, 'danger', 2.5); },
       reward: (v, label) => { this.bonuses.push({ label: label === '網に絡まったウミガメ' ? 'ウミガメを助けた（漁協からお礼）' : `依頼達成：${label}`, value: v }); this.shake = Math.max(this.shake, 0.4); this.freezeT = 0.15; this.updateDexChip(); },
@@ -2693,13 +2782,124 @@ export class Game {
     this.discoverTimer = 4.5;
   }
 
+  /** F8 (4)：今の時間帯・天気でこのスポットが撮れるか（条件に合わない日は気配も円も出ず、撮っても写らない） */
+  private spotNow(s: SpotDef): boolean {
+    return spotOpen(s, this.weather, this.env.night);
+  }
+
+  private evV = new THREE.Vector3();
+
+  /**
+   * F8 (4)(20)：潜水中のイベントの見せ方。①章の光景の場所の手がかり（潜り始め）②写真スポットの「見どころが近い…」③光景の主役が視界に入った帯。
+   * ウニ漁の間は光景の気配と同じく出さない（F7 (40)）。
+   */
+  private updateEvents(dt: number, p: THREE.Vector3): void {
+    if (this.bannerT > 0) {
+      this.bannerT -= dt;
+      if (this.bannerT <= 0) $('scene-banner').classList.remove('show');
+    }
+    if (this.frame % 6 !== 0 || this.state !== 'diving') return;
+    if (this.sceneLine) {
+      if (this.time > this.sceneLine.until) this.sceneLine = null;
+      else if (this.time >= this.tipUntil && !this.talk.active) { this.talk.showMini('editor', this.sceneLine.text, 5); this.sceneLine = null; }
+    }
+    const urchin = this.missions.active?.kind === 'urchin';
+    // ① 章の光景は円を最初から出さない代わりに、編集長が場所の手がかりを言う（章の intro と同じ内容）
+    const st = this.stagedScene;
+    if (!this.clueSaid && st && this.diveTime > 4 && !this.talk.miniOpen && !this.talk.active && !urchin) {
+      this.clueSaid = true;
+      const clue = SCENE_CLUE[st];
+      if (clue && !this.save.scenes?.[st]) this.talk.showMini('editor', clue, 9);
+    }
+    if (urchin) return;
+    // ② 写真スポット：45m 以内に近づくと気配が出て、そこから円を出す
+    const done = new Set([...(this.save.spots ?? []), ...this.pendingSpots]);
+    for (const s of SPOTS) {
+      if (this.spotHinted.has(s.id) || done.has(s.id) || !this.spotNow(s)) continue;
+      if (!(this.discovered.has(s.point) || (s.point === 'deep' && this.ads))) continue;
+      if (Math.hypot(p.x - s.x, p.z - s.z) > spotHintDist(s)) continue;
+      this.spotHinted.add(s.id);
+      this.audio.chime(false);
+      const text = `${s.name}の見どころが近い…`;
+      if (!this.talk.miniOpen && !this.talk.active) this.talk.showMini('editor', text, 4); else this.toast(text, 'warn', 3.5);
+      break;
+    }
+    // ③ 光景の主役（star の個体、または粒子の演出）が画面内・25m 以内に入った瞬間
+    for (const id of this.scenes.active) {
+      if (this.sceneAnnounced.has(id) || this.pendingScenes.has(id)) continue;
+      const S = SCENES[id];
+      if (S.night && this.env.night < 0.5) continue;
+      let seen = false;
+      if (S.star) {
+        for (const q of this.scenes.starPositions(id)) {
+          if (q.distanceTo(this.camera.position) > SCENE_SEE.dist) continue;
+          this.evV.copy(q).project(this.camera);
+          if (this.evV.z < 1 && Math.abs(this.evV.x) < 1 && Math.abs(this.evV.y) < 1) { seen = true; break; }
+        }
+      } else seen = this.scenes.particlesInView(this.camera) === id;
+      if (seen) { this.announceScene(id); break; }
+    }
+  }
+
+  /** F8 (20)：専用の帯（上部・金色の縁・「特別な光景 ◯◯」を 3 秒）＋チャイム＋小型吹き出しで編集長のひとこと。操作は止めない */
+  private announceScene(id: SceneId): void {
+    this.sceneAnnounced.add(id);
+    $('sb-name').textContent = SCENES[id].name;
+    $('scene-banner').classList.add('show');
+    this.bannerT = SCENE_SEE.bannerSec;
+    this.audio.chime(true);
+    const talked = (this.save.talked ??= []);
+    const first = !talked.includes('sceneFirst') && !Object.keys(this.save.scenes ?? {}).length;
+    if (first) { talked.push('sceneFirst'); this.writeSave(); }
+    const line = first ? 'これはすごい…！ 撮影しよう' : SCENE_SEE.lines[(this.save.dives + this.sceneAnnounced.size) % SCENE_SEE.lines.length];
+    // 道具の説明などの小型吹き出しが出ている間は、それが閉じてから（12 秒以内）言う。帯とチャイムは先に出す
+    if (this.time >= this.tipUntil && !this.talk.active) this.talk.showMini('editor', line, 5);
+    else this.sceneLine = { text: line, until: this.time + 12 };
+  }
+
+  /** F8 (20)：先に出ている小型吹き出しがあって言えなかった編集長のひとこと */
+  private sceneLine: { text: string; until: number } | null = null;
+  /** 道具の説明・ウミガメの操作の説明の小型吹き出しを出している間は、そのゲーム内の時刻まで、光景のひとことで上書きしない */
+  private tipUntil = 0;
+
+  /** F8 (22)：ウミガメが見つかった。潜水を止めて漁師の吹き出し（選ぶ段・暗くする）。true＝助ける */
+  private async askTurtle(): Promise<boolean> {
+    this.paused = true;
+    this.input.reset();
+    this.talk.hideMini();
+    let ok = false;
+    try {
+      const r = await this.talk.run([{ who: 'gen', text: '網に絡まったウミガメがいる！ 助けてくれないか？', choices: [{ id: 'help', label: '助ける' }, { id: 'skip', label: '今はやめる' }] }]);
+      ok = !r.skipped && r.choice === 'help';
+    } finally {
+      if (this.state === 'diving') { this.paused = false; this.clock.getDelta(); this.input.reset(); }
+    }
+    return ok;
+  }
+
+  /** F8 (22)：初めて［助ける］を選んだときだけ、操作のチュートリアル（小型吹き出し 3 段：円の中 → ナイフのボタン → ついてくる） */
+  private rescueTip(step: 1 | 2 | 3): void {
+    const talked = (this.save.talked ??= []);
+    if (step === 1) {
+      if (talked.includes('turtleHow')) return;
+      talked.push('turtleHow');
+      this.writeSave();
+      this.turtleTut = true;
+      this.tipUntil = this.time + 7;
+      this.talk.showMini('gen', 'マップの金色の円の中にいる。そこまで泳ごう。', 7, '#minimap-btn');
+    } else if (!this.turtleTut) return;
+    else if (step === 2) { this.tipUntil = this.time + 6; this.talk.showMini('gen', '近づいて、ナイフのボタンをタップ。', 8, '#btn-shutter'); }
+    else { this.turtleTut = false; this.tipUntil = this.time + 6; this.talk.showMini('gen', '助けたウミガメは、このダイブの間ついてくる。', 6); }
+  }
+
   /** Circles for the sights of this dive: the staged one from the start, lucky ones once sensed; gone once photographed. */
   private sceneMarks(): { x: number; z: number; rare: boolean; r: number }[] {
     const out: { x: number; z: number; rare: boolean; r: number }[] = [];
     if (this.missions.active?.kind === 'urchin') return out; // F7 (40)：ウニ漁の間は光景の円も出さない
     for (const [id, c] of this.scenes.centre) {
       if (!this.scenes.active.has(id) || this.pendingScenes.has(id)) continue;
-      if (id !== this.stagedScene && !this.scenes.sensed.has(id)) continue;
+      // F8 (4)：章の光景も、最初から円は出さない。近づいて気配の表示が出てから（章の光景が最初の 1 回は必ず出る決まりは startDive のまま）
+      if (!this.scenes.sensed.has(id)) continue;
       out.push({ x: c.x, z: c.z, rare: true, r: SCENE_AT[id]?.r ?? 30 });
     }
     return out;
@@ -2709,13 +2909,14 @@ export class Game {
   private spotMarks(): { x: number; z: number; rare: boolean; r: number; spot: boolean }[] {
     const known = this.discovered;
     const done = new Set([...(this.save.spots ?? []), ...this.pendingSpots]);
-    return SPOTS.filter((s) => !done.has(s.id) && (known.has(s.point) || (s.point === 'deep' && this.ads))).map((s) => ({ x: s.x, z: s.z, rare: false, r: s.r ?? SPOT.r, spot: true }));
+    // F8 (4)：ヒント（「見どころが近い…」）が出たスポットだけ円を出す。撮った所・今日の時間帯と天気で撮れない所は出さない
+    return SPOTS.filter((s) => !done.has(s.id) && this.spotHinted.has(s.id) && this.spotNow(s) && (known.has(s.point) || (s.point === 'deep' && this.ads))).map((s) => ({ x: s.x, z: s.z, rare: false, r: s.r ?? SPOT.r, spot: true }));
   }
 
   /** A shot framing a photo spot: pays once, the first time (Phase 3). Returns whether a spot was in the frame. */
   private spotShot(photo: string, creature: boolean): boolean {
     if (this.tut.step >= 0) return false;
-    const s = spotInView(this.camera);
+    const s = spotInView(this.camera, (q) => this.spotNow(q));
     if (!s) return false;
     if (this.save.spots?.includes(s.id) || this.pendingSpots.has(s.id)) {
       if (!creature) this.toast(`撮影済みの写真スポット「${s.name}」（報酬は最初の1回だけ）`, '', 2.2);
@@ -2771,7 +2972,11 @@ export class Game {
         ?? unshot[0];
       if (pick) {
         this.save.sceneHints = [...new Set([...hinted, pick])];
-        this.chestCard('古い手記の切れはし', SCENES[pick].name, SCENES[pick].note, '');
+        // F8 (3)：潜水中は短く（読むのは浮上してから）。手記はセーブの journals に拾った順で残す
+        const jr = (this.save.journals ??= []);
+        if (!jr.some((j) => j.scene === pick)) jr.push({ scene: pick, t: Date.now() });
+        if (!this.journalQueue.includes(pick)) this.journalQueue.push(pick);
+        this.talk.showMini('editor', '古い手記の切れはしを拾った…（浮上してから読もう）', 6);
       } else {
         this.save.money = (this.save.money ?? 0) + CHEST.silver;
         this.chestCard('宝箱', '古い銀貨', '手記はもう残っていなかった。代わりに古い銀貨が入っていた', `+${yen(CHEST.silver)}`);
@@ -3084,7 +3289,7 @@ export class Game {
       homesList: (name: string) => ((this.flora.homes as unknown as Record<string, THREE.Vector3[] | undefined>)[name] ?? []).map((v) => [v.x, v.y, v.z]),
       offerMission: () => { this.missions.forceOffer = true; },
       /** Phase 3: photo spots with their focus points */
-      spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r }; }),
+      spots: () => SPOTS.map((sp) => { const f = spotFocus(sp); return { id: sp.id, x: f.x, y: f.y, z: f.z, r: sp.r ?? SPOT.r, when: sp.when ?? null, open: this.spotNow(sp) }; }),
       startMission: (k: 'urchin' | 'trash' | 'photo' | 'lost' | 'treasure' | 'rescue' | 'survey' | 'tag') => { this.missions.force = k; },
       /** F7：ウニ漁の状態（群れの中心・各ウニの位置と種類・取った印・報酬・夜か・持ち替え状態） */
       urchinInfo: () => {
