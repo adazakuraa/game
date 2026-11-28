@@ -10,6 +10,7 @@ import { SWAY_VERTEX, underwaterMaterial } from '../render/underwater';
 import { baked, pbr } from '../render/baked';
 import { makeBlade, makeSeaFan } from '../render/textures';
 import { fbm2, mulberry32, simplex2 } from '../utils/noise';
+import { boneTuftGeometry, matGeometry, ribGeometry, skullGeometry, vertebraGeometry, whaleLayout } from './whalefall';
 import { driftwoodGeometry, mangroveGeometry, planSouth, reedGeometry, SOUTH_HOME_NAMES, sunkenBoatGeometry } from './southScenery';
 
 export const GARDEN_EEL_PATCH = { x: 28, z: 78, r: 13 };
@@ -1068,6 +1069,25 @@ export class Flora {
       this.landmarks.push(m);
       chimneyPos.push(new THREE.Vector3(x, heightAt(x, z) - 0.5 + h, z));
       addCollider({ x, z, r: 1.3, y0: heightAt(x, z) - 0.5, y1: heightAt(x, z) - 0.5 + h });
+    }
+    // ---- 修正バッチ2 F9 (30)：鯨骨生物群集（骨・バクテリアマット・赤い房。地形は変えない）
+    {
+      const boneMat = underwaterMaterial(new THREE.MeshStandardMaterial({ color: 0xd9d1bc, roughness: 0.86 }), {
+        key: 'whalebone',
+        fragDiffuse: `{ float n = uwNoise( vUwPos * 2.2 ); diffuseColor.rgb *= 0.78 + 0.4 * n; diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.55, 0.5, 0.4 ), smoothstep( 0.55, 0.85, uwNoise( vUwPos * 0.8 ) ) * 0.45 ); }`,
+      });
+      const bactMat = underwaterMaterial(new THREE.MeshStandardMaterial({ color: 0xf2efe6, roughness: 0.95, emissive: 0x2a2a26, emissiveIntensity: 0.5 }), {
+        key: 'whalemat',
+        fragDiffuse: `{ diffuseColor.rgb *= 0.86 + 0.2 * uwNoise( vUwPos * 5.0 ); }`,
+      });
+      this.mats.push(boneMat, bactMat);
+      const W = whaleLayout();
+      add(skullGeometry(), boneMat, W.skull, 110, 60);
+      add(vertebraGeometry(), boneMat, W.vertebrae, 100, 60);
+      add(ribGeometry(), boneMat, W.ribs, 100, 60);
+      add(matGeometry(), bactMat, W.mats, 90, 60);
+      add(boneTuftGeometry(), tubeMat, W.tufts, 70, 60);
+      addCollider(W.skullBox);
     }
     // black smoker plumes
     const SN = 260;
