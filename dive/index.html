@@ -99,23 +99,35 @@
 
       <!-- ===================== BOAT / TITLE ===================== -->
       <section id="title" class="screen">
-        <div class="title-wrap">
-          <header class="brand">
+        <div class="title-wrap home">
+          <header class="home-bar" id="home-bar">
+            <div class="hb-top">
+              <div class="hb-brand"><b>BLUE</b><span>DEPTHS</span></div>
+              <button id="hb-bell" type="button" class="hb-ic" aria-label="お知らせ"><svg viewBox="0 0 24 24"><path d="M12 3a5.5 5.5 0 0 0-5.5 5.5V13L4.5 17h15l-2-4V8.5A5.5 5.5 0 0 0 12 3zM10 19a2 2 0 0 0 4 0z"/></svg><small id="hb-bell-n" class="bdg num"></small></button>
+              <button id="toggle-sound" type="button" class="hb-ic" aria-label="サウンド">
+                <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="snd-wave" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              </button>
+              <button id="open-settings" type="button" class="hb-ic" aria-label="設定">
+                <svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm8.4 5.2l-1.9-.4a6.7 6.7 0 0 0-.5-1.2l1.1-1.6-1.8-1.8-1.6 1.1a6.7 6.7 0 0 0-1.2-.5L14.3 6h-2.6l-.4 1.9a6.7 6.7 0 0 0-1.2.5L8.5 7.3 6.7 9.1l1.1 1.6c-.2.4-.4.8-.5 1.2l-1.9.4v2.6l1.9.4c.1.4.3.8.5 1.2l-1.1 1.6 1.8 1.8 1.6-1.1c.4.2.8.4 1.2.5l.4 1.9h2.6l.4-1.9c.4-.1.8-.3 1.2-.5l1.6 1.1 1.8-1.8-1.1-1.6c.2-.4.4-.8.5-1.2l1.9-.4z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+              </button>
+            </div>
+            <div class="hb-stat">
+              <div id="daytime" class="hb-day"></div>
+              <div class="hb-chip"><span id="t-goal" class="t-goal"></span></div>
+              <div class="hb-chip" id="hb-dex"></div>
+            </div>
+          </header>
+          <header class="brand hidden" id="home-brand">
             <div class="brand-kicker">DIVE LOG</div>
             <h1>BLUE<span>DEPTHS</span></h1>
             <p>駆け出しの海中写真家として、雑誌の表紙を飾る一枚を目指そう</p>
-            <div class="t-goal" id="t-goal"></div>
           </header>
-          <div id="story-card" class="panel story-card"></div>
-          <div class="hub">
-            <button id="open-shop" type="button" class="btn sec hub-btn"><svg viewBox="0 0 24 24"><path d="M4 7h16l-1.5 12h-13zM8 7a4 4 0 0 1 8 0" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>ダイブショップ</span><small id="shop-badge"></small></button>
-            <button id="open-quests" type="button" class="btn sec hub-btn"><svg viewBox="0 0 24 24"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>依頼の掲示板</span><small id="quest-badge"></small></button>
-            <button id="open-album" type="button" class="btn sec hub-btn"><svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.8z" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>実績</span><small id="album-badge"></small></button>
-            <button id="open-kitchen" type="button" class="btn sec hub-btn hidden"><svg viewBox="0 0 24 24"><path d="M3 11h18l-2 9H5zM6 11a6 6 0 0 1 12 0" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>しおさい亭</span><small id="k-badge"></small></button>
-          </div>
-          <div id="daytime" class="panel daytime"></div>
-          <div class="panel" id="points"></div>
+          <div id="story-card" class="panel story-card todo-card"></div>
+          <div class="home-main" id="home-main">
+            <h2 class="sec-h">潜る場所</h2>
+            <div class="pts-grid" id="points"></div>
           <!-- DEBUG-PANEL:BEGIN（テスト用デバッグ。完成版で削除。手順は dive/RESUME.md） -->
+          <details id="dbg-fold" class="dbg-fold"><summary>デバッグ（完成版で削除）</summary>
           <div class="debug-row"><span>デバッグ</span><button id="reset-save" type="button" class="reset-link">進行度0にする</button><button id="unlock-all" type="button" class="reset-link">全部解禁済みにする</button><button id="diag-toggle" type="button" class="reset-link" aria-pressed="false">診断表示を出す</button></div>
           <details id="dbg-panel" class="dbg-panel">
             <summary>テスト用デバッグ（完成版で削除）</summary>
@@ -130,19 +142,16 @@
             <div class="dbg-group"><label for="dbg-day">日数</label><input id="dbg-day" type="number" min="1" step="1" inputmode="numeric"><span>日目</span><button type="button" data-dbg="day-set">設定</button></div>
             <div class="dbg-group"><label>時間帯</label><button type="button" data-dbg="time-morning">朝</button><button type="button" data-dbg="time-noon">昼</button><button type="button" data-dbg="time-dusk">夕方</button><button type="button" data-dbg="time-night">夜</button></div>
           </details>
+          </details>
           <!-- DEBUG-PANEL:END -->
-          <div class="row-actions">
-            <button id="open-dex" type="button" class="btn sec">
-              <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-4.5A2.5 2.5 0 0 0 13 6.5V20a2.5 2.5 0 0 1 2.5-2.5H20z"/></svg>
-              図鑑
-            </button>
-            <button id="toggle-sound" type="button" class="btn sec icon-only" aria-label="サウンド">
-              <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="snd-wave" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-            </button>
-            <button id="open-settings" type="button" class="btn sec icon-only" aria-label="設定">
-              <svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm8.4 5.2l-1.9-.4a6.7 6.7 0 0 0-.5-1.2l1.1-1.6-1.8-1.8-1.6 1.1a6.7 6.7 0 0 0-1.2-.5L14.3 6h-2.6l-.4 1.9a6.7 6.7 0 0 0-1.2.5L8.5 7.3 6.7 9.1l1.1 1.6c-.2.4-.4.8-.5 1.2l-1.9.4v2.6l1.9.4c.1.4.3.8.5 1.2l-1.1 1.6 1.8 1.8 1.6-1.1c.4.2.8.4 1.2.5l.4 1.9h2.6l.4-1.9c.4-.1.8-.3 1.2-.5l1.6 1.1 1.8-1.8-1.1-1.6c.2-.4.4-.8.5-1.2l1.9-.4z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-            </button>
           </div>
+          <nav class="dock" id="dock" aria-label="施設">
+            <button id="open-shop" type="button" class="dock-btn" data-fac="shop"><span class="dk-ico"><svg viewBox="0 0 24 24"><path d="M4 7h16l-1.5 12h-13zM8 7a4 4 0 0 1 8 0" fill="none" stroke="currentColor" stroke-width="2"/></svg><i class="lock" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3h1.5v10h-13V11zM9 11h6V8a3 3 0 0 0-6 0z"/></svg></i><small id="shop-badge" class="bdg"></small></span><span class="dk-lbl">ショップ</span></button>
+            <button id="open-quests" type="button" class="dock-btn" data-fac="quests"><span class="dk-ico"><svg viewBox="0 0 24 24"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="2"/></svg><i class="lock" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3h1.5v10h-13V11zM9 11h6V8a3 3 0 0 0-6 0z"/></svg></i><small id="quest-badge" class="bdg"></small></span><span class="dk-lbl">掲示板</span></button>
+            <button id="open-kitchen" type="button" class="dock-btn" data-fac="kitchen"><span class="dk-ico"><svg viewBox="0 0 24 24"><path d="M3 11h18l-2 9H5zM6 11a6 6 0 0 1 12 0" fill="none" stroke="currentColor" stroke-width="2"/></svg><i class="lock" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3h1.5v10h-13V11zM9 11h6V8a3 3 0 0 0-6 0z"/></svg></i><small id="k-badge" class="bdg"></small></span><span class="dk-lbl">しおさい亭</span></button>
+            <button id="open-album" type="button" class="dock-btn" data-fac="album"><span class="dk-ico"><svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.8z" fill="none" stroke="currentColor" stroke-width="2"/></svg><i class="lock" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3h1.5v10h-13V11zM9 11h6V8a3 3 0 0 0-6 0z"/></svg></i><small id="album-badge" class="bdg"></small></span><span class="dk-lbl">実績</span></button>
+            <button id="open-dex" type="button" class="dock-btn" data-fac="dex"><span class="dk-ico"><svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4zM20 4h-4.5A2.5 2.5 0 0 0 13 6.5V20a2.5 2.5 0 0 1 2.5-2.5H20z"/></svg><i class="lock" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3h1.5v10h-13V11zM9 11h6V8a3 3 0 0 0-6 0z"/></svg></i><small id="dex-badge" class="bdg"></small></span><span class="dk-lbl">図鑑</span></button>
+          </nav>
         </div>
       </section>
 
@@ -239,19 +248,33 @@
             <div><div class="res-kicker">港の食堂</div><h2>しおさい亭</h2></div>
             <button id="k-close" type="button" class="btn sec icon-only" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4"/></svg></button>
           </div>
+          <!-- 上部：女将さんの吹き出し（F4 の吹き出しの接続点）と時間ボタンだけ -->
           <div id="k-okami" class="k-okami"></div>
-          <div id="k-status" class="k-status"></div>
           <div id="k-story" class="k-story hidden"></div>
           <button id="k-sleep" type="button" class="btn sec k-time">朝にする</button>
-          <h3 class="k-h k-shop">今日の注文（伝票）</h3>
-          <div id="k-orders" class="k-list k-slips k-shop"></div>
-          <h3 class="k-h k-shop">クーラーの中</h3>
-          <div id="k-cooler" class="k-list k-ice k-shop"></div>
-          <h3 class="k-h k-shop">店の仕事</h3>
-          <div id="k-work" class="k-list k-board k-shop"></div>
-          <div id="k-buff" class="k-buff k-shop"></div>
-          <h3 class="k-h">釣具の棚：餌</h3>
-          <div id="k-bait" class="k-list k-board"></div>
+          <div class="k-tabs" id="k-tabs" role="tablist">
+            <button type="button" role="tab" class="k-tab" data-ktab="orders">注文<small id="kt-orders" class="bdg empty"></small></button>
+            <button type="button" role="tab" class="k-tab" data-ktab="work">店の仕事<small id="kt-work" class="bdg empty"></small></button>
+            <button type="button" role="tab" class="k-tab" data-ktab="shop">買い物<small id="kt-shop" class="bdg empty"></small></button>
+          </div>
+          <div class="k-body">
+            <div id="k-status" class="k-status"></div>
+            <div class="k-pane" data-kpane="orders">
+              <h3 class="k-h">今日の注文（伝票）</h3>
+              <div id="k-orders" class="k-list k-slips"></div>
+              <h3 class="k-h">クーラーの中</h3>
+              <div id="k-cooler" class="k-list k-ice"></div>
+            </div>
+            <div class="k-pane" data-kpane="work">
+              <h3 class="k-h">店の仕事</h3>
+              <div id="k-work" class="k-list k-board"></div>
+              <div id="k-buff" class="k-buff"></div>
+            </div>
+            <div class="k-pane" data-kpane="shop">
+              <h3 class="k-h">釣具の棚：餌</h3>
+              <div id="k-bait" class="k-list k-board"></div>
+            </div>
+          </div>
         </div>
         <div id="mg" class="hidden"><div class="mg-box" id="mg-box"></div></div>
         <div id="cook-pop" class="hidden"><div class="cp-dish" id="cp-dish"></div><div class="cp-sub" id="cp-sub"></div></div>

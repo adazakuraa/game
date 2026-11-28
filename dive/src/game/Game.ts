@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MISSION, Missions, type MissionCtx } from './missions';
-import { Kitchen, type LandSave } from './kitchen';
+import { BOARD_DAY, Kitchen, type LandSave } from './kitchen';
 import { CHAPTERS, ENDING, SCENES, TUTORIAL, type SceneId, type StoryState } from './story';
 import { SCENE_AT, Scenes } from './scenes';
 import { SPOT, SPOTS, spotFocus, spotInView } from './spots';
@@ -28,6 +28,7 @@ import { Input } from '../core/input';
 import { Audio } from '../core/audio';
 import { clamp, lerp } from '../utils/noise';
 import { Minimap } from '../ui/minimap';
+import { areaIconSvg } from '../ui/areaIcons';
 import { colliderCount, insideAny, resolveSphere } from '../world/colliders';
 // DEBUG-PANEL:BEGIN（テスト用。完成版で削除）
 import { installDebugPanel } from './debug';
@@ -320,11 +321,13 @@ export class Game {
 
     this.input = new Input($('touch-surface'), $('stick'), $('knob'));
     this.bindUi();
-    $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
+    $('open-kitchen').addEventListener('click', () => { this.audio.unlock(); if (!this.save.tutorial) { this.toast('しおさい亭は、最初のダイブを終えると開く', '', 2.6); return; } this.kitchen.open(); });
     // DEBUG-PANEL:BEGIN（テスト用。完成版で削除。リセット・最大・各種デバッグ操作は game/debug.ts）
     installDebugPanel({ save: this.save, write: () => this.writeSave() });
     // DEBUG-PANEL:END
-    $('open-quests').addEventListener('click', () => { $('quests').classList.remove('hidden'); this.renderQuests(); });
+    $('open-quests').addEventListener('click', () => { if (!this.save.boardOn) { this.toast(`依頼の掲示板は、${BOARD_DAY}日目に出る`, '', 2.6); return; } $('quests').classList.remove('hidden'); this.renderQuests(); });
+    $('hb-bell').addEventListener('click', () => this.onTodoTap());
+    $('story-card').addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('button, summary, details')) this.onTodoTap(); });
     $('quests-close').addEventListener('click', () => { $('quests').classList.add('hidden'); this.renderTitle(); });
     $('open-album').addEventListener('click', () => { $('album').classList.remove('hidden'); this.renderAlbum(); });
     $('album-close').addEventListener('click', () => $('album').classList.add('hidden'));
@@ -626,25 +629,50 @@ export class Game {
     setTimeout(() => pop.remove(), 1600);
   }
 
+  /**
+   * 修正バッチ2 (39): 「今やること」カード（章の目標・報酬の受け取り・夜でライトがないときの案内）。
+   * 常に同じ位置・金色の縁。報酬があるときは光る。
+   */
   private renderStory(): void {
     const el = $('story-card');
     const i = this.save.storyMain ?? 0;
     const ch = CHAPTERS[i];
     const claims = (this.save.storyClaim ?? []).map((k) => `<div class="sc-claim"><span>第${k + 1}章「${CHAPTERS[k].title}」クリア！ 編集長からの報酬</span><button type="button" class="btn pri" data-claim="${k}">報酬 ${yen(CHAPTERS[k].reward)} を受け取る</button></div>`).join('');
+    el.classList.toggle('glow', !!this.save.storyClaim?.length);
     const cleared = (this.storyCleared.length ? `<div class="sc-clear">${this.storyCleared.join('<br>')}</div>` : '') + claims;
-    const album = '';
+    // 夜でライトがないときは、潜れない理由と次の行き先がこのカードに出る
+    const dark = this.save.tutorial && nightOf(this.save.clock ?? 0) >= 0.5 && !this.hasTorch();
+    const alert = dark ? '<div class="td-alert">夜の海はライトがないと潜れない → <b>しおさい亭で休む</b></div>' : '';
+    const goal = this.nextGoal();
+    const next = goal ? `<div class="td-next">${goal.species > 0 ? `次の入荷：「？」まで図鑑あと <b>${goal.species}種</b>` : goal.need > 0 ? `次の目標：「？」まであと <b>${yen(goal.need)}</b>` : `<span class="ok">「${goal.name}」が買える！ ショップへ</span>`}</div>` : '';
     if (!ch) {
-      el.innerHTML = `<div class="sc-kicker">写真家の評価：表紙の写真家</div>${cleared}<div class="sc-intro">${ENDING}</div>${album}`;
+      el.innerHTML = `<div class="td-kick"><b>今やること</b><span>写真家の評価：表紙の写真家</span></div>${alert}${cleared}<div class="sc-intro">${ENDING}</div>${next}`;
       this.bindClaims(el);
       return;
     }
     const st = this.storyState();
     const unread = (this.save.storyRead ?? -1) < i;
-    el.innerHTML = `<div class="sc-kicker">第${i + 1}章　${i > 0 ? `写真家の評価：${CHAPTERS[i - 1].title2}` : '駆け出しの海中写真家'}</div>${cleared}<div class="sc-title">${ch.title}</div>` +
+    el.innerHTML = `<div class="td-kick"><b>今やること</b><span>第${i + 1}章　${i > 0 ? `写真家の評価：${CHAPTERS[i - 1].title2}` : '駆け出しの海中写真家'}</span></div>${alert}${cleared}<div class="sc-title">${ch.title}</div>` +
       (unread ? `<div class="sc-intro">${ch.intro}</div><button type="button" class="btn sec" id="sc-ok">了解</button>` : '') +
-      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? `<small class="sc-wait">${this.stockGap(SHOP.find((x) => x.id === 'torch')!) > 0 ? 'ライトがまだない（図鑑を増やすと入荷する）' : 'ライトがない（ボートのショップで買える）'}</small>` : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${ch.tips ? `<details class="sc-tips"><summary>編集長の「Sを取るコツ」</summary><ul>${ch.tips.map((t) => `<li>${t}</li>`).join('')}</ul></details>` : ''}${album}`;
+      `<div class="sc-goal">目標：${ch.goal}${ch.progress ? `　<b>${ch.progress(st)}</b>` : ''}${ch.needsLight && !this.hasTorch() ? `<small class="sc-wait">${this.stockGap(SHOP.find((x) => x.id === 'torch')!) > 0 ? 'ライトがまだない（図鑑を増やすと入荷する）' : 'ライトがない（ボートのショップで買える）'}</small>` : ''}${ch.reward ? `<span class="sc-pay">報酬 ${yen(ch.reward)}</span>` : ''}</div>${next}${ch.tips ? `<details class="sc-tips"><summary>編集長の「Sを取るコツ」</summary><ul>${ch.tips.map((t) => `<li>${t}</li>`).join('')}</ul></details>` : ''}`;
     this.bindClaims(el);
     if (unread) document.getElementById('sc-ok')!.addEventListener('click', () => { this.save.storyRead = i; this.storyCleared = []; this.writeSave(); this.renderStory(); });
+  }
+
+  /**
+   * 「今やること」カード（と右上のお知らせ）のタップ。
+   * 今は従来の章カードと同じ：受け取れる報酬があればその位置を示し、なければ「Sを取るコツ」を開閉する。
+   * F4 では、ここを編集長の吹き出し（src/ui/talk.ts）を開く呼び出しに差し替える（吹き出しへの接続点）。
+   */
+  private onTodoTap(): void {
+    const el = $('story-card');
+    el.scrollIntoView({ block: 'nearest' });
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+    if (this.save.storyClaim?.length) return;
+    const tips = el.querySelector<HTMLDetailsElement>('details.sc-tips');
+    if (tips) tips.open = !tips.open;
   }
 
   private bindClaims(el: HTMLElement): void {
@@ -816,24 +844,30 @@ export class Game {
     return fresh.map((g) => g.name);
   }
 
+  /** バッジの意味を統一：赤＝新しいこと（new）・数字＝件数（num）・緑＝いま使える（ok） */
+  private setBadge(id: string, text: string, kind: 'new' | 'num' | 'ok' = 'ok'): void {
+    const el = $(id);
+    el.textContent = text;
+    el.className = `bdg ${kind}${text ? '' : ' empty'}`;
+  }
+
   private renderTitle(): void {
-    const n = this.foundCount;
     this.advanceStory();
     this.renderStory();
     const colors: Record<string, string> = { lagoon: '#9fe8d8', reef: '#5fe3f0', rocky: '#a8c8b0', dropoff: '#4aa8e8', deep: '#3a5ab8', cold: '#d6eef6', ruins: '#c8b890', bluehole: '#2a6ad8', cave: '#5a6a70', kelp: '#8ab060', estuary: '#8a9a60', river: '#5aa8b8' };
     const pts = $('points');
     pts.innerHTML = '';
     const known = this.discovered;
+    const dark = !!this.save.tutorial && nightOf(this.save.clock ?? 0) >= 0.5 && !this.hasTorch();
     for (const dp of DIVE_POINTS) {
       if (!known.has(dp.id)) continue;
       const locked = dp.requires === 'ads' && !this.has('ads');
       const b = document.createElement('button');
-      b.className = 'pt';
+      b.className = 'pt' + (dark && !locked ? ' dim' : '') + (locked ? ' lockd' : '');
       b.type = 'button';
       b.disabled = locked;
-      b.innerHTML = `<span class="ico" style="background:${colors[dp.id]}">${dp.id === 'deep' ? '400m' : dp.id === 'dropoff' ? '15m+' : dp.id === 'lagoon' ? '5m' : dp.id === 'cold' ? '2℃' : dp.id === 'ruins' ? '遺跡' : dp.id === 'bluehole' ? '55m' : dp.id === 'cave' ? '洞窟' : dp.id === 'kelp' ? '森' : dp.id === 'estuary' ? '汽水' : dp.id === 'river' ? '清流' : '12m'}</span>
-        <span><div class="nm">${dp.name}</div><div class="sb">${locked ? `写真の稼ぎで「大気圧潜水服」を買うと行ける` : dp.sub}</div></span>
-        <span class="pr"><span class="go">${locked ? 'ロック中' : '潜る ›'}</span></span>`;
+      b.innerHTML = `<span class="ico" style="--ico-bg:${colors[dp.id]};background:${colors[dp.id]}">${areaIconSvg(dp.id)}</span>
+        <span class="pt-tx"><span class="nm">${dp.name}</span><span class="sb">${locked ? '大気圧潜水服が必要' : dp.sub}</span></span>`;
       b.addEventListener('click', () => this.startDive(dp));
       pts.appendChild(b);
     }
@@ -841,32 +875,37 @@ export class Game {
       // always shown, and never with a count: the sea may always hide one more place (§1.4)
       const d = document.createElement('div');
       d.className = 'pt unknown';
-      d.innerHTML = `<span class="ico" style="background:#2a3a44;color:#8aa">？</span><span><div class="nm">未発見のポイント ×？</div><div class="sb">海は広い。まだ何かあるかもしれない</div></span><span></span>`;
+      d.innerHTML = `<span class="ico" style="--ico-bg:#2a3a44;background:#2a3a44;color:#9fb6c0">？</span><span class="pt-tx"><span class="nm">未発見のポイント</span><span class="sb">海は広い。まだ何かあるかもしれない</span></span>`;
       pts.appendChild(d);
     }
     this.renderDaytime();
     const spear = this.has('spear');
-    $('open-kitchen').classList.toggle('hidden', !this.save.tutorial);
-    $('open-quests').classList.toggle('hidden', !this.save.boardOn);
-    $('quest-badge').textContent = this.save.boardOn && (!this.save.boardIntro || (this.save.board ?? []).some((q) => q.fresh)) ? 'NEW' : '';
-    if (!spear) $('k-badge').textContent = nightOf(this.save.clock ?? 0) >= 0.5 ? '休む' : '';
-    if (spear) {
+    // ドックの施設は消さずに、まだ使えないものは鍵つきで同じ位置に置く
+    const lock = (id: string, on: boolean) => { $(id).classList.toggle('locked', on); $(id).setAttribute('aria-disabled', on ? 'true' : 'false'); };
+    lock('open-kitchen', !this.save.tutorial);
+    lock('open-quests', !this.save.boardOn);
+    this.setBadge('quest-badge', this.save.boardOn && (!this.save.boardIntro || (this.save.board ?? []).some((q) => q.fresh)) ? 'NEW' : '', 'new');
+    if (!this.save.tutorial) this.setBadge('k-badge', '');
+    else if (!spear) this.setBadge('k-badge', nightOf(this.save.clock ?? 0) >= 0.5 ? '休む' : '', 'ok');
+    else {
       const ready = this.kitchen.readyCount();
       const lv = repLevel(this.save.rep ?? 0);
-      $('k-badge').textContent = `${(this.save.story ?? 0) < lv ? '新しい話！ ' : ''}${ready ? `${ready}件 作れる` : `注文${this.save.orders?.length ?? 0}件`}`;
+      if ((this.save.story ?? 0) < lv) this.setBadge('k-badge', 'NEW', 'new');
+      else this.setBadge('k-badge', ready ? '作れる' : '', 'ok');
     }
     const money = this.save.money ?? 0;
     const buyable = SHOP.filter((g) => !this.owns(g) && this.stockGap(g) === 0 && money >= g.price && (!g.req || this.has(g.req))).length;
-    $('shop-badge').textContent = buyable ? `${buyable}個 買える！` : '';
-    $('album-badge').textContent = `${Object.keys(this.save.scenes ?? {}).length} / ${Object.keys(SCENES).length}`;
-    const goal = this.nextGoal();
-    const goalText = (gl: NonNullable<ReturnType<Game['nextGoal']>>) =>
-      gl.species > 0
-        ? `「？」入荷まで図鑑あと <b>${gl.species}種</b>`
-        : gl.need > 0
-          ? `「？」まであと <b>${yen(gl.need)}</b>`
-          : `<span class="ok">「${gl.name}」が買える！ ショップへ</span>`;
-    $('t-goal').innerHTML = `所持金 <b>${yen(money)}</b>　図鑑 <b>${this.foundCount}種</b><br>` + (goal ? goalText(goal) : '装備コンプリート') + (this.save.storyClaim?.length ? '<br><span class="ok">編集長の報酬を受け取っていない（下の章カードで受け取れる）</span>' : '');
+    this.setBadge('shop-badge', buyable ? '買える' : '', 'ok');
+    const scenes = Object.keys(this.save.scenes ?? {}).length;
+    this.setBadge('album-badge', '', 'num');
+    $('open-album').title = `特別な光景 ${scenes} / ${Object.keys(SCENES).length}`;
+    this.setBadge('dex-badge', '', 'new');
+    const claims = this.save.storyClaim?.length ?? 0;
+    this.setBadge('hb-bell-n', claims ? String(claims) : '', 'num');
+    $('t-goal').innerHTML = `<b>${yen(money)}</b>`;
+    $('hb-dex').innerHTML = `図鑑 <b>${this.foundCount}</b>種`;
+    // ロゴとキャッチコピーは、最初のダイブの前だけ大きく出す
+    $('home-brand').classList.toggle('hidden', !!this.save.tutorial);
     if (!$('shop').classList.contains('hidden')) this.renderShop();
     if (this.state === 'title' && this.save.tutorial) {
       const names = this.announceStock();
@@ -936,7 +975,7 @@ export class Game {
       const can = !on && stocked && money >= u.price && !needReq;
       const req = on ? (u.map ? '場所は分かっている' : '入手済み') : !stocked ? (u.rep ? `食堂の評判Lv${u.rep}で入荷` : `図鑑${u.need}種で入荷<br>（あと${gap}種）`) : needReq ? `先に${SHOP.find((x) => x.id === u.req)!.name}` : can ? `購入 ${yen(u.price)}` : yen(u.price);
       const show = stocked || on || !!u.rep;
-      return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi">${show ? `<svg viewBox="0 0 24 24">${u.icon}</svg>` : '<b class="gq">？</b>'}</div>${show ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${show ? u.desc : '図鑑を埋めると入荷する'}</span></button>`;
+      return `<button type="button" class="gear-item ${on ? 'on' : ''} ${can ? 'can' : ''} ${stocked ? '' : 'locked'}" data-buy="${u.id}" ${on || !can ? 'aria-disabled="true"' : ''}><div class="gi"><svg viewBox="0 0 24 24"${show ? '' : ' class="sil" aria-hidden="true"'}>${u.icon}</svg></div>${show ? u.name : '？？？'}<span class="req">${req}</span><span class="gdesc">${show ? u.desc : ''}</span></button>`;
     }).join('');
     const tg = $('treasure-gear');
     const mine = (Object.keys(CHEST_GEAR) as ChestGearId[]).filter((id) => this.has(id));
@@ -960,15 +999,11 @@ export class Game {
     const c = this.save.clock ?? 0;
     const el = $('daytime');
     const w = WEATHER[weatherOf(this.save.day ?? 1)];
-    const now = `<span class="dt-now">${this.save.day ?? 1}日目・<b>${timeLabel(c)}</b>・${w.icon}${w.name}</span>`;
+    const now = `<span class="hb-chip dt-now">${this.save.day ?? 1}日目・<b>${timeLabel(c)}</b>・${w.icon}${w.name}</span>`;
     const night = nightOf(c) >= 0.5;
-    const torch = this.hasTorch();
-    const buff = this.save.buff ? `<small>まかない：${DISH[this.save.buff].name}（${DISH[this.save.buff].short}）が次のダイブに効く</small>` : '';
-    const note = night
-      ? torch ? '<small>夜の海。しおさい亭で休むと朝になる</small>' : '<small>夜の海はライトがないと潜れない。しおさい亭で休むと朝になる</small>'
-      : torch ? '<small>しおさい亭で「夜にする」と、夜の海に潜れる</small>' : '';
-    const inn = night && this.save.tutorial ? '<button type="button" class="btn sec" data-inn="1">しおさい亭へ帰る</button>' : '';
-    el.innerHTML = `${now}${buff}${note}${inn}`;
+    const buff = this.save.buff ? `<span class="hb-chip dt-buff" title="次のダイブに効く">まかない：${DISH[this.save.buff].name}</span>` : '';
+    const inn = night && this.save.tutorial ? '<button type="button" class="btn pri dt-inn" data-inn="1">しおさい亭へ帰る</button>' : '';
+    el.innerHTML = `${now}${buff}${inn}`;
     el.querySelector<HTMLButtonElement>('[data-inn]')?.addEventListener('click', () => { this.audio.unlock(); this.kitchen.open(); });
   }
 
