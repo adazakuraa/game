@@ -2016,7 +2016,7 @@ export class Creatures {
             }
           } else if (mode === 2) {
             if (ag.kind === 'light' && !this.lightOn) { a.mode = 3; a.modeT = 5; } // light out: it loses the target
-            if (ag.kind === 'territory' && a.modeT > 0) {
+            else if (ag.kind === 'territory' && a.modeT > 0) {
               // threat display: turn to face the intruder, fins raised
               tx = a.p.x + (player.x - a.p.x) * 0.05; ty = a.p.y; tz = a.p.z + (player.z - a.p.z) * 0.05;
               if (a.modeT - dt <= 0) this.events.push({ type: 'charge', def, p: a.p.clone() });

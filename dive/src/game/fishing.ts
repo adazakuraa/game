@@ -13,18 +13,19 @@ import type { SpeciesDef } from '../life/species';
 export const FISHING = {
   /** 【道具】reach (m), reload time (s), largest fish it can hold (kg) */
   tools: {
-    hand: { name: '手銛', range: 2.2, reload: 1.1, maxKg: 8, tier: 0 },
-    gun: { name: '水中銃', range: 6, reload: 2.4, maxKg: 60, tier: 1 },
-    big: { name: '大物用水中銃', range: 7, reload: 3, maxKg: 400, tier: 2 },
+    hand: { name: '手銛', range: 2.2, repelReach: 2.2, reload: 1.1, maxKg: 8, tier: 0 },
+    gun: { name: '水中銃', range: 6, repelReach: 3, reload: 2.4, maxKg: 60, tier: 1 },
+    big: { name: '大物用水中銃', range: 7, repelReach: 4, reload: 3, maxKg: 400, tier: 2 },
   },
   /**
    * 【撃退】a well-timed thrust at a charging aggro animal (mode 2) turns it away instead of taking it.
    * Window: body-surface distance (distance − size×0.45) ≤ the tool's range and the animal has not reached
    * hit distance (size×0.45 + 0.55). Tier needed: 0 territory / light (any spear), 1 ordinary sharks (gun),
    * 2 every species incl. the legendary Dunkleosteus / Megalodon (big-game gun).
-   * cooldown: seconds the animal will not go aggro again; just: a thrust within `justBand` m of the hit distance.
+   * The reach of a repel is the tool's `repelReach` (not its catch `range`): the window is about 0.7-1.0 s of the charge.
+   * cooldown: seconds the animal will not go aggro again; just: a thrust within min(`justBand` m, speed × `justSec`) of the hit distance.
    */
-  repel: { cooldown: 30, justCooldown: 90, justBand: 1.2, hitBase: 0.55 },
+  repel: { cooldown: 30, justCooldown: 90, justBand: 1.2, justSec: 0.3, hitBase: 0.55 },
   /** 【クーラーの容量】kg: net bag / cooler / big cooler */
   bag: [5, 15, 40],
   /** 【小さすぎる魚】fish lighter than this are let go (kg) */
