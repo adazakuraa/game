@@ -21,6 +21,8 @@ export type TalkLine = {
   pre?: string;
 };
 
+export type MiniLine = { who: Who; text: string; target?: string };
+
 export type TalkResult = { done: boolean; skipped: boolean; choice?: string };
 export type TalkHooks = Record<string, () => void | Promise<void>>;
 
@@ -69,6 +71,10 @@ export class TalkUI {
   private lastRect = '';
   private waitSel: string | null = null;
   private waitEvent: string | null = null;
+  private miniRing: HTMLElement;
+  private miniQueue: MiniLine[] = [];
+  private miniSec = 6;
+  private miniRaf = 0;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -112,7 +118,11 @@ export class TalkUI {
       if (e.key === 'Escape') { this.end(true); return; }
       if ((e.key === 'Enter' || e.key === ' ') && L && !L.choices?.length && !this.waitSel && !this.waitEvent && !(document.activeElement as HTMLElement | null)?.closest('.tk-skip')) { e.preventDefault(); void this.next(); }
     });
-    this.mini.addEventListener('click', () => this.hideMini());
+    this.mini.addEventListener('click', () => this.advanceMini());
+    this.miniRing = document.createElement('div');
+    this.miniRing.id = 'talk-mini-ring';
+    this.miniRing.className = 'hidden';
+    parent.appendChild(this.miniRing);
   }
 
   get active(): boolean { return !!this.cur; }
@@ -227,19 +237,63 @@ export class TalkUI {
   }
 
   // ------------------------------------------------------------ 小型版（潜水中）
-  /** 暗くしない小さな吹き出し。タップで閉じる・sec 秒で消える。 */
-  showMini(who: Who, text: string, sec = 6): void {
-    this.mini.querySelector('.tk-face')!.innerHTML = faceSvg(who);
-    this.mini.querySelector('.tk-name')!.textContent = WHO[who].name;
-    this.mini.querySelector('.tk-text')!.textContent = text;
+  /** 暗くしない小さな吹き出し。タップで閉じる・sec 秒で消える。target があれば、その要素に脈打つ輪を重ねる（押せなくはしない）。 */
+  showMini(who: Who, text: string, sec = 6, target?: string): void {
+    this.showMiniSeq([{ who, text, target }], sec);
+  }
+
+  /** 1〜2 段の小型吹き出し。タップか sec 秒で次の段へ、最後で閉じる。onDone は最後まで見たときだけ。 */
+  showMiniSeq(lines: MiniLine[], sec = 6, onDone?: () => void): void {
+    this.miniQueue = lines.slice();
+    this.miniSec = sec;
+    this.miniDone = onDone;
+    this.showMiniNow();
+  }
+
+  private miniDone?: () => void;
+
+  private showMiniNow(): void {
+    const L = this.miniQueue[0];
+    if (!L) { this.hideMini(); return; }
+    this.mini.querySelector('.tk-face')!.innerHTML = faceSvg(L.who);
+    this.mini.querySelector('.tk-name')!.textContent = WHO[L.who].name;
+    this.mini.querySelector('.tk-text')!.textContent = L.text;
     this.mini.classList.remove('hidden');
     window.clearTimeout(this.miniTimer);
-    this.miniTimer = window.setTimeout(() => this.hideMini(), sec * 1000);
+    this.miniTimer = window.setTimeout(() => this.advanceMini(), this.miniSec * 1000);
+    cancelAnimationFrame(this.miniRaf);
+    if (L.target) {
+      const f = () => {
+        if (this.mini.classList.contains('hidden')) return;
+        const el = document.querySelector<HTMLElement>(L.target!);
+        const rc = el?.getBoundingClientRect();
+        if (el && rc && rc.width > 2 && rc.height > 2 && getComputedStyle(el).visibility !== 'hidden' && !el.closest('.hidden')) {
+          const pad = 5, r = this.miniRing.style;
+          r.left = `${rc.left - pad}px`; r.top = `${rc.top - pad}px`; r.width = `${rc.width + pad * 2}px`; r.height = `${rc.height + pad * 2}px`;
+          this.miniRing.classList.remove('hidden');
+        } else this.miniRing.classList.add('hidden');
+        this.miniRaf = requestAnimationFrame(f);
+      };
+      f();
+    } else this.miniRing.classList.add('hidden');
+  }
+
+  private advanceMini(): void {
+    this.miniQueue.shift();
+    if (this.miniQueue.length) { this.showMiniNow(); return; }
+    const d = this.miniDone;
+    this.miniDone = undefined;
+    this.hideMini();
+    d?.();
   }
 
   hideMini(): void {
     window.clearTimeout(this.miniTimer);
+    cancelAnimationFrame(this.miniRaf);
+    this.miniQueue = [];
+    this.miniDone = undefined;
     this.mini.classList.add('hidden');
+    this.miniRing.classList.add('hidden');
   }
 
   get miniOpen(): boolean { return !this.mini.classList.contains('hidden'); }
