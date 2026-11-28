@@ -78,6 +78,7 @@ const ACTIONS: Record<string, Action> = {
       sv.storyRead = n >= CHAPTERS.length ? n : n - 1; // 今の章のブリーフィングは未読（通常の進行と同じ）
       sv.storyClaim = [];
       if (n >= 1) { sv.tutorial = true; sv.dives = Math.max(sv.dives, 1); }
+      else sv.dives = 0; // 第 1 章の条件は「ダイブ 1 回」。残すとすぐ第 1 章がクリアされ直す
       for (let k = 0; k < n; k++) { const m = CHAPTERS[k].map; if (m && !(sv.discovered ??= ['lagoon']).includes(m)) sv.discovered.push(m); }
     },
   },
